@@ -120,6 +120,7 @@ export function AIChatPanel() {
     const otherAttachments = attachments.filter(a => !a.file || (a.type !== 'file' && a.type !== 'image'))
 
     let fullMessage = msg
+    let hiddenContext: string | undefined
 
     if (fileAttachments.length > 0) {
       setParsingFiles(true)
@@ -147,9 +148,13 @@ export function AIChatPanel() {
           const header = p.filePath ? `📎 ${p.name} (路径: ${p.filePath})` : `📎 ${p.name}`
           return `${header}:\n${p.text}`
         }).join('\n\n---\n\n')
+
+        // 附件解析内容放入隐形上下文，用户只看到附件名
+        hiddenContext = parsedContent
+        const attachmentSummary = parsed.map(p => `📎 ${p.name}`).join('、')
         fullMessage = fullMessage
-          ? `${fullMessage}\n\n[附件解析内容]\n${parsedContent}`
-          : `[附件解析内容]\n${parsedContent}`
+          ? `${fullMessage}\n\n[附件: ${attachmentSummary}]`
+          : `[附件: ${attachmentSummary}]`
       } catch (e: unknown) {
         if (e instanceof Error && e.name === 'AbortError') {
           addToast({ type: 'info', title: '已取消', message: '文件上传已取消' })
@@ -176,7 +181,7 @@ export function AIChatPanel() {
 
     setInput('')
     setAttachments([])
-    sendChat(fullMessage, currentView)
+    sendChat(fullMessage, currentView, hiddenContext)
     sendingRef.current = false
   }
 

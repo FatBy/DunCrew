@@ -277,7 +277,7 @@ export interface AiSlice {
   clearSummary: (view: ViewType) => void
 
   // 聊天 (基于当前激活会话)
-  sendChat: (message: string, view: ViewType) => Promise<void>
+  sendChat: (message: string, view: ViewType, hiddenContext?: string) => Promise<void>
   clearChat: () => void
   abortChat: () => void
   setChatContext: (view: ViewType) => void
@@ -869,7 +869,7 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
     }))
   },
 
-  sendChat: async (message, view) => {
+  sendChat: async (message, view, hiddenContext?) => {
     if (!isLLMConfigured()) return
 
     // 确保有活跃会话
@@ -1012,8 +1012,13 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
               }
             }
 
+            // 构建实际发送给 LLM 的消息（包含隐形上下文）
+            const llmMessage = hiddenContext
+              ? `${message}\n\n[上下文参考]\n${hiddenContext}`
+              : message
+
             result = await localClawService.sendMessage(
-              message,
+              llmMessage,
               // onUpdate: 仅更新流式内容指示
               (_content) => {
                 set({ chatStreamContent: '...' })

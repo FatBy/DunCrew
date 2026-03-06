@@ -472,6 +472,35 @@ export class NexusManagerService {
     return name.replace(/-/g, '_').toLowerCase()
   }
 
+  /**
+   * 轻量意图检测：判断 query 是否需要完整 SOP 执行
+   * - 简单问答/闲聊 → false (light 模式)
+   * - 任务指令 → true (full 模式)
+   */
+  private isTaskIntent(query: string): boolean {
+    const trimmed = query.trim()
+
+    // 短句且以问号结尾 → 大概率是问答
+    if (trimmed.length < 20 && /[？?]$/.test(trimmed)) return false
+
+    // 任务动词关键词（中文）
+    const taskVerbs = /(?:^|[，。；\s])(?:做|生成|分析|创建|修改|制作|编写|设计|开发|实现|执行|运行|构建|部署|优化|重构|编辑|写|画|搜索|查找|对比|整理|汇总|导出|转换|合并|拆分|安装|配置|调试|测试|检查|审核|评估|规划|策划|撰写|起草|翻译|总结|提炼|梳理|搭建|接入|集成|迁移|升级|下载|上传|发送|推送|抓取|爬取|采集|处理|清洗|统计|计算|绘制|渲染|录制|压缩|解压|加密|解密|备份|恢复|启动|停止|重启|帮我|请你|开始|继续执行|按照|根据|依据)/
+    if (taskVerbs.test(trimmed)) return true
+
+    // 任务动词关键词（英文）
+    const engTaskVerbs = /\b(?:create|make|build|generate|write|design|develop|implement|run|execute|deploy|analyze|compare|export|convert|merge|install|test|fix|debug|optimize|refactor|search|find|fetch|download|upload|send|start|stop|continue)\b/i
+    if (engTaskVerbs.test(trimmed)) return true
+
+    // 较长文本（>50字）大概率是复杂任务描述
+    if (trimmed.length > 50) return true
+
+    // 包含文件路径、URL 等 → 大概率是任务
+    if (/[\/\\][\w.-]+\.\w+/.test(trimmed) || /https?:\/\//.test(trimmed)) return true
+
+    // 默认：短句无动词 → 问答
+    return false
+  }
+
   assembleToolsForNexus(nexus: NexusEntity): ToolInfo[] {
     if (!this.io) return []
     const availableTools = this.io.getAvailableTools()
@@ -594,6 +623,9 @@ export class NexusManagerService {
     const nexuses = this.io.getNexuses()
     const nexus = nexuses?.get(nexusId)
 
+    // 轻量意图检测：区分简单问答 vs 任务执行
+    const needsFullSOP = this.isTaskIntent(userQuery)
+
     let sopContent = nexus?.sopContent
 
     if (!sopContent) {
@@ -606,6 +638,19 @@ export class NexusManagerService {
       } catch {
         // 静默失败
       }
+    }
+
+    // Light 模式：仅返回 Nexus 身份 + 目标，不注入 SOP
+    if (!needsFullSOP) {
+      let ctx = `## 🌌 Active Nexus: ${nexus?.label || nexusId}\n\n`
+      if (nexus?.objective) {
+        ctx += `核心目标: ${nexus.objective}\n`
+      }
+      if (nexus?.flavorText) {
+        ctx += `职能: ${nexus.flavorText}\n`
+      }
+      ctx += `\n（当前为简单问答模式，如需执行完整任务请明确指示）\n`
+      return ctx
     }
 
     if (!sopContent) return null
@@ -637,8 +682,8 @@ export class NexusManagerService {
 
     if (phases.length > 0) {
       // 先注入结构化执行路线图（简洁、模型容易跟踪）
-      ctx += `### 📋 SOP 执行路线图 (必须严格按顺序执行!)\n\n`
-      ctx += `⚠️ **强制要求**: 你必须按照以下步骤顺序执行，不能跳步。每完成一步后再进入下一步。\n\n`
+      ctx += `### 📋 SOP 执行路线图\n\n`
+      ctx += `**执行原则**: 按顺序执行各阶段。如果用户指定了从某个 Phase 继续，或者对话历史中已完成某些 Phase，则直接从指定/下一个 Phase 开始，不要重复已完成的步骤。\n\n`
       for (const phase of phases) {
         ctx += `**Phase ${phase.index}: ${phase.name}**\n`
         for (const step of phase.steps) {
@@ -1066,7 +1111,11 @@ export class NexusManagerService {
       reminder += `下一阶段: ${nextPhase.name}\n`
     }
 
-    reminder += `请按照上述 SOP 步骤执行，完成当前阶段后再推进到下一阶段。`
+    if (nextPhase) {
+      reminder += `⚠️ 重要指令：当前阶段完成后，你必须立即开始执行下一阶段「${nextPhase.name}」的工具调用。不要停下来汇报进度，不要输出建议选项，不要询问用户是否继续。直接调用工具继续执行。只有所有阶段全部完成后才可以停下来输出最终总结。`
+    } else {
+      reminder += `这是最后一个阶段。完成后请输出最终总结。`
+    }
     return reminder
   }
 

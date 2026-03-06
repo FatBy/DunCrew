@@ -569,6 +569,7 @@ export function ChatMessage({ message, containerWidth = 'main' }: ChatMessagePro
           <DocumentView content={displayContent} containerWidth={containerWidth} />
           {suggestions && (
             <SuggestionChips
+              prompt={suggestions.prompt}
               items={suggestions.items}
               aiContent={message.content}
             />
@@ -589,10 +590,14 @@ export function ChatMessage({ message, containerWidth = 'main' }: ChatMessagePro
             }
           </div>
           <div className={cn(
-            'max-w-[80%] px-3 py-2 rounded-lg text-sm leading-relaxed',
-            isUser
-              ? 'bg-cyan-500/10 border border-cyan-500/20 text-white/80 font-mono'
-              : isError
+            isUser ? 'max-w-[80%]' : 'max-w-[85%]',
+            'space-y-0'
+          )}>
+            <div className={cn(
+              'px-3 py-2 rounded-lg text-sm leading-relaxed',
+              isUser
+                ? 'bg-cyan-500/10 border border-cyan-500/20 text-white/80 font-mono'
+                : isError
               ? 'bg-red-500/10 border border-red-500/20 text-red-300 font-mono'
               : 'bg-white/5 border border-white/10 text-white/70'
           )}>
@@ -605,15 +610,16 @@ export function ChatMessage({ message, containerWidth = 'main' }: ChatMessagePro
             {isUser ? (
               <div className="whitespace-pre-wrap break-words">{message.content}</div>
             ) : (
-              <>
-                <MarkdownRenderer content={displayContent} />
-                {suggestions && (
-                  <SuggestionChips
-                    items={suggestions.items}
-                    aiContent={message.content}
-                  />
-                )}
-              </>
+              <MarkdownRenderer content={displayContent} />
+            )}
+          </div>
+            {/* 建议选项卡片 — 放在气泡外部，独立渲染 */}
+            {!isUser && suggestions && (
+              <SuggestionChips
+                prompt={suggestions.prompt}
+                items={suggestions.items}
+                aiContent={message.content}
+              />
             )}
           </div>
         </div>
