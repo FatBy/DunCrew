@@ -1,27 +1,58 @@
 <div align="center">
 
-# DD-OS
+![DD-OS Banner](docs/images/ddos-banner.png)
 
-### Digital Dimension Operating System
-
-*The AI that learns, evolves, and remembers -- not just chats.*
+### The AI that learns, evolves, and remembers -- not just chats.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org/)
 [![Python](https://img.shields.io/badge/Python-3.10+-yellow.svg)](https://python.org/)
 
-[GitHub](https://github.com/FatBy/DD-OS) | [Skills Hub](https://github.com/FatBy/DD-OS/tree/main/skills)
+[GitHub](https://github.com/FatBy/DD-OS) | [Skills Hub](https://github.com/FatBy/DD-OS/tree/main/skills) | [Examples](examples/)
 
 </div>
 
 ---
 
-![DD-OS World View](docs/images/ddos-hero.png)
+## What is DD-OS?
 
-**DD-OS** is a self-evolving AI operating system that runs entirely on your local machine. Unlike traditional AI assistants that treat every conversation as a blank slate, DD-OS builds **persistent expertise** -- each workflow node (Nexus) develops its own memory, scoring history, and operational genes through use.
+**DD-OS** (Digital Dimension Operating System) is a self-evolving AI operating system that runs entirely on your local machine. Unlike traditional AI assistants that treat every conversation as a blank slate, DD-OS builds **persistent expertise** -- each workflow node (Nexus) develops its own memory, scoring history, and operational genes through use.
 
 Built on a ReAct execution engine with Reflexion self-correction, Critic verification, and confidence-based knowledge promotion, DD-OS turns your AI from a stateless chatbot into a **trainable specialist that gets smarter over time**.
+
+---
+
+## Interface Preview
+
+DD-OS replaces the traditional chatbox with an explorable digital world. Three visual themes available:
+
+<table>
+<tr>
+<td align="center"><b>Minimalist</b><br/>Floating particles, breathing glow<br/><img src="docs/images/screenshot-main.png" width="280"/></td>
+<td align="center"><b>Cosmos</b><br/>Deep space planets, orbital rings<br/><img src="docs/images/screenshot-cosmos.png" width="280"/></td>
+<td align="center"><b>Cityscape</b><br/>Isometric pixel city tiles<br/><img src="docs/images/screenshot-city.png" width="280"/></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td align="center"><b>World View (with Nexuses)</b><br/>Each node is a trainable AI expert<br/><img src="docs/images/screenshot-world-populated.png" width="560"/></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td align="center"><b>AI Chat Panel</b><br/>ReAct execution with tool calls<br/><img src="docs/images/screenshot-chat-active.png" width="350"/></td>
+<td align="center"><b>Skill Tree</b><br/>92 skills with particle visualization<br/><img src="docs/images/screenshot-skilltree-populated.png" width="450"/></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td align="center"><b>Settings</b><br/>OpenAI-compatible API config<br/><img src="docs/images/screenshot-settings.png" width="400"/></td>
+</tr>
+</table>
 
 ---
 
@@ -76,16 +107,12 @@ Most AI agent frameworks give you a loop: *plan, act, observe, repeat*. DD-OS go
 
 Each Nexus is not just a prompt template -- it's an **evolvable workflow node** with its own brain.
 
-![Nexus Detail](docs/images/ddos-nexus.png)
-
 - **Level Progression**: XP earned per execution, visual upgrades on level-up
 - **Independent Scoring**: 0-100 scale with streak bonuses and tool-dimension tracking
 - **Bound Skills**: Compose multiple SKILLs into specialized workflows
 - **SOP Memory**: Standard operating procedures that persist across sessions
 - **Per-Nexus Context Engine**: Each Nexus maintains its own L1 memory and context budget
 - **Custom Model Assignment**: Different LLMs for different Nexuses
-
----
 
 ### Two-Tier Memory -- Knowledge That Grows
 
@@ -101,6 +128,7 @@ DD-OS implements a biologically-inspired memory architecture:
 - L0 memories accessible by ALL Nexuses, enabling cross-domain knowledge transfer
 
 **Confidence Signals:**
+
 | Signal | Delta | Source |
 |--------|-------|--------|
 | Environment Assertion | +0.15 | Critic verifies tool output |
@@ -110,49 +138,17 @@ DD-OS implements a biologically-inspired memory architecture:
 
 **File Registry** -- Every file operation is auto-registered with O(1) lookup. The agent never wastes turns re-exploring known paths.
 
----
-
 ### ReAct Engine -- Self-Correcting Execution
-
-![AI Chat](docs/images/ddos-chat.png)
 
 The execution engine goes beyond basic plan-act loops:
 
 - **Task Decomposition**: Complex tasks auto-split into executable sub-steps
-- **Tool Calling**: File I/O, shell commands, web search, MCP tools, and 140+ skills
+- **Tool Calling**: File I/O, shell commands, web search, MCP tools, and 90+ skills
 - **Reflexion**: On failure, triggers structured self-reflection with error analysis -- not blind retry
 - **Critic Verification**: After file writes and shell commands, automatically verifies the result
 - **Digital Immune System**: Failure pattern signatures matched against self-healing scripts
 - **Dangerous Operation Approval**: 3-tier risk classification (critical/high/medium) with user approval flow
 - **Gene Pool Harvesting**: Successful execution patterns extracted as reusable "genes" with confidence tracking
-
----
-
-### Immersive World Interface
-
-DD-OS replaces the chatbox with an explorable digital world.
-
-![World Themes](docs/images/ddos-themes.png)
-
-| Theme | Style |
-|-------|-------|
-| **Cosmos** | Deep space planets, orbital connections, nebula particles |
-| **Cityscape** | Isometric pixel city with tile rendering |
-| **Minimalist** | Floating particles, breathing glow, clean blocks |
-
-Each Nexus appears as a building or planet. Click to enter its dedicated workspace.
-
----
-
-### Five Core Modules
-
-| Module | Description |
-|--------|-------------|
-| **World View** | Nexus node map with drag interaction and theme switching |
-| **Task Monitor** | Running/completed tasks with real-time execution step tracking |
-| **Skill Tree** | AI capability radar with LLM-generated natural language summaries |
-| **Memory Palace** | Adventure logs, memory playback, AI narrative generation |
-| **Soul Tower** | AI personality config (SOUL.md), core values and behavior boundaries |
 
 ---
 
@@ -207,9 +203,7 @@ Open **http://localhost:5173** in your browser.
 
 ## API Configuration
 
-DD-OS works with any OpenAI-compatible API.
-
-![Settings](docs/images/screenshot-settings.png)
+![Settings Panel](docs/images/screenshot-settings.png)
 
 1. Click **Settings** in the left sidebar
 2. Fill in Base URL, API Key, and Model name
@@ -226,6 +220,18 @@ DD-OS works with any OpenAI-compatible API.
 
 ---
 
+## Examples
+
+See the [`examples/`](examples/) directory for real-world use cases:
+
+| Example | Description |
+|---------|-------------|
+| [Novel Writing](examples/novel-writing.md) | Using the novel-master Nexus to plan and write a chapter |
+| [Code Project](examples/code-project.md) | Building a utility library with ReAct execution |
+| [Research Report](examples/research-report.md) | Web search + structured report generation |
+
+---
+
 ## Skill System
 
 ### Built-in Tools
@@ -238,9 +244,9 @@ DD-OS works with any OpenAI-compatible API.
 | `saveMemory` / `searchMemory` | Two-tier memory read/write |
 | `listDir` | Directory listing with auto-registration |
 
-### 140+ Community Skills
+### 90+ Community Skills
 
-DD-OS ships with 140+ skills covering code generation, document writing, image creation, stock analysis, PPT generation, and more. Skills are defined as `SKILL.md` files and hot-reload without restart.
+DD-OS ships with 90+ skills covering code generation, document writing, image creation, stock analysis, PPT generation, and more. Skills are defined as `SKILL.md` files and hot-reload without restart.
 
 ### Create Custom Skills
 
@@ -259,6 +265,18 @@ version: 1.0.0
 
 What this skill does and how it works...
 ```
+
+---
+
+## Five Core Modules
+
+| Module | Description |
+|--------|-------------|
+| **World View** | Nexus node map with drag interaction and theme switching |
+| **Task Monitor** | Running/completed tasks with real-time execution step tracking |
+| **Skill Tree** | AI capability radar with particle visualization |
+| **Memory Palace** | Adventure logs, memory playback, AI narrative generation |
+| **Soul Tower** | AI personality config (SOUL.md), core values and behavior boundaries |
 
 ---
 
@@ -286,6 +304,12 @@ What this skill does and how it works...
 | Backend | Python (ddos-local-server.py) with SQLite + FTS5 |
 | Memory | SQLite (FTS5 full-text search) + JSONL traces + localStorage |
 | Protocol | HTTP REST API + MCP Standard Protocol |
+
+---
+
+## Contributing
+
+We welcome contributions! Check out our [open issues](https://github.com/FatBy/DD-OS/issues) for `good first issue` labels.
 
 ---
 

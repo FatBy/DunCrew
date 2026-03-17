@@ -86,6 +86,7 @@ export function SkillTreeView() {
   const particlePosRef = useRef<ParticleScreenPos[]>([])
   const hoveredRef = useRef<string | null>(null)
   const pausedRef = useRef(false)
+  const selectedIdRef = useRef<string | null>(null)
 
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 })
   const [tooltip, setTooltip] = useState<{ name: string; desc?: string; x: number; y: number } | null>(null)
@@ -185,6 +186,14 @@ export function SkillTreeView() {
 
   const activeCount = useMemo(() => skills.filter(s => s.unlocked || s.status === 'active').length, [skills])
 
+  // ── 选中时冻结粒子 ──
+  useEffect(() => {
+    selectedIdRef.current = selectedSkill?.id ?? null
+    if (selectedSkill) {
+      pausedRef.current = true
+    }
+  }, [selectedSkill])
+
   // ── 命中检测 ──
   const findNearest = useCallback((clientX: number, clientY: number): ParticleScreenPos | null => {
     const canvas = canvasRef.current
@@ -210,7 +219,7 @@ export function SkillTreeView() {
     const hit = findNearest(e.clientX, e.clientY)
     const canvas = canvasRef.current
     if (canvas) canvas.style.cursor = hit ? 'pointer' : 'default'
-    pausedRef.current = !!hit
+    pausedRef.current = !!hit || selectedIdRef.current !== null
     const hitId = hit?.id ?? null
     if (hitId !== hoveredRef.current) {
       hoveredRef.current = hitId
@@ -225,7 +234,7 @@ export function SkillTreeView() {
 
   const handleMouseLeave = useCallback(() => {
     hoveredRef.current = null
-    pausedRef.current = false
+    pausedRef.current = selectedIdRef.current !== null
     setTooltip(null)
     if (canvasRef.current) canvasRef.current.style.cursor = 'default'
   }, [])
@@ -234,8 +243,11 @@ export function SkillTreeView() {
     const hit = findNearest(e.clientX, e.clientY)
     if (hit) {
       setSelectedSkill(hit)
+      selectedIdRef.current = hit.id
+      pausedRef.current = true
     } else {
       setSelectedSkill(null)
+      selectedIdRef.current = null
     }
   }, [findNearest])
 
@@ -337,11 +349,11 @@ export function SkillTreeView() {
 
       // 粒子
       const positions: ParticleScreenPos[] = []
-      const isPaused = pausedRef.current
+      const isPaused = pausedRef.current || selectedIdRef.current !== null
 
       particles.forEach(p => {
         if (isPaused) {
-          p.speed = Math.max(0, p.speed - 0.0002)
+          p.speed = Math.max(0, p.speed - 0.0005)
         } else {
           p.speed = Math.min(p.baseSpeed, p.speed + 0.0002)
         }
@@ -427,7 +439,7 @@ export function SkillTreeView() {
   }, [selectedSkill, skills])
 
   return (
-    <div className="h-full relative">
+    <div className="h-full relative overflow-hidden">
       {/* ── 全幅动画容器 ── */}
       <div
         ref={wrapRef}
@@ -540,7 +552,10 @@ export function SkillTreeView() {
           const pad = 12
           let bx = selectedSkill.sx + 16
           let by = selectedSkill.sy - bubbleH / 2
+          // 右溢出 → 翻到左边
           if (bx + bubbleW + pad > containerSize.w) bx = selectedSkill.sx - bubbleW - 16
+          // 左溢出兜底
+          if (bx < pad) bx = pad
           if (by < pad) by = pad
           if (by + bubbleH + pad > containerSize.h) by = containerSize.h - bubbleH - pad
           return (
@@ -551,7 +566,7 @@ export function SkillTreeView() {
               <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100 bg-stone-50/50">
                 <h3 className="text-sm font-black text-stone-800 truncate">{selectedSkill.name}</h3>
                 <button
-                  onClick={() => setSelectedSkill(null)}
+                  onClick={() => { setSelectedSkill(null); selectedIdRef.current = null }}
                   className="w-6 h-6 rounded-lg bg-stone-100 hover:bg-rose-50 flex items-center justify-center transition-colors pointer-events-auto"
                 >
                   <X className="w-3 h-3 text-stone-500" />

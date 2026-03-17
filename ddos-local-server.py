@@ -195,9 +195,9 @@ def init_sqlite_db(db_path: Path) -> sqlite3.Connection:
 
     # V3: 安全地添加 confidence 列 (如果不存在)
     try:
-        cursor.execute("SELECT confidence FROM memory LIMIT 1")
+        conn.execute("SELECT confidence FROM memory LIMIT 1")
     except sqlite3.OperationalError:
-        cursor.execute("ALTER TABLE memory ADD COLUMN confidence REAL DEFAULT 0.5")
+        conn.execute("ALTER TABLE memory ADD COLUMN confidence REAL DEFAULT 0.5")
         print("[SQLite] Added 'confidence' column to memory table")
 
     conn.commit()

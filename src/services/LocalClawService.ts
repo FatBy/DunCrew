@@ -1058,7 +1058,8 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
         const nexuses = await nexusesRes.json()
         if (nexuses.length > 0) {
           this.storeActions?.setNexusesFromServer(nexuses)
-          localStorage.setItem('ddos_nexuses', JSON.stringify(nexuses))
+          // 注意: 不直接写 localStorage，由 setNexusesFromServer 内部的
+          // saveNexusesToStorage 统一处理，避免无 scoring 的原始数据覆盖本地缓存
           console.log(`[LocalClaw] ${nexuses.length} nexuses loaded to store`)
         }
       }

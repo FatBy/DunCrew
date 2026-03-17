@@ -429,14 +429,39 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
       if (serverNexuses && serverNexuses.length > 0) {
         for (const serverNexus of serverNexuses) {
           const existing = mergedMap.get(serverNexus.id)
-          const serverTime = serverNexus.updatedAt || serverNexus.createdAt || 0
-          const existingTime = existing?.updatedAt || existing?.createdAt || 0
-          if (!existing || serverTime >= existingTime) {
-            // 保护本地已有的 scoring：服务器数据无实质分数时保留本地
-            const sScoring = serverNexus.scoring
-            const hasRealScoring = sScoring && typeof sScoring === 'object' && (sScoring.score > 0 || sScoring.totalRuns > 0)
-            const preservedScoring = hasRealScoring ? sScoring : (existing?.scoring || serverNexus.scoring)
-            mergedMap.set(serverNexus.id, { ...serverNexus, scoring: preservedScoring! })
+          
+          // 保护本地已有的 scoring：服务器数据通常不含 scoring
+          const sScoring = serverNexus.scoring
+          const hasRealScoring = sScoring && typeof sScoring === 'object' && (sScoring.score > 0 || sScoring.totalRuns > 0)
+          
+          if (!existing) {
+            // 新 Nexus：直接添加
+            mergedMap.set(serverNexus.id, serverNexus)
+          } else {
+            // 已存在：合并服务器的元数据字段，但始终保留本地 scoring
+            const preservedScoring = hasRealScoring ? sScoring : (existing.scoring || createInitialScoring())
+            mergedMap.set(serverNexus.id, {
+              ...existing,
+              // 从服务器更新的元数据字段
+              label: serverNexus.label || (serverNexus as any).name || existing.label,
+              flavorText: serverNexus.flavorText || (serverNexus as any).description || existing.flavorText,
+              boundSkillIds: (serverNexus as any).skillDependencies || serverNexus.boundSkillIds || existing.boundSkillIds,
+              sopContent: serverNexus.sopContent || existing.sopContent,
+              triggers: serverNexus.triggers || existing.triggers,
+              version: serverNexus.version || existing.version,
+              path: serverNexus.path || existing.path,
+              location: serverNexus.location || existing.location,
+              objective: serverNexus.objective || existing.objective,
+              metrics: serverNexus.metrics || existing.metrics,
+              strategy: serverNexus.strategy || existing.strategy,
+              // 始终保留本地 scoring 和位置
+              scoring: preservedScoring!,
+              position: existing.position,
+              visualDNA: existing.visualDNA,
+              createdAt: existing.createdAt,
+              updatedAt: existing.updatedAt,
+              constructionProgress: existing.constructionProgress,
+            })
           }
         }
       }

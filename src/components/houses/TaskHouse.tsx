@@ -3,28 +3,24 @@
  *
  * 设计宪法:
  * - bg-white/bg-stone-50 亮色主体
- * - 三 Tab：监控矩阵 / 实时状态 / 历史
+ * - 三 Tab：执行中 / 实时 / 监控矩阵
  * - text-[10px] font-black uppercase tracking-widest 表头
  */
 
 import { useState } from 'react'
-import { Loader2, Activity, CheckCircle2, Clock, BarChart3 } from 'lucide-react'
+import { Loader2, Activity, Clock, BarChart3 } from 'lucide-react'
 import { useStore } from '@/store'
 import { TaskMonitorView } from '@/components/blueprint/TaskMonitorView'
 import { AgentRunStatePanel } from './task/AgentRunStatePanel'
 import { ExecutionFocusView } from './task/ExecutionFocusView'
-import { HistoryDrawer } from './task/HistoryDrawer'
-import { MonitorPanel } from './task/MonitorPanel'
 import { SilentAnalysisView } from './task/SilentAnalysisView'
 
-type TabType = 'matrix' | 'live' | 'executing' | 'history' | 'monitor'
+type TabType = 'executing' | 'live' | 'matrix'
 
 const TABS: { id: TabType; label: string; icon: typeof Activity }[] = [
-  { id: 'matrix', label: '监控矩阵', icon: Activity },
-  { id: 'live', label: '实时', icon: Activity },
   { id: 'executing', label: '执行中', icon: Clock },
-  { id: 'history', label: '历史', icon: CheckCircle2 },
-  { id: 'monitor', label: '监控', icon: BarChart3 },
+  { id: 'live', label: '实时', icon: Activity },
+  { id: 'matrix', label: '监控矩阵', icon: BarChart3 },
 ]
 
 export function TaskHouse() {
@@ -35,12 +31,9 @@ export function TaskHouse() {
   const abortChat = useStore((s) => s.abortChat)
 
   const isConnected = connectionStatus === 'connected'
-  const [activeTab, setActiveTab] = useState<TabType>('matrix')
+  const [activeTab, setActiveTab] = useState<TabType>('executing')
 
   const executingTasks = activeExecutions.filter((t) => t.status === 'executing')
-  const historyTasks = activeExecutions.filter(
-    (t) => t.status === 'done' || t.status === 'terminated',
-  )
 
   const handleTerminate = (taskId: string) => {
     abortChat()
@@ -104,28 +97,6 @@ export function TaskHouse() {
             )}
           </>
         )}
-
-        {activeTab === 'history' && (
-          <>
-            {historyTasks.length > 0 ? (
-              <div className="p-4">
-                <HistoryDrawer
-                  isOpen={true}
-                  onClose={() => {}}
-                  inline={true}
-                  tasks={historyTasks}
-                />
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full py-16">
-                <Clock className="w-10 h-10 mb-3 text-stone-300 opacity-50" />
-                <p className="text-sm text-stone-400">暂无历史任务</p>
-              </div>
-            )}
-          </>
-        )}
-
-        {activeTab === 'monitor' && <MonitorPanel />}
       </div>
     </div>
   )
