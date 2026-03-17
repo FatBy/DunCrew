@@ -4,6 +4,18 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  safelist: [
+    // IncubatorPod 原型中 8 个角色色系的动态 Tailwind 类名
+    // 原型使用 `border-${theme}-100` 模板字面量，JIT 无法静态扫描
+    ...['amber','fuchsia','pink','cyan','blue','emerald','violet','lime','stone',
+        'orange','purple','rose','indigo','teal','green'].flatMap(c => [
+      `border-${c}-100`, `border-${c}-200`, `border-${c}-200/50`,
+      `text-${c}-400`, `text-${c}-500`, `text-${c}-600`,
+      `bg-${c}-50`, `bg-${c}-100`, `bg-${c}-400/20`,
+      `shadow-${c}-400/40`, `shadow-${c}-500/60`,
+      `from-${c}-300`, `from-${c}-400`, `to-${c}-400`, `to-${c}-500`, `to-${c}-600`,
+    ]),
+  ],
   theme: {
     extend: {
       // ============================================
@@ -20,6 +32,7 @@ export default {
           // 文本系
           'text-primary': 'rgb(var(--color-text-primary) / <alpha-value>)',
           'text-secondary': 'rgb(var(--color-text-secondary) / <alpha-value>)',
+          'text-tertiary': 'rgb(var(--color-text-tertiary) / <alpha-value>)',
           'text-muted': 'rgb(var(--color-text-muted) / <alpha-value>)',
           
           // 边框

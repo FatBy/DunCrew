@@ -11,37 +11,21 @@ import type {
   Point,
 } from './types'
 import { RendererRegistry } from './RendererRegistry'
-import { createCosmosRenderers, createCityscapeRenderers, createVillageRenderers, createMinimalistRenderers, createSmallvilleRenderers, createPixelTownRenderers } from './index'
+import { createMinimalistRenderers } from './index'
 import { worldToScreen as wts, screenToWorld as stw } from './utils/coordinateTransforms'
-import { PlanetRenderer } from './entities/PlanetRenderer'
 import { BlockRenderer } from './entities/BlockRenderer'
-import { TopDownBuildingRenderer } from './topdown/TopDownBuildingRenderer'
-import { IsometricBuildingRenderer } from './isometric/IsometricBuildingRenderer'
 import { CosmosRippleRenderer } from './backgrounds/CosmosRipple'
-import { SmallvilleBuildingRenderer } from './smallville/SmallvilleBuildingRenderer'
-import { SmallvilleNPCRenderer } from './smallville/SmallvilleNPCRenderer'
-import { SmallvilleGrid } from './smallville/SmallvilleGrid'
-import { SmallvilleAgentRenderer } from './smallville/SmallvilleAgentRenderer'
-import type { SmallvilleViewManager } from './smallville/SmallvilleViewManager'
-import { PixelTownBuildingRenderer } from './pixeltown/PixelTownBuildingRenderer'
 
-// 俯视角瓦片尺寸 (16px * 3 scale)
-const TOPDOWN_TILE_SIZE = 48
-
-// 等轴测瓦片尺寸
-const ISO_TILE_W = 132
-const ISO_TILE_H = 101
-
-// 默认调色板 (保持原有配色)
+// 默认调色板 (warm 主题)
 const DEFAULT_PALETTE: CanvasPalette = {
-  spaceGradient: ['#020617', '#0a0f1e', '#060b18'],
-  gridColor: '80, 160, 255',
-  gridOpacity: 0.04,
-  starColor: '#ffffff',
-  labelSelected: 'rgba(255,255,255,0.9)',
-  labelDefault: 'rgba(200, 220, 255, 0.6)',
-  glowHue: 220,
-  coreHue: 220,
+  spaceGradient: ['#fdfbf5', '#f7f3e9', '#faf6ee'],
+  gridColor: '180, 165, 140',
+  gridOpacity: 0.06,
+  starColor: '#c8b898',
+  labelSelected: 'rgba(60,50,40,0.9)',
+  labelDefault: 'rgba(120,105,85,0.6)',
+  glowHue: 35,
+  coreHue: 30,
 }
 
 /**
@@ -54,7 +38,6 @@ export class GameCanvas {
   private dpr: number = 1
   private animFrameId = 0
   private _time = 0
-  // mousePos 已移除 - 核心渲染已禁用
   private palette: CanvasPalette = DEFAULT_PALETTE
   private registry: RendererRegistry
 
@@ -71,15 +54,10 @@ export class GameCanvas {
     if (!ctx) throw new Error('Failed to get 2d context')
     this.ctx = ctx
 
-    // 初始化渲染器注册表
+    // 初始化渲染器注册表 (仅 minimalist 主题)
     this.registry = new RendererRegistry()
-    this.registry.register('cosmos', createCosmosRenderers())
-    this.registry.register('cityscape', createCityscapeRenderers())
-    this.registry.register('village', createVillageRenderers())
     this.registry.register('minimalist', createMinimalistRenderers())
-    this.registry.register('smallville', createSmallvilleRenderers())
-    this.registry.register('pixeltown', createPixelTownRenderers())
-    this.registry.setTheme('cosmos')
+    this.registry.setTheme('minimalist')
 
     this.resize()
     this.render = this.render.bind(this)
@@ -110,7 +88,7 @@ export class GameCanvas {
       }
     }
     
-    // 更新 PlanetRenderer 的 DPR
+    // 更新 BlockRenderer 的 DPR
     this.updateRenderersDpr()
   }
 
@@ -121,68 +99,21 @@ export class GameCanvas {
   }
 
   updateState(state: RenderState): void {
+    // 更新核心粒子 (如果存在核心渲染器)
     const prevSkillCount = this.state.energyCore?.skills.length ?? -1
     const newSkillCount = state.energyCore?.skills.length ?? -1
-    
-    // 更新核心粒子 (如果存在核心渲染器)
     if (state.energyCore && prevSkillCount !== newSkillCount) {
       const renderers = this.registry.getCurrent()
       renderers?.core?.initParticles?.(state.energyCore)
     }
     
-    // 更新执行状态到各实体渲染器
-    const planetRenderer = this.getPlanetRenderer()
-    if (planetRenderer) {
-      planetRenderer.setExecutionState(
-        state.executingNexusId ?? null,
-        state.executionStartTime ?? null,
-      )
-    }
-    
+    // 更新执行状态到 BlockRenderer
     const blockRenderer = this.getBlockRenderer()
     if (blockRenderer) {
       blockRenderer.setExecutionState(
         state.executingNexusId ?? null,
         state.executionStartTime ?? null,
       )
-    }
-    
-    const topDownRenderer = this.getTopDownBuildingRenderer()
-    if (topDownRenderer) {
-      topDownRenderer.setExecutionState(
-        state.executingNexusId ?? null,
-        state.executionStartTime ?? null,
-      )
-    }
-    
-    const isoRenderer = this.getIsometricBuildingRenderer()
-    if (isoRenderer) {
-      isoRenderer.setExecutionState(
-        state.executingNexusId ?? null,
-        state.executionStartTime ?? null,
-      )
-    }
-    
-    const smallvilleBuildingRenderer = this.getSmallvilleBuildingRenderer()
-    if (smallvilleBuildingRenderer) {
-      smallvilleBuildingRenderer.setExecutionState(
-        state.executingNexusId ?? null,
-        state.executionStartTime ?? null,
-      )
-    }
-    
-    const pixelTownRenderer = this.getPixelTownBuildingRenderer()
-    if (pixelTownRenderer) {
-      pixelTownRenderer.setExecutionState(
-        state.executingNexusId ?? null,
-        state.executionStartTime ?? null,
-      )
-    }
-    
-    // Smallville Agent 执行状态同步
-    const agentRenderer = this.getSmallvilleAgentRenderer()
-    if (agentRenderer) {
-      agentRenderer.setExecuting(state.executingNexusId != null)
     }
     
     // 更新涟漪渲染器的核心状态
@@ -198,13 +129,6 @@ export class GameCanvas {
       renderers.grid.updateNexusPositions(positions)
     }
     
-    // Smallville 主题：同步道路位置到 NPC 渲染器
-    const smallvilleGrid = this.getSmallvilleGrid()
-    const smallvilleNpc = this.getSmallvilleNPCRenderer()
-    if (smallvilleGrid && smallvilleNpc) {
-      smallvilleNpc.setRoadPositions(smallvilleGrid.getRoadPositions())
-    }
-    
     // 更新装饰层的建筑位置（用于避开建筑区域）
     if (renderers?.decorations?.updateNexusPositions && state.nexuses) {
       const positions = [...state.nexuses.values()].map(n => n.position)
@@ -213,8 +137,6 @@ export class GameCanvas {
     
     this.state = state
   }
-
-  // setMousePosition 已移除 - 核心渲染已禁用
 
   triggerRipple(x: number, y: number): void {
     const renderers = this.registry.getCurrent()
@@ -236,110 +158,13 @@ export class GameCanvas {
     return this.registry.getCurrentTheme()
   }
 
-  // ---- Smallville Room Transitions ----
-
-  /**
-   * 进入 Smallville 房间视图
-   */
-  enterSmallvilleRoom(nexusId: string): void {
-    const vm = this.getSmallvilleViewManager()
-    if (!vm) return
-    const nexus = this.state.nexuses.get(nexusId)
-    if (!nexus) return
-    const screen = this.worldToScreen(nexus.position.gridX, nexus.position.gridY, this.state.camera)
-    vm.enterRoom(nexusId, nexus, screen.x, screen.y)
-  }
-
-  /**
-   * 退出 Smallville 房间视图
-   */
-  exitSmallvilleRoom(): void {
-    const vm = this.getSmallvilleViewManager()
-    vm?.exitRoom()
-  }
-
-  /**
-   * 查询当前是否处于 Smallville 房间模式
-   */
-  isInSmallvilleRoom(): boolean {
-    const vm = this.getSmallvilleViewManager()
-    return vm?.isInRoomView() ?? false
-  }
-
-  /**
-   * 查询当前是否处于 Smallville 过渡动画
-   */
-  isSmallvilleTransitioning(): boolean {
-    const vm = this.getSmallvilleViewManager()
-    return vm?.isTransitioning() ?? false
-  }
-
   // ---- Coordinate Transforms ----
 
-  /**
-   * 俯视角坐标转换 (正方形网格) - village 主题
-   */
-  private topDownWorldToScreen(gridX: number, gridY: number, camera: CameraState): Point {
-    const w = this.canvas.clientWidth
-    const h = this.canvas.clientHeight
-    const tileSize = TOPDOWN_TILE_SIZE * camera.zoom
-    return {
-      x: w / 2 + gridX * tileSize + camera.x * camera.zoom,
-      y: h / 2 + gridY * tileSize + camera.y * camera.zoom,
-    }
-  }
-
-  /**
-   * 等轴测坐标转换 (菱形网格) - cityscape 主题
-   */
-  private isoWorldToScreen(gridX: number, gridY: number, camera: CameraState): Point {
-    const w = this.canvas.clientWidth
-    const h = this.canvas.clientHeight
-    const tileW = ISO_TILE_W * camera.zoom * 0.5
-    const tileH = ISO_TILE_H * camera.zoom * 0.5
-    return {
-      x: w / 2 + (gridX - gridY) * tileW * 0.5 + camera.x * camera.zoom,
-      y: h / 2 + (gridX + gridY) * tileH * 0.5 + camera.y * camera.zoom,
-    }
-  }
-
   worldToScreen(gridX: number, gridY: number, camera: CameraState): Point {
-    const theme = this.registry.getCurrentTheme()
-    if (theme === 'village' || theme === 'smallville') {
-      return this.topDownWorldToScreen(gridX, gridY, camera)
-    }
-    if (theme === 'cityscape') {
-      return this.isoWorldToScreen(gridX, gridY, camera)
-    }
-    // cosmos/minimalist 使用默认菱形网格
     return wts(gridX, gridY, camera, this.canvas.clientWidth, this.canvas.clientHeight)
   }
 
   screenToWorld(screenX: number, screenY: number, camera: CameraState): { gridX: number; gridY: number } {
-    const theme = this.registry.getCurrentTheme()
-    if (theme === 'village' || theme === 'smallville') {
-      // 俯视角逆转换
-      const w = this.canvas.clientWidth
-      const h = this.canvas.clientHeight
-      const tileSize = TOPDOWN_TILE_SIZE * camera.zoom
-      return {
-        gridX: Math.round((screenX - w / 2 - camera.x * camera.zoom) / tileSize),
-        gridY: Math.round((screenY - h / 2 - camera.y * camera.zoom) / tileSize),
-      }
-    }
-    if (theme === 'cityscape') {
-      // 等轴测逆转换
-      const w = this.canvas.clientWidth
-      const h = this.canvas.clientHeight
-      const tileW = ISO_TILE_W * camera.zoom * 0.5
-      const tileH = ISO_TILE_H * camera.zoom * 0.5
-      const sx = (screenX - w / 2 - camera.x * camera.zoom)
-      const sy = (screenY - h / 2 - camera.y * camera.zoom)
-      return {
-        gridX: Math.round(sx / tileW + sy / tileH),
-        gridY: Math.round(sy / tileH - sx / tileW),
-      }
-    }
     return stw(screenX, screenY, camera, this.canvas.clientWidth, this.canvas.clientHeight)
   }
 
@@ -365,74 +190,11 @@ export class GameCanvas {
 
   // ---- Private Methods ----
 
-  private getPlanetRenderer(): PlanetRenderer | null {
-    const renderers = this.registry.getCurrent()
-    if (!renderers) return null
-    const planet = renderers.entities.find(e => e.id === 'planet-renderer')
-    return planet as PlanetRenderer | null
-  }
-
   private getBlockRenderer(): BlockRenderer | null {
     const renderers = this.registry.getCurrent()
     if (!renderers) return null
     const block = renderers.entities.find(e => e.id === 'block-renderer')
     return block as BlockRenderer | null
-  }
-
-  private getTopDownBuildingRenderer(): TopDownBuildingRenderer | null {
-    const renderers = this.registry.getCurrent()
-    if (!renderers) return null
-    const building = renderers.entities.find(e => e.id === 'topdown-building-renderer')
-    return building as TopDownBuildingRenderer | null
-  }
-
-  private getIsometricBuildingRenderer(): IsometricBuildingRenderer | null {
-    const renderers = this.registry.getCurrent()
-    if (!renderers) return null
-    const building = renderers.entities.find(e => e.id === 'isometric-building-renderer')
-    return building as IsometricBuildingRenderer | null
-  }
-
-  private getSmallvilleBuildingRenderer(): SmallvilleBuildingRenderer | null {
-    const renderers = this.registry.getCurrent()
-    if (!renderers) return null
-    const building = renderers.entities.find(e => e.id === 'smallville-building')
-    return building as SmallvilleBuildingRenderer | null
-  }
-
-  private getSmallvilleGrid(): SmallvilleGrid | null {
-    const renderers = this.registry.getCurrent()
-    if (!renderers) return null
-    if (renderers.grid && 'getRoadPositions' in renderers.grid) {
-      return renderers.grid as SmallvilleGrid
-    }
-    return null
-  }
-
-  private getSmallvilleNPCRenderer(): SmallvilleNPCRenderer | null {
-    const renderers = this.registry.getCurrent()
-    if (!renderers) return null
-    const npc = renderers.particles.find(p => p.id === 'smallville-npc-renderer')
-    return npc as SmallvilleNPCRenderer | null
-  }
-
-  private getSmallvilleViewManager(): SmallvilleViewManager | null {
-    const building = this.getSmallvilleBuildingRenderer()
-    return building?.viewManager ?? null
-  }
-
-  private getSmallvilleAgentRenderer(): SmallvilleAgentRenderer | null {
-    const renderers = this.registry.getCurrent()
-    if (!renderers) return null
-    const agent = renderers.particles.find(p => p.id === 'smallville-agent-renderer')
-    return agent as SmallvilleAgentRenderer | null
-  }
-
-  private getPixelTownBuildingRenderer(): PixelTownBuildingRenderer | null {
-    const renderers = this.registry.getCurrent()
-    if (!renderers) return null
-    const building = renderers.entities.find(e => e.id === 'pixeltown-building-renderer')
-    return building as PixelTownBuildingRenderer | null
   }
 
   private getRippleRenderer(): CosmosRippleRenderer | null {
@@ -445,17 +207,9 @@ export class GameCanvas {
   }
 
   private updateRenderersDpr(): void {
-    const planetRenderer = this.getPlanetRenderer()
-    if (planetRenderer) {
-      planetRenderer.setDpr(this.dpr)
-    }
     const blockRenderer = this.getBlockRenderer()
     if (blockRenderer) {
       blockRenderer.setDpr(this.dpr)
-    }
-    const pixelTownRenderer = this.getPixelTownBuildingRenderer()
-    if (pixelTownRenderer) {
-      pixelTownRenderer.setDpr(this.dpr)
     }
   }
 
@@ -484,12 +238,6 @@ export class GameCanvas {
 
     this._time += 0.002
 
-    // Smallville ViewManager 帧更新（驱动 zoom 过渡动画）
-    const smallvilleVM = this.getSmallvilleViewManager()
-    if (smallvilleVM) {
-      smallvilleVM.update(timestamp)
-    }
-
     const { camera, nexuses, selectedNexusId, renderSettings } = this.state
 
     // 构建渲染上下文
@@ -504,28 +252,22 @@ export class GameCanvas {
       height: h,
     }
 
-    // Layer 0: Deep Space (星空背景)
+    // Layer 0: Background
     if (renderSettings.showParticles) {
       renderers.background.render(renderCtx)
     }
 
-    // Layer 1: Energy Core (能量核心) - 已禁用
-    // 如需恢复，取消下方注释
-    // if (this.state.energyCore && renderers.core) {
-    //   renderers.core.render(renderCtx, this.state.energyCore, this._mousePos)
-    // }
-
-    // Layer 2: ISO Grid
+    // Layer 1: Grid
     if (renderSettings.showGrid) {
       renderers.grid.render(renderCtx)
     }
 
-    // Layer 2.5: Decorations (树木/灌木，在建筑之前渲染以被建筑遮挡)
+    // Layer 1.5: Decorations (树木/灌木，在建筑之前渲染)
     if (renderers.decorations) {
       renderers.decorations.render(renderCtx)
     }
 
-    // Layer 3: Entities (星球/建筑/生物)
+    // Layer 2: Entities (几何积木)
     try {
       if (nexuses && nexuses.size > 0) {
         const sorted = [...nexuses.values()].sort(
@@ -538,7 +280,6 @@ export class GameCanvas {
           
           const isSelected = nexus.id === selectedNexusId
           
-          // 找到能渲染此 Nexus 的渲染器
           for (const entityRenderer of renderers.entities) {
             if (entityRenderer.canRender(nexus)) {
               entityRenderer.render(renderCtx, nexus, screen, isSelected, timestamp)
@@ -551,13 +292,13 @@ export class GameCanvas {
       console.error('[GameCanvas] Entity render error:', e)
     }
 
-    // Layer 4: Particles
+    // Layer 3: Particles
     for (const particleRenderer of renderers.particles) {
       particleRenderer.update(timestamp)
       particleRenderer.render(renderCtx)
     }
 
-    // Layer 5: Ripples (交互波纹)
+    // Layer 4: Ripples (交互波纹)
     renderers.ripple.update()
     renderers.ripple.render(renderCtx)
   }

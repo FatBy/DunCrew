@@ -9,7 +9,7 @@ import type { CanvasPalette } from '@/types/theme'
 // 世界主题
 // ============================================
 
-export type WorldTheme = 'cosmos' | 'cityscape' | 'village' | 'minimalist' | 'smallville' | 'pixeltown'
+export type WorldTheme = 'minimalist' | 'dashboard'
 
 // ============================================
 // 坐标与几何
@@ -64,9 +64,6 @@ export interface RenderState {
   energyCore?: EnergyCoreState
   executingNexusId?: string | null
   executionStartTime?: number | null
-  // Smallville 主题专用
-  smallvilleViewMode?: 'town' | 'zooming-in' | 'zooming-out' | 'room'
-  smallvilleRoomNexusId?: string | null
 }
 
 // ============================================
@@ -92,7 +89,7 @@ export interface BackgroundRenderer {
 
 /**
  * 实体渲染器
- * 负责渲染 Nexus 节点 (星球/建筑/生物)
+ * 负责渲染 Nexus 节点 (积木块)
  */
 export interface EntityRenderer {
   readonly id: string
@@ -238,39 +235,6 @@ export interface RendererSet {
 // 兼容类型定义
 export type BufferCanvas = HTMLCanvasElement | OffscreenCanvas
 export type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
-
-// 星球样式配置
-export interface PlanetStyle {
-  ringCount: number
-  ringTilts: number[]
-  textureType: 'bands' | 'core' | 'crystal' | 'storm'
-  atmosphereScale: number
-}
-
-// 背景粒子
-export interface BackgroundParticle {
-  x: number
-  y: number
-  size: number
-  speedX: number
-  speedY: number
-  opacity: number
-}
-
-// 核心粒子 (技能可视化)
-export interface CoreParticle {
-  id: string
-  angle: number
-  speed: number
-  radiusX: number
-  radiusY: number
-  tilt: number
-  color: string
-  size: number
-  alpha: number
-  active: boolean
-  yRatio: number
-}
 
 // 涟漪
 export interface Ripple {

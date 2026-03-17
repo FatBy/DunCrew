@@ -158,7 +158,7 @@ export function SoulHouse() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.8 + i * 0.1 }}
                 >
-                  <div className="h-14 w-1.5 bg-skin-bg-secondary/30 rounded-full relative overflow-hidden">
+                  <div className="h-14 w-1.5 bg-stone-50 rounded-full relative overflow-hidden">
                     <motion.div
                       className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-skin-accent-cyan via-skin-accent-purple to-skin-accent-amber rounded-full"
                       initial={{ height: 0 }}

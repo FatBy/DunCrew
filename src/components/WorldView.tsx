@@ -1,9 +1,22 @@
-import { useEffect, useRef, useCallback, useMemo, useState } from 'react'
+import { useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { useStore } from '@/store'
 import { GameCanvas } from '@/rendering/GameCanvas'
+import { DashboardView } from '@/components/dashboard/DashboardView'
 
 export function WorldView() {
+  const worldTheme = useStore((s) => s.worldTheme)
+
+  // Dashboard 模式: 使用 React/SVG 力导向图
+  if (worldTheme === 'dashboard') {
+    return <DashboardView />
+  }
+
+  // Minimalist 模式: 使用 GameCanvas 渲染引擎
+  return <CanvasWorldView />
+}
+
+function CanvasWorldView() {
   const currentView = useStore((s) => s.currentView)
   const nexuses = useStore((s) => s.nexuses)
   const camera = useStore((s) => s.camera)
@@ -21,9 +34,6 @@ export function WorldView() {
 
   // 主题调色板
   const canvasPalette = useStore((s) => s.canvasPalette)
-  
-  // 世界主题
-  const worldTheme = useStore((s) => s.worldTheme)
 
   // 新增：Soul 数据订阅
   const soulIdentity = useStore((s) => s.soulIdentity)
@@ -37,31 +47,13 @@ export function WorldView() {
   const dragMoved = useRef(false)
   const lastMouse = useRef({ x: 0, y: 0 })
   const canvasPaletteRef = useRef(canvasPalette)
-  
-  // Smallville 房间模式状态
-  const [isInSmallvilleRoom, setIsInSmallvilleRoom] = useState(false)
-
-  // 定时轮询 smallville 房间状态（由 ViewManager 驱动）
-  useEffect(() => {
-    if (worldTheme !== 'smallville') {
-      setIsInSmallvilleRoom(false)
-      return
-    }
-    const id = setInterval(() => {
-      const engine = engineRef.current
-      if (engine) {
-        setIsInSmallvilleRoom(engine.isInSmallvilleRoom())
-      }
-    }, 200)
-    return () => clearInterval(id)
-  }, [worldTheme])
 
   // 保持 ref 同步
   canvasPaletteRef.current = canvasPalette
 
   const isHouseOpen = currentView !== 'world'
 
-  // 计算能量核心参数 (memoized) - 即使无 soul 数据也显示默认核心
+  // 计算能量核心参数 (memoized)
   const energyCoreState = useMemo(() => {
     const name = soulIdentity?.name || 'GENESIS'
     const activeSkills = skills.filter(s => s.unlocked || s.status === 'active')
@@ -120,11 +112,6 @@ export function WorldView() {
     engineRef.current?.setPalette(canvasPalette)
   }, [canvasPalette])
 
-  // 同步世界主题到渲染引擎
-  useEffect(() => {
-    engineRef.current?.setWorldTheme(worldTheme)
-  }, [worldTheme])
-
   // 建造动画 tick (持续推进 constructionProgress)
   useEffect(() => {
     let lastTime = performance.now()
@@ -141,41 +128,23 @@ export function WorldView() {
     return () => cancelAnimationFrame(animId)
   }, [tickConstructionAnimations])
 
-  // Smallville 房间模式 ESC 退出
-  useEffect(() => {
-    if (!isInSmallvilleRoom) return
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        engineRef.current?.exitSmallvilleRoom()
-        setIsInSmallvilleRoom(false)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isInSmallvilleRoom])
-
   // ---- 鼠标交互 ----
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
-    // 房间模式下禁用缩放
-    if (isInSmallvilleRoom) return
     e.preventDefault()
     const factor = e.deltaY > 0 ? 1 / 1.1 : 1.1
     setZoom(camera.zoom * factor)
-  }, [camera.zoom, setZoom, isInSmallvilleRoom])
+  }, [camera.zoom, setZoom])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    // 房间模式下禁用拖拽
-    if (isInSmallvilleRoom) return
     if (e.button === 0) {
       isDragging.current = true
       dragMoved.current = false
       lastMouse.current = { x: e.clientX, y: e.clientY }
     }
-  }, [isInSmallvilleRoom])
+  }, [])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (isInSmallvilleRoom) return
     if (!isDragging.current) return
     const dx = (e.clientX - lastMouse.current.x) / camera.zoom
     const dy = (e.clientY - lastMouse.current.y) / camera.zoom
@@ -196,16 +165,6 @@ export function WorldView() {
     
     const engine = engineRef.current
     if (!engine) return
-
-    // Smallville 房间模式下点击：退出房间
-    if (worldTheme === 'smallville' && engine.isInSmallvilleRoom()) {
-      return  // 由返回按钮处理
-    }
-
-    // Smallville 过渡动画中忽略点击
-    if (worldTheme === 'smallville' && engine.isSmallvilleTransitioning()) {
-      return
-    }
 
     const rect = canvasRef.current?.getBoundingClientRect()
     if (!rect) return
@@ -230,44 +189,34 @@ export function WorldView() {
 
     selectNexus(nearest)
     
-    // 如果点击了 Nexus
     if (nearest) {
-      if (worldTheme === 'smallville') {
-        // Smallville：进入房间视图
-        engine.enterSmallvilleRoom(nearest)
-      } else {
-        // 其他主题：打开详情面板
-        openNexusPanel(nearest)
-      }
+      openNexusPanel(nearest)
     } else {
-      // 没有点中行星，触发能量波纹
+      // 没有点中，触发能量波纹
       engineRef.current?.triggerRipple(screenX, screenY)
     }
-  }, [camera, nexuses, selectNexus, openNexusPanel, worldTheme])
+  }, [camera, nexuses, selectNexus, openNexusPanel])
 
   return (
     <div className="absolute inset-0 overflow-hidden bg-skin-bg-primary">
-      {/* Layer 0: 装饰性网格 (增加空间感，主题感知) */}
+      {/* Layer 0: 装饰性网格 (minimalist 风格) */}
       <div 
         className="absolute inset-0 z-0 pointer-events-none opacity-[0.06]"
         style={{
-          backgroundImage: worldTheme === 'minimalist' || worldTheme === 'pixeltown'
-            ? `linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
-               linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px)`
-            : `linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
-               linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)`,
+          backgroundImage: `linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
+               linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px)`,
           backgroundSize: '80px 80px',
           maskImage: 'radial-gradient(ellipse at center, black 30%, transparent 80%)',
           WebkitMaskImage: 'radial-gradient(ellipse at center, black 30%, transparent 80%)',
         }}
       />
 
-      {/* Layer 1: 游戏引擎 (GameCanvas 已包含深空背景+星球) */}
+      {/* Layer 1: 游戏引擎 (GameCanvas) */}
       <motion.div
         className="absolute inset-0 z-10"
         animate={{
           scale: isHouseOpen ? 1.08 : 1,
-          filter: isHouseOpen ? 'blur(6px) brightness(0.35)' : 'blur(0px) brightness(1)',
+          filter: isHouseOpen ? 'blur(6px) brightness(0.88)' : 'blur(0px) brightness(1)',
           opacity: 1,
         }}
         transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
@@ -285,43 +234,22 @@ export function WorldView() {
         />
       </motion.div>
 
-      {/* Layer 2: 边缘渐变 (主题感知) */}
+      {/* Layer 2: 边缘渐变 (minimalist 暖色风格) */}
       <div 
         className="absolute inset-0 z-20 pointer-events-none"
         style={{
-          background: worldTheme === 'minimalist' || worldTheme === 'pixeltown'
-            ? 'radial-gradient(ellipse at center, transparent 50%, rgba(230,228,225,0.4) 85%, rgba(220,218,215,0.7) 100%)'
-            : worldTheme === 'smallville'
-            ? 'radial-gradient(ellipse at center, transparent 40%, rgba(10,20,10,0.5) 100%)'
-            : 'radial-gradient(ellipse at center, transparent 30%, rgba(2,6,23,0.6) 100%)'
+          background: 'radial-gradient(ellipse at center, transparent 50%, rgba(230,228,225,0.4) 85%, rgba(220,218,215,0.7) 100%)'
         }}
       />
-
-      {/* Smallville 房间模式返回按钮 */}
-      {isInSmallvilleRoom && (
-        <button
-          className="absolute top-4 left-4 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-md
-                     bg-black/60 hover:bg-black/80 text-white/80 hover:text-white
-                     text-xs font-mono backdrop-blur-sm border border-white/10
-                     transition-all duration-200 cursor-pointer"
-          onClick={() => {
-            engineRef.current?.exitSmallvilleRoom()
-            setIsInSmallvilleRoom(false)
-          }}
-        >
-          <span>&larr;</span>
-          <span>返回城镇</span>
-        </button>
-      )}
 
       {/* Layer 3: 加载占位 */}
       {nexuses.size === 0 && (
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none">
           <div className="relative w-8 h-8 mb-3">
-            <div className="absolute inset-0 rounded-full border-2 border-gray-300/20 animate-ping" />
+            <div className="absolute inset-0 rounded-full border-2 border-stone-300/20 animate-ping" />
             <div className="absolute inset-0 rounded-full border-2 border-t-gray-400/40 border-r-transparent border-b-transparent border-l-transparent animate-spin" />
           </div>
-          <p className={`font-mono text-xs tracking-widest uppercase ${worldTheme === 'minimalist' || worldTheme === 'pixeltown' ? 'text-gray-400/50' : 'text-white/20'}`}>
+          <p className="font-mono text-xs tracking-widest uppercase text-stone-500/50">
             正在构建世界...
           </p>
         </div>

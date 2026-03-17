@@ -5,128 +5,86 @@
 import type { Theme, ThemeName } from '@/types/theme'
 
 // ============================================
-// 默认主题：深色科技风
+// 暖色治愈主题 (唯一 UI 主题)
 // ============================================
-const defaultTheme: Theme = {
-  name: 'default',
-  label: '深空科技',
-  description: '默认深色主题，科技感强',
+const warmTheme: Theme = {
+  name: 'warm',
+  label: '暖阳治愈',
+  description: '奶油暖色调，柔和治愈，养成系首选',
   colors: {
-    // 背景系 (RGB 值)
-    bgPrimary: '2 6 23',        // #020617 slate-950
-    bgSecondary: '15 23 42',    // #0f172a slate-900
-    bgPanel: '0 0 0',           // black
-    bgElevated: '30 41 59',     // #1e293b slate-800
+    // 背景系 - 奶油暖色
+    bgPrimary: '253 251 245',       // #fdfbf5 暖白
+    bgSecondary: '247 243 233',     // #f7f3e9 米色
+    bgPanel: '255 253 248',         // #fffdf8 近白
+    bgElevated: '239 233 218',      // #efe9da 浅卡其
 
-    // 文本系
-    textPrimary: '255 255 255',   // white
-    textSecondary: '148 163 184', // slate-400
-    textMuted: '100 116 139',     // slate-500
+    // 文本系 - 深暖色
+    textPrimary: '60 50 40',        // #3c3228 深棕
+    textSecondary: '120 105 85',    // #786955 中棕
+    textMuted: '170 155 135',       // #aa9b87 浅棕
+    textTertiary: '150 135 115',    // #968773 第三级棕
 
-    // 边框
-    borderSubtle: '255 255 255',  // white (with opacity)
-    borderMedium: '255 255 255',
+    // 边框 - 暖灰
+    borderSubtle: '180 165 140',    // 暖灰
+    borderMedium: '160 145 120',
 
-    // 强调色
-    accentCyan: '34 211 238',     // cyan-400
-    accentAmber: '251 191 36',    // amber-400
-    accentEmerald: '52 211 153',  // emerald-400
-    accentPurple: '168 85 247',   // purple-400
-    accentRed: '248 113 113',     // red-400
+    // 强调色 - 暖色系
+    accentCyan: '94 186 174',       // #5ebab0 薄荷青绿
+    accentAmber: '232 168 56',      // #e8a838 暖金
+    accentEmerald: '108 180 120',   // #6cb478 草绿
+    accentPurple: '178 132 190',    // #b284be 薰衣草紫
+    accentRed: '220 120 100',       // #dc7864 珊瑚红
   },
   canvas: {
-    spaceGradient: ['#020617', '#0a0f1e', '#060b18'],
-    gridColor: '80, 160, 255',
-    gridOpacity: 0.04,
-    starColor: '#ffffff',
-    labelSelected: 'rgba(255,255,255,0.9)',
-    labelDefault: 'rgba(200, 220, 255, 0.6)',
-    glowHue: 220,
-    coreHue: 220,
+    spaceGradient: ['#fdfbf5', '#f7f3e9', '#faf6ee'],
+    gridColor: '180, 165, 140',
+    gridOpacity: 0.06,
+    starColor: '#c8b898',
+    labelSelected: 'rgba(60,50,40,0.9)',
+    labelDefault: 'rgba(120,105,85,0.6)',
+    glowHue: 35,    // 暖金色系
+    coreHue: 30,
   },
-}
+  dashboard: {
+    // 节点 - 奶油卡片
+    nodeGradientFrom: '#fffdf8',
+    nodeGradientTo: '#f7f3e9',
+    nodeBorder: 'rgba(200,185,160,0.3)',
+    nodeGlow: 'rgba(232,168,56,0.25)',
 
-// ============================================
-// 赛博朋克主题
-// ============================================
-const cyberpunkTheme: Theme = {
-  name: 'cyberpunk',
-  label: '赛博朋克',
-  description: '霓虹紫粉，高饱和度',
-  colors: {
-    // 背景系 - 深紫黑
-    bgPrimary: '10 0 20',         // 深紫黑
-    bgSecondary: '20 10 35',      // 暗紫
-    bgPanel: '5 0 10',            // 极深紫
-    bgElevated: '30 15 50',       // 提升紫
+    // 连接线
+    linkColor: 'rgba(180,165,140,0.15)',
+    linkActiveColor: 'rgba(232,168,56,0.35)',
 
-    // 文本系
-    textPrimary: '240 240 255',   // 冷白
-    textSecondary: '180 160 220', // 淡紫
-    textMuted: '120 100 160',     // 暗紫灰
+    // 成长阶段色 - 暖色渐进
+    stageEgg: '#c8b898',           // 蛋壳米色
+    stageHatchling: '#94c9a0',     // 嫩芽绿
+    stageYouth: '#e8a838',         // 阳光金
+    stageAdult: '#d97740',         // 暖橙
+    stageMaster: '#c94050',        // 炽焰红
 
-    // 边框 - 霓虹粉
-    borderSubtle: '255 0 128',    // 霓虹粉
-    borderMedium: '255 0 128',
+    // 情绪色
+    emotionHappy: '#f0c040',       // 向日葵黄
+    emotionSad: '#a89880',         // 灰棕
+    emotionNeutral: '#c8b898',     // 中性米
 
-    // 强调色 - 霓虹色系
-    accentCyan: '0 255 255',      // 霓虹青
-    accentAmber: '255 200 0',     // 金黄
-    accentEmerald: '0 255 128',   // 霓虹绿
-    accentPurple: '200 0 255',    // 霓虹紫
-    accentRed: '255 50 100',      // 霓虹红
-  },
-  canvas: {
-    spaceGradient: ['#050014', '#0f0028', '#080018'],
-    gridColor: '255, 0, 128',
-    gridOpacity: 0.08,
-    starColor: '#ff00ff',
-    labelSelected: 'rgba(255,200,255,0.95)',
-    labelDefault: 'rgba(200, 150, 255, 0.7)',
-    glowHue: 300,  // 紫红色系
-    coreHue: 280,
-  },
-}
+    // 成就徽章
+    achievementGold: '#e8a838',
+    achievementSilver: '#b8a898',
+    achievementBronze: '#c88040',
 
-// ============================================
-// 纯净白昼主题
-// ============================================
-const lightTheme: Theme = {
-  name: 'light',
-  label: '纯净白昼',
-  description: '明亮清新，护眼模式',
-  colors: {
-    // 背景系 - 浅色
-    bgPrimary: '248 250 252',     // slate-50
-    bgSecondary: '241 245 249',   // slate-100
-    bgPanel: '255 255 255',       // white
-    bgElevated: '226 232 240',    // slate-200
+    // 悬浮卡片
+    hoverCardBg: 'rgba(255,253,248,0.97)',
+    hoverCardBorder: 'rgba(200,185,160,0.25)',
 
-    // 文本系 - 深色
-    textPrimary: '15 23 42',      // slate-900
-    textSecondary: '71 85 105',   // slate-600
-    textMuted: '148 163 184',     // slate-400
-
-    // 边框 - 浅灰
-    borderSubtle: '0 0 0',        // black (with opacity)
-    borderMedium: '0 0 0',
-
-    // 强调色 - 柔和版本
-    accentCyan: '6 182 212',      // cyan-500
-    accentAmber: '245 158 11',    // amber-500
-    accentEmerald: '16 185 129',  // emerald-500
-    accentPurple: '139 92 246',   // purple-500
-    accentRed: '239 68 68',       // red-500
-  },
-  canvas: {
-    spaceGradient: ['#f8fafc', '#e2e8f0', '#f1f5f9'],
-    gridColor: '100, 116, 139',
-    gridOpacity: 0.1,
-    starColor: '#64748b',
-    labelSelected: 'rgba(15,23,42,0.9)',
-    labelDefault: 'rgba(71, 85, 105, 0.7)',
-    glowHue: 210,
-    coreHue: 200,
+    // 角色基因色
+    roleResearcher: '#C9A96E',
+    roleCoder: '#6CB478',
+    roleAnalyst: '#B284BE',
+    roleCreator: '#DC7864',
+    roleOperator: '#5EBAB0',
+    roleGeneral: '#C8B898',
+    cellPatternColor: 'rgba(200,185,160,0.04)',
   },
 }
 
@@ -135,13 +93,11 @@ const lightTheme: Theme = {
 // ============================================
 
 export const themes: Record<ThemeName, Theme> = {
-  default: defaultTheme,
-  cyberpunk: cyberpunkTheme,
-  light: lightTheme,
+  warm: warmTheme,
 }
 
 export function getTheme(name: ThemeName): Theme {
-  return themes[name] || themes.default
+  return themes[name] || warmTheme
 }
 
-export const themeNames: ThemeName[] = ['default', 'cyberpunk', 'light']
+export const themeNames: ThemeName[] = ['warm']

@@ -23,7 +23,7 @@ function loadTheme(): ThemeName {
   } catch (e) {
     console.warn('[Theme] Failed to load theme from localStorage:', e)
   }
-  return 'default'
+  return 'warm'
 }
 
 // 保存主题到 localStorage

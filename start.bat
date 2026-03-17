@@ -48,7 +48,7 @@ set PYTHON_CMD=python
 
 :: 启动后端
 echo [1/2] Starting backend server...
-start "DD-OS Backend" /min cmd /c "%PYTHON_CMD% ddos-local-server.py --path %DDOS_DATA_PATH% 2>&1"
+start "DD-OS Backend" cmd /k "%PYTHON_CMD% ddos-local-server.py --path %DDOS_DATA_PATH% 2>&1 || echo [ERROR] Backend exited with error! && pause"
 
 :: 等待后端启动
 timeout /t 2 /nobreak >nul

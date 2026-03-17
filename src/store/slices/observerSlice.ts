@@ -146,15 +146,6 @@ function generateVisualDNASync(id: string): VisualDNA {
     textureMode: 'solid',
     glowIntensity: 0.5 + (h % 50) / 100,
     geometryVariant,
-    planetTexture: (['bands', 'storm', 'core', 'crystal'] as const)[geometryVariant],
-    ringCount: 1 + (h >> 4) % 3,
-    ringTilts: [0.15, -0.3, 0.1].slice(0, 1 + (h >> 4) % 3),
-    buildingConfig: {
-      base: ['concrete', 'steel', 'glass', 'stone'][h % 4],
-      body: ['office', 'lab', 'factory', 'library', 'tower', 'warehouse'][(h >> 2) % 6],
-      roof: ['flat', 'dome', 'antenna', 'satellite', 'chimney', 'garden'][(h >> 4) % 6],
-      themeColor: `hsl(${primaryHue}, 70%, 50%)`,
-    },
   }
 }
 

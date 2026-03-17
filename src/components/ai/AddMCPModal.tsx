@@ -193,7 +193,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4"
+        className="fixed inset-0 bg-stone-900/10 backdrop-blur-[4px] z-[200] flex items-center justify-center p-4"
         onClick={resetAndClose}
       >
         <motion.div
@@ -201,20 +201,20 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 10 }}
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-md bg-slate-900/95 backdrop-blur-xl border border-white/10 
+          className="w-full max-w-md bg-white/95 backdrop-blur-3xl backdrop-blur-xl border border-stone-200 
                      rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] overflow-hidden max-h-[85vh] flex flex-col"
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 flex-shrink-0">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-stone-200 flex-shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
                 <Server className="w-4 h-4 text-purple-400" />
               </div>
-              <h2 className="text-sm font-mono font-semibold text-white/90">
+              <h2 className="text-sm font-mono font-semibold text-stone-800">
                 添加 MCP 服务
               </h2>
             </div>
-            <button onClick={resetAndClose} className="p-1 text-white/30 hover:text-white/60 transition-colors">
+            <button onClick={resetAndClose} className="p-1 text-stone-300 hover:text-stone-500 transition-colors">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -227,7 +227,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono transition-all',
                 activeTab === 'local'
                   ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                  : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10'
+                  : 'bg-stone-100/80 text-stone-400 border border-stone-200 hover:bg-stone-100'
               )}
             >
               <HardDrive className="w-3.5 h-3.5" />
@@ -239,7 +239,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono transition-all',
                 activeTab === 'online'
                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                  : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10'
+                  : 'bg-stone-100/80 text-stone-400 border border-stone-200 hover:bg-stone-100'
               )}
             >
               <Globe className="w-3.5 h-3.5" />
@@ -251,7 +251,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
           <div className="px-6 py-5 space-y-5 overflow-y-auto flex-1">
             {/* 概念说明 */}
             <div className="p-3 rounded-lg bg-purple-500/5 border border-purple-500/10">
-              <p className="text-xs text-white/60 leading-relaxed">
+              <p className="text-xs text-stone-500 leading-relaxed">
                 <span className="text-purple-400 font-semibold">MCP</span> (Model Context Protocol) 
                 是一种让 AI 连接外部工具和数据源的标准协议。
                 {activeTab === 'online' && ' 在线搜索无需 AI 调用，响应速度极快。'}
@@ -263,7 +263,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
               <>
                 {/* 搜索输入框 */}
                 <div>
-                  <label className="block text-xs font-mono text-white/40 mb-2">
+                  <label className="block text-xs font-mono text-stone-400 mb-2">
                     描述你需要的工具
                   </label>
                   <div className="flex gap-2">
@@ -274,8 +274,8 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                       placeholder="如：文件管理、搜索网页、数据库查询"
-                      className="flex-1 px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg
-                               text-sm font-mono text-white/80 placeholder-white/25
+                      className="flex-1 px-4 py-2.5 bg-stone-100/80 border border-stone-200 rounded-lg
+                               text-sm font-mono text-stone-700 placeholder-stone-300
                                focus:border-purple-500/40 focus:outline-none transition-colors"
                     />
                     <button
@@ -295,7 +295,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
 
                 {/* 搜索结果 */}
                 {isSearching && (
-                  <div className="flex items-center justify-center gap-2 py-4 text-white/30">
+                  <div className="flex items-center justify-center gap-2 py-4 text-stone-300">
                     <Loader2 className="w-4 h-4 animate-spin text-purple-400/60" />
                     <span className="text-xs font-mono">AI 正在匹配...</span>
                   </div>
@@ -303,7 +303,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
 
                 {!isSearching && hasSearched && searchResults.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-[11px] font-mono text-white/30">
+                    <p className="text-[11px] font-mono text-stone-300">
                       推荐结果 (点击选择)
                     </p>
                     {searchResults.map((result, i) => (
@@ -320,7 +320,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
 
                 {!isSearching && hasSearched && searchResults.length === 0 && (
                   <div className="text-center py-3">
-                    <p className="text-xs font-mono text-white/30">
+                    <p className="text-xs font-mono text-stone-300">
                       未找到匹配服务，可从下方列表选择
                     </p>
                   </div>
@@ -328,13 +328,13 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
 
                 {/* 已配置的服务器 */}
                 {loading ? (
-                  <div className="flex items-center justify-center gap-2 py-3 text-white/30">
+                  <div className="flex items-center justify-center gap-2 py-3 text-stone-300">
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     <span className="text-xs font-mono">加载已配置服务器...</span>
                   </div>
                 ) : servers.length > 0 && (
                   <div>
-                    <p className="text-[11px] font-mono text-white/30 mb-2">
+                    <p className="text-[11px] font-mono text-stone-300 mb-2">
                       {hasSearched ? '全部已配置服务器' : '已配置的服务器 (点击选择)'}
                     </p>
                     <div className="flex flex-wrap gap-2">
@@ -346,16 +346,16 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                             'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono border transition-all',
                             s.connected
                               ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300 hover:bg-emerald-500/20'
-                              : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10 hover:text-white/70'
+                              : 'bg-stone-100/80 border-stone-200 text-stone-400 hover:bg-stone-100 hover:text-stone-600'
                           )}
                         >
                           {s.connected
                             ? <CheckCircle2 className="w-3 h-3" />
-                            : <AlertCircle className="w-3 h-3 text-white/30" />
+                            : <AlertCircle className="w-3 h-3 text-stone-300" />
                           }
                           {s.name}
                           {s.tools > 0 && (
-                            <span className="text-[10px] text-white/30">{s.tools} tools</span>
+                            <span className="text-[10px] text-stone-300">{s.tools} tools</span>
                           )}
                         </button>
                       ))}
@@ -364,7 +364,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                 )}
 
                 {/* 帮助提示 */}
-                <p className="text-[10px] text-white/25 leading-relaxed">
+                <p className="text-[10px] text-stone-300 leading-relaxed">
                   服务器需要在 <code className="text-purple-300/60">mcp-servers.json</code> 中预先配置。
                   配置格式包含 command、args 和可选的 env 字段。
                 </p>
@@ -376,7 +376,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
               <>
                 {/* 在线搜索输入框 */}
                 <div>
-                  <label className="block text-xs font-mono text-white/40 mb-2">
+                  <label className="block text-xs font-mono text-stone-400 mb-2">
                     搜索在线 MCP 服务
                   </label>
                   <div className="flex gap-2">
@@ -387,8 +387,8 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleOnlineSearch()}
                       placeholder="如：GitHub、文件系统、数据库"
-                      className="flex-1 px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg
-                               text-sm font-mono text-white/80 placeholder-white/25
+                      className="flex-1 px-4 py-2.5 bg-stone-100/80 border border-stone-200 rounded-lg
+                               text-sm font-mono text-stone-700 placeholder-stone-300
                                focus:border-cyan-500/40 focus:outline-none transition-colors"
                     />
                     <button
@@ -408,7 +408,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
 
                 {/* 在线搜索结果 */}
                 {isOnlineSearching && (
-                  <div className="flex items-center justify-center gap-2 py-4 text-white/30">
+                  <div className="flex items-center justify-center gap-2 py-4 text-stone-300">
                     <Loader2 className="w-4 h-4 animate-spin text-cyan-400/60" />
                     <span className="text-xs font-mono">搜索中...</span>
                   </div>
@@ -416,20 +416,20 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
 
                 {!isOnlineSearching && onlineResults.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-[11px] font-mono text-white/30">
+                    <p className="text-[11px] font-mono text-stone-300">
                       {hasOnlineSearched ? '搜索结果' : '推荐 MCP 服务'} (点击安装)
                     </p>
                     {onlineResults.map((mcp) => (
                       <div
                         key={mcp.id}
-                        className="p-3 rounded-lg bg-white/5 border border-white/10 hover:border-cyan-500/30 transition-all"
+                        className="p-3 rounded-lg bg-stone-100/80 border border-stone-200 hover:border-cyan-500/30 transition-all"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-mono text-cyan-300">{mcp.name}</span>
                               {mcp.category && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/40">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-stone-100 text-stone-400">
                                   {mcp.category}
                                 </span>
                               )}
@@ -439,7 +439,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-white/50 mt-1 line-clamp-2">{mcp.description}</p>
+                            <p className="text-xs text-stone-400 mt-1 line-clamp-2">{mcp.description}</p>
                             {mcp.envRequired && mcp.envRequired.length > 0 && (
                               <div className="flex items-center gap-1 mt-1.5 text-[10px] text-amber-300/70">
                                 <Key className="w-3 h-3" />
@@ -482,11 +482,11 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                         
                         {/* 环境变量输入 */}
                         {showEnvInput === mcp.id && mcp.envRequired && (
-                          <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
-                            <p className="text-[10px] text-white/40">请填写所需的环境变量:</p>
+                          <div className="mt-3 pt-3 border-t border-stone-200 space-y-2">
+                            <p className="text-[10px] text-stone-400">请填写所需的环境变量:</p>
                             {mcp.envRequired.map((envKey) => (
                               <div key={envKey} className="flex items-center gap-2">
-                                <label className="text-[10px] text-white/50 w-28 font-mono">{envKey}</label>
+                                <label className="text-[10px] text-stone-400 w-28 font-mono">{envKey}</label>
                                 <input
                                   type="password"
                                   value={envInputs[mcp.id]?.[envKey] || ''}
@@ -495,8 +495,8 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                                     [mcp.id]: { ...prev[mcp.id], [envKey]: e.target.value }
                                   }))}
                                   placeholder={`输入 ${envKey}`}
-                                  className="flex-1 px-2 py-1 bg-white/5 border border-white/10 rounded
-                                           text-xs font-mono text-white/70 placeholder-white/20
+                                  className="flex-1 px-2 py-1 bg-stone-100/80 border border-stone-200 rounded
+                                           text-xs font-mono text-stone-600 placeholder-white/20
                                            focus:border-cyan-500/40 focus:outline-none"
                                 />
                               </div>
@@ -510,13 +510,13 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
 
                 {!isOnlineSearching && hasOnlineSearched && onlineResults.length === 0 && (
                   <div className="text-center py-6">
-                    <p className="text-xs font-mono text-white/30">未找到匹配的在线 MCP 服务</p>
-                    <p className="text-[10px] text-white/20 mt-1">尝试换个关键词搜索</p>
+                    <p className="text-xs font-mono text-stone-300">未找到匹配的在线 MCP 服务</p>
+                    <p className="text-[10px] text-stone-300 mt-1">尝试换个关键词搜索</p>
                   </div>
                 )}
 
                 {/* 帮助提示 */}
-                <p className="text-[10px] text-white/25 leading-relaxed">
+                <p className="text-[10px] text-stone-300 leading-relaxed">
                   在线搜索使用关键词匹配（TF-IDF），无需 AI 调用，响应速度极快。
                   安装后的 MCP 服务会自动添加到配置文件中。
                 </p>
@@ -525,10 +525,10 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/10 bg-black/20 flex-shrink-0">
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-stone-200 bg-stone-100/60 flex-shrink-0">
             <button
               onClick={resetAndClose}
-              className="px-4 py-2 text-xs font-mono text-white/50 hover:text-white/70 transition-colors"
+              className="px-4 py-2 text-xs font-mono text-stone-400 hover:text-stone-600 transition-colors"
             >
               取消
             </button>

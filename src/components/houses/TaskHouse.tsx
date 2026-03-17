@@ -1,28 +1,30 @@
+/**
+ * TaskHouse - Blueprint 重构版
+ *
+ * 设计宪法:
+ * - bg-white/bg-stone-50 亮色主体
+ * - 三 Tab：监控矩阵 / 实时状态 / 历史
+ * - text-[10px] font-black uppercase tracking-widest 表头
+ */
+
 import { useState } from 'react'
-import { Loader2, Zap, Clock, CheckCircle2, AlertTriangle, BarChart3, Activity } from 'lucide-react'
+import { Loader2, Activity, CheckCircle2, Clock, BarChart3 } from 'lucide-react'
 import { useStore } from '@/store'
-import { cn } from '@/utils/cn'
-import { SilentAnalysisView } from './task/SilentAnalysisView'
+import { TaskMonitorView } from '@/components/blueprint/TaskMonitorView'
+import { AgentRunStatePanel } from './task/AgentRunStatePanel'
 import { ExecutionFocusView } from './task/ExecutionFocusView'
 import { HistoryDrawer } from './task/HistoryDrawer'
 import { MonitorPanel } from './task/MonitorPanel'
-import { AgentRunStatePanel } from './task/AgentRunStatePanel'
+import { SilentAnalysisView } from './task/SilentAnalysisView'
 
-type TabType = 'executing' | 'live' | 'history' | 'interrupted' | 'monitor'
+type TabType = 'matrix' | 'live' | 'executing' | 'history' | 'monitor'
 
-interface TabConfig {
-  id: TabType
-  label: string
-  icon: typeof Zap
-  color: string
-}
-
-const TABS: TabConfig[] = [
-  { id: 'executing', label: '执行中', icon: Zap, color: 'cyan' },
-  { id: 'live', label: '实时', icon: Activity, color: 'purple' },
-  { id: 'history', label: '历史', icon: CheckCircle2, color: 'emerald' },
-  { id: 'interrupted', label: '已中断', icon: AlertTriangle, color: 'amber' },
-  { id: 'monitor', label: '监控', icon: BarChart3, color: 'violet' },
+const TABS: { id: TabType; label: string; icon: typeof Activity }[] = [
+  { id: 'matrix', label: '监控矩阵', icon: Activity },
+  { id: 'live', label: '实时', icon: Activity },
+  { id: 'executing', label: '执行中', icon: Clock },
+  { id: 'history', label: '历史', icon: CheckCircle2 },
+  { id: 'monitor', label: '监控', icon: BarChart3 },
 ]
 
 export function TaskHouse() {
@@ -33,28 +35,13 @@ export function TaskHouse() {
   const abortChat = useStore((s) => s.abortChat)
 
   const isConnected = connectionStatus === 'connected'
-  const [activeTab, setActiveTab] = useState<TabType>('executing')
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<TabType>('matrix')
 
-  // 按状态分类任务
-  const executingTasks = activeExecutions.filter(t => t.status === 'executing')
-  const historyTasks = activeExecutions.filter(t => t.status === 'done' || t.status === 'terminated')
-  const interruptedTasks = activeExecutions.filter(t => t.status === 'interrupted')
+  const executingTasks = activeExecutions.filter((t) => t.status === 'executing')
+  const historyTasks = activeExecutions.filter(
+    (t) => t.status === 'done' || t.status === 'terminated',
+  )
 
-  // Tab 计数
-  const tabCounts: Record<TabType, number> = {
-    executing: executingTasks.length,
-    live: 0, // 实时 Tab 不显示计数
-    history: historyTasks.length,
-    interrupted: interruptedTasks.length,
-    monitor: 0, // 监控 Tab 不显示计数
-  }
-
-  // 允许用户自由切换 Tab（移除强制锁定逻辑）
-  // 仅在首次有任务执行时自动切换（通过 useEffect 实现更好）
-  const currentTab = activeTab
-
-  // 终止任务
   const handleTerminate = (taskId: string) => {
     abortChat()
     updateActiveExecution(taskId, { status: 'terminated' })
@@ -70,55 +57,41 @@ export function TaskHouse() {
 
   return (
     <div className="relative flex flex-col h-full">
-      {/* Tab 栏 */}
-      <div className="flex items-center gap-1 px-4 py-3 border-b border-white/10 bg-black/20">
+      {/* ── Tab 栏 (亮色主题) ── */}
+      <div className="flex items-center gap-1 px-4 py-3 border-b border-stone-200 bg-stone-50/60">
         {TABS.map((tab) => {
-          const count = tabCounts[tab.id]
-          const isActive = currentTab === tab.id
+          const isActive = activeTab === tab.id
           const Icon = tab.icon
-          
           return (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                'flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-mono transition-all',
-                isActive
-                  ? `bg-${tab.color}-500/20 border border-${tab.color}-500/30 text-${tab.color}-300`
-                  : 'bg-white/5 border border-transparent text-white/50 hover:bg-white/10 hover:text-white/70'
-              )}
-              style={isActive ? {
-                backgroundColor: `rgb(var(--color-${tab.color}-500) / 0.2)`,
-                borderColor: `rgb(var(--color-${tab.color}-500) / 0.3)`,
-              } : undefined}
+              className={`
+                flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all
+                ${isActive
+                  ? 'bg-white border border-stone-200 text-stone-800 shadow-sm'
+                  : 'border border-transparent text-stone-400 hover:bg-white/60 hover:text-stone-600'
+                }
+              `}
             >
-              <Icon className={cn(
-                'w-3.5 h-3.5',
-                isActive && tab.id === 'executing' && 'animate-pulse'
-              )} />
+              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-amber-500' : ''}`} />
               <span>{tab.label}</span>
-              {count > 0 && (
-                <span className={cn(
-                  'px-1.5 py-0.5 rounded-full text-[10px] font-bold',
-                  isActive
-                    ? 'bg-white/20 text-white'
-                    : 'bg-white/10 text-white/60'
-                )}>
-                  {count}
-                </span>
-              )}
             </button>
           )
         })}
       </div>
 
-      {/* 主视图区域 */}
-      <div className="flex-1 overflow-y-auto">
-        {currentTab === 'executing' && (
+      {/* ── 主视图 ── */}
+      <div className="flex-1 overflow-y-auto bg-[#fefaf6]">
+        {activeTab === 'matrix' && <TaskMonitorView />}
+
+        {activeTab === 'live' && <AgentRunStatePanel />}
+
+        {activeTab === 'executing' && (
           <>
             {executingTasks.length > 0 ? (
               <div className="p-4 space-y-4">
-                {executingTasks.map(task => (
+                {executingTasks.map((task) => (
                   <ExecutionFocusView
                     key={task.id}
                     task={task}
@@ -132,11 +105,7 @@ export function TaskHouse() {
           </>
         )}
 
-        {currentTab === 'live' && (
-          <AgentRunStatePanel />
-        )}
-
-        {currentTab === 'history' && (
+        {activeTab === 'history' && (
           <>
             {historyTasks.length > 0 ? (
               <div className="p-4">
@@ -148,50 +117,16 @@ export function TaskHouse() {
                 />
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center h-full py-16 text-white/30">
-                <Clock className="w-10 h-10 mb-3 opacity-50" />
-                <p className="text-sm font-mono">暂无历史任务</p>
-                <p className="text-xs font-mono mt-1 text-white/20">
-                  完成的任务将显示在这里
-                </p>
+              <div className="flex flex-col items-center justify-center h-full py-16">
+                <Clock className="w-10 h-10 mb-3 text-stone-300 opacity-50" />
+                <p className="text-sm text-stone-400">暂无历史任务</p>
               </div>
             )}
           </>
         )}
 
-        {currentTab === 'interrupted' && (
-          <>
-            {interruptedTasks.length > 0 ? (
-              <div className="p-4">
-                <HistoryDrawer
-                  isOpen={true}
-                  onClose={() => {}}
-                  inline={true}
-                  tasks={interruptedTasks}
-                />
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full py-16 text-white/30">
-                <AlertTriangle className="w-10 h-10 mb-3 opacity-50" />
-                <p className="text-sm font-mono">暂无中断任务</p>
-                <p className="text-xs font-mono mt-1 text-white/20">
-                  页面刷新时中断的任务将显示在这里
-                </p>
-              </div>
-            )}
-          </>
-        )}
-
-        {currentTab === 'monitor' && (
-          <MonitorPanel />
-        )}
+        {activeTab === 'monitor' && <MonitorPanel />}
       </div>
-
-      {/* 保留原有的抽屉功能，用于快速访问 */}
-      <HistoryDrawer
-        isOpen={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-      />
     </div>
   )
 }

@@ -27,8 +27,8 @@ const statusConfig: Record<string, {
   pulse: boolean
 }> = {
   disconnected: {
-    color: 'bg-slate-400',
-    textColor: 'text-slate-400',
+    color: 'bg-stone-400',
+    textColor: 'text-stone-400',
     icon: WifiOff,
     labelKey: 'conn.disconnected',
     pulse: false,
@@ -141,7 +141,7 @@ export function ConnectionPanel() {
       {/* 主状态栏 - 可点击展开 */}
       <motion.div
         className={cn(
-          'flex items-center gap-2 px-3 py-2 bg-slate-900/80 backdrop-blur-xl rounded-xl border border-white/10 cursor-pointer hover:bg-slate-900/90 transition-colors',
+          'flex items-center gap-2 px-3 py-2 bg-white/90 backdrop-blur-xl backdrop-blur-xl rounded-xl border border-stone-200 cursor-pointer hover:bg-white/95 backdrop-blur-3xl transition-colors',
           isExpanded && 'rounded-b-none border-b-0'
         )}
         initial={{ opacity: 0, x: -20 }}
@@ -182,11 +182,11 @@ export function ConnectionPanel() {
         </span>
 
         {/* 展开/收起指示 */}
-        <div className="ml-auto pl-2 border-l border-white/10">
+        <div className="ml-auto pl-2 border-l border-stone-200">
           {isExpanded ? (
-            <ChevronDown className="w-3.5 h-3.5 text-white/40" />
+            <ChevronDown className="w-3.5 h-3.5 text-stone-400" />
           ) : (
-            <ChevronUp className="w-3.5 h-3.5 text-white/40" />
+            <ChevronUp className="w-3.5 h-3.5 text-stone-400" />
           )}
         </div>
       </motion.div>
@@ -201,11 +201,11 @@ export function ConnectionPanel() {
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="w-80 bg-slate-900/80 backdrop-blur-xl rounded-b-xl border border-t-0 border-white/10 p-4 space-y-4">
+            <div className="w-80 bg-white/90 backdrop-blur-xl backdrop-blur-xl rounded-b-xl border border-t-0 border-stone-200 p-4 space-y-4">
               {/* 模式切换 */}
               {!isConnected && (
                 <div className="space-y-2">
-                  <h4 className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                  <h4 className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                     {t('conn.mode')}
                   </h4>
                   <div className="flex gap-2">
@@ -215,7 +215,7 @@ export function ConnectionPanel() {
                         'flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-xs font-mono transition-all',
                         mode === 'native'
                           ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
-                          : 'bg-white/5 border-white/10 text-white/50 hover:border-white/20'
+                          : 'bg-stone-100/80 border-stone-200 text-stone-400 hover:border-stone-200'
                       )}
                     >
                       <Monitor className="w-3.5 h-3.5" />
@@ -227,14 +227,14 @@ export function ConnectionPanel() {
                         'flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-xs font-mono transition-all',
                         mode === 'openclaw'
                           ? 'bg-purple-500/20 border-purple-500/40 text-purple-400'
-                          : 'bg-white/5 border-white/10 text-white/50 hover:border-white/20'
+                          : 'bg-stone-100/80 border-stone-200 text-stone-400 hover:border-stone-200'
                       )}
                     >
                       <Cloud className="w-3.5 h-3.5" />
                       {t('conn.openclaw')}
                     </button>
                   </div>
-                  <p className="text-[12px] text-white/30 font-mono">
+                  <p className="text-[12px] text-stone-300 font-mono">
                     {mode === 'native' 
                       ? t('conn.native_desc')
                       : t('conn.openclaw_desc')}
@@ -245,7 +245,7 @@ export function ConnectionPanel() {
               {/* Gateway 地址输入 (仅 OpenClaw 模式) */}
               {!isConnected && mode === 'openclaw' && (
                 <div className="space-y-2">
-                  <h4 className="text-xs font-mono text-white/50 uppercase tracking-wider flex items-center gap-1">
+                  <h4 className="text-xs font-mono text-stone-400 uppercase tracking-wider flex items-center gap-1">
                     <Globe className="w-3 h-3" /> {t('conn.gateway')}
                   </h4>
                   <input
@@ -253,9 +253,9 @@ export function ConnectionPanel() {
                     value={gatewayUrl}
                     onChange={(e) => setGatewayUrl(e.target.value)}
                     placeholder={t('conn.gateway_placeholder')}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-white/80 placeholder:text-white/30 focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/20 transition-all"
+                    className="w-full bg-stone-100/80 border border-stone-200 rounded-lg px-3 py-2 text-xs font-mono text-stone-700 placeholder:text-stone-300 focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/20 transition-all"
                   />
-                  <p className="text-[12px] text-white/30 font-mono">
+                  <p className="text-[12px] text-stone-300 font-mono">
                     {t('conn.gateway_hint')}
                   </p>
                 </div>
@@ -264,7 +264,7 @@ export function ConnectionPanel() {
               {/* Token 输入 (仅 OpenClaw 模式) */}
               {!isConnected && mode === 'openclaw' && (
                 <div className="space-y-2">
-                  <h4 className="text-xs font-mono text-white/50 uppercase tracking-wider flex items-center gap-1">
+                  <h4 className="text-xs font-mono text-stone-400 uppercase tracking-wider flex items-center gap-1">
                     <Key className="w-3 h-3" /> {t('conn.token')}
                   </h4>
                   <div className="relative">
@@ -273,17 +273,17 @@ export function ConnectionPanel() {
                       value={token}
                       onChange={(e) => setToken(e.target.value)}
                       placeholder={t('conn.token_placeholder')}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 pr-10 text-xs font-mono text-white/80 placeholder:text-white/30 focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/20 transition-all"
+                      className="w-full bg-stone-100/80 border border-stone-200 rounded-lg px-3 py-2 pr-10 text-xs font-mono text-stone-700 placeholder:text-stone-300 focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/20 transition-all"
                     />
                     <button
                       type="button"
                       onClick={() => setShowToken(!showToken)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-white/40 hover:text-white/70 transition-colors"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-600 transition-colors"
                     >
                       {showToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
                   </div>
-                  <p className="text-[12px] text-white/30 font-mono">
+                  <p className="text-[12px] text-stone-300 font-mono">
                     {t('conn.token_hint')}
                   </p>
                 </div>
@@ -291,7 +291,7 @@ export function ConnectionPanel() {
 
               {/* 连接控制 */}
               <div className="space-y-3">
-                <h4 className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                <h4 className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                   {t('conn.control')}
                 </h4>
                 
@@ -348,18 +348,18 @@ export function ConnectionPanel() {
               {/* Agent 状态 */}
               {isConnected && (
                 <div className="space-y-2">
-                  <h4 className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                  <h4 className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                     {t('settings.agent_status')}
                   </h4>
-                  <div className="flex items-center gap-2 p-2 bg-white/5 rounded-lg">
+                  <div className="flex items-center gap-2 p-2 bg-stone-100/80 rounded-lg">
                     <Activity className={cn(
                       'w-4 h-4',
-                      agentStatus === 'idle' && 'text-slate-400',
+                      agentStatus === 'idle' && 'text-stone-400',
                       agentStatus === 'thinking' && 'text-cyan-400 animate-pulse',
                       agentStatus === 'executing' && 'text-amber-400 animate-pulse',
                       agentStatus === 'error' && 'text-red-400'
                     )} />
-                    <span className="text-xs font-mono text-white/70 capitalize">
+                    <span className="text-xs font-mono text-stone-600 capitalize">
                       {agentStatus === 'idle' && t('settings.agent_idle')}
                       {agentStatus === 'thinking' && t('settings.agent_thinking') + '...'}
                       {agentStatus === 'executing' && t('settings.agent_executing') + '...'}
@@ -371,13 +371,13 @@ export function ConnectionPanel() {
 
               {/* 连接信息 */}
               <div className="space-y-2">
-                <h4 className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                <h4 className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                   {t('settings.connection_mode')}
                 </h4>
                 <div className="space-y-1.5 text-[13px] font-mono">
                   {mode === 'native' ? (
                     <>
-                      <div className="flex justify-between text-white/40">
+                      <div className="flex justify-between text-stone-400">
                         <span className="flex items-center gap-1">
                           <Monitor className="w-3 h-3" /> Server
                         </span>
@@ -385,13 +385,13 @@ export function ConnectionPanel() {
                           localhost:3001
                         </span>
                       </div>
-                      <div className="flex justify-between text-white/40">
+                      <div className="flex justify-between text-stone-400">
                         <span className="flex items-center gap-1">
                           <Activity className="w-3 h-3" /> Engine
                         </span>
-                        <span className="text-white/60">ReAct Loop</span>
+                        <span className="text-stone-500">ReAct Loop</span>
                       </div>
-                      <div className="flex justify-between text-white/40">
+                      <div className="flex justify-between text-stone-400">
                         <span className="flex items-center gap-1">
                           <Key className="w-3 h-3" /> Token
                         </span>
@@ -400,25 +400,25 @@ export function ConnectionPanel() {
                     </>
                   ) : (
                     <>
-                      <div className="flex justify-between text-white/40">
+                      <div className="flex justify-between text-stone-400">
                         <span className="flex items-center gap-1">
                           <Globe className="w-3 h-3" /> Gateway
                         </span>
-                        <span className="text-white/60 truncate max-w-[140px]">
+                        <span className="text-stone-500 truncate max-w-[140px]">
                           {gatewayUrl || '127.0.0.1:18789'}
                         </span>
                       </div>
-                      <div className="flex justify-between text-white/40">
+                      <div className="flex justify-between text-stone-400">
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" /> Heartbeat
                         </span>
-                        <span className="text-white/60">15s / 30s timeout</span>
+                        <span className="text-stone-500">15s / 30s timeout</span>
                       </div>
-                      <div className="flex justify-between text-white/40">
+                      <div className="flex justify-between text-stone-400">
                         <span className="flex items-center gap-1">
                           <RefreshCw className="w-3 h-3" /> Reconnect
                         </span>
-                        <span className="text-white/60">Exp. backoff (max 10)</span>
+                        <span className="text-stone-500">Exp. backoff (max 10)</span>
                       </div>
                     </>
                   )}
@@ -428,7 +428,7 @@ export function ConnectionPanel() {
               {/* 最近日志 */}
               {recentLogs.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                  <h4 className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                     Logs
                   </h4>
                   <div className="space-y-1 max-h-24 overflow-y-auto">
@@ -440,10 +440,10 @@ export function ConnectionPanel() {
                         <div
                           key={`${log.id}-${index}`}
                           className={cn(
-                            'text-[12px] font-mono p-1.5 rounded bg-white/5 truncate',
+                            'text-[12px] font-mono p-1.5 rounded bg-stone-100/80 truncate',
                             log.level === 'error' && 'text-red-400',
                             log.level === 'warn' && 'text-amber-400',
-                            log.level === 'info' && 'text-white/50'
+                            log.level === 'info' && 'text-stone-400'
                           )}
                         >
                           [{time}] {log.message}

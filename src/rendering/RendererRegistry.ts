@@ -13,7 +13,7 @@ import type {
  */
 export class RendererRegistry {
   private themes: Map<WorldTheme, RendererSet> = new Map()
-  private currentTheme: WorldTheme = 'cosmos'
+  private currentTheme: WorldTheme = 'minimalist'
 
   /**
    * 注册主题渲染器集合

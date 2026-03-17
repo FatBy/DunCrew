@@ -18,7 +18,7 @@ import { localEmbed, cosineSimilarity } from './llmService'
 // 类型定义
 // ============================================
 
-export type MemorySource = 'memory' | 'exec_trace' | 'gene' | 'nexus_xp' | 'session'
+export type MemorySource = 'memory' | 'exec_trace' | 'gene' | 'nexus_xp' | 'session' | 'l1_memory'
 
 export interface MemoryWriteParams {
   source: MemorySource
@@ -154,10 +154,10 @@ class MemoryStoreService {
     try {
       // 1. 向后端发送 FTS 搜索
       const searchParams = new URLSearchParams({
-        query,
+        q: query,
         limit: String(maxResults * 3), // 多取一些用于后续过滤和 MMR
       })
-      if (sources?.length) searchParams.set('sources', sources.join(','))
+      if (sources?.length) searchParams.set('source', sources[0])
       if (nexusId) searchParams.set('nexusId', nexusId)
       if (since) searchParams.set('since', String(since))
 
@@ -298,7 +298,7 @@ class MemoryStoreService {
   /** 按 Nexus ID 获取记忆 */
   async getByNexus(nexusId: string, limit: number = 20): Promise<MemorySearchResult[]> {
     try {
-      const res = await fetch(`${this.serverUrl}/api/memory/by-nexus/${encodeURIComponent(nexusId)}?limit=${limit}`)
+      const res = await fetch(`${this.serverUrl}/api/memory/nexus/${encodeURIComponent(nexusId)}?limit=${limit}`)
       if (res.ok) {
         return await res.json()
       }

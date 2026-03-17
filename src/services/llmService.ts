@@ -1,5 +1,6 @@
 /**
- * OpenAI-compatible LLM Service Client
+ * LLM Service Client
+ * 支持 OpenAI 兼容格式 和 Anthropic 原生格式
  * 支持流式 (SSE) 和非流式请求
  */
 
@@ -76,6 +77,7 @@ const STORAGE_KEYS = {
   API_KEY: 'ddos_llm_api_key',
   BASE_URL: 'ddos_llm_base_url',
   MODEL: 'ddos_llm_model',
+  API_FORMAT: 'ddos_llm_api_format',
   // Embedding 专用配置
   EMBED_API_KEY: 'ddos_embed_api_key',
   EMBED_BASE_URL: 'ddos_embed_base_url',
@@ -96,10 +98,12 @@ function getLocalServerUrl(): string {
 }
 
 export function getLLMConfig(): LLMConfig {
+  const formatRaw = localStorage.getItem(STORAGE_KEYS.API_FORMAT)
   return {
     apiKey: localStorage.getItem(STORAGE_KEYS.API_KEY) || '',
     baseUrl: localStorage.getItem(STORAGE_KEYS.BASE_URL) || '',
     model: localStorage.getItem(STORAGE_KEYS.MODEL) || '',
+    apiFormat: (formatRaw as LLMConfig['apiFormat']) || 'auto',
     // Embedding 配置（可选）
     embedApiKey: localStorage.getItem(STORAGE_KEYS.EMBED_API_KEY) || undefined,
     embedBaseUrl: localStorage.getItem(STORAGE_KEYS.EMBED_BASE_URL) || undefined,
@@ -111,6 +115,11 @@ export function saveLLMConfig(config: Partial<LLMConfig>) {
   if (config.apiKey !== undefined) localStorage.setItem(STORAGE_KEYS.API_KEY, config.apiKey)
   if (config.baseUrl !== undefined) localStorage.setItem(STORAGE_KEYS.BASE_URL, config.baseUrl)
   if (config.model !== undefined) localStorage.setItem(STORAGE_KEYS.MODEL, config.model)
+  // API 格式
+  if (config.apiFormat !== undefined) {
+    if (config.apiFormat && config.apiFormat !== 'auto') localStorage.setItem(STORAGE_KEYS.API_FORMAT, config.apiFormat)
+    else localStorage.removeItem(STORAGE_KEYS.API_FORMAT)
+  }
   // Embedding 配置
   if (config.embedApiKey !== undefined) {
     if (config.embedApiKey) localStorage.setItem(STORAGE_KEYS.EMBED_API_KEY, config.embedApiKey)
@@ -169,6 +178,7 @@ export async function restoreLLMConfigFromServer(): Promise<LLMConfig | null> {
       if (config.apiKey) localStorage.setItem(STORAGE_KEYS.API_KEY, config.apiKey)
       if (config.baseUrl) localStorage.setItem(STORAGE_KEYS.BASE_URL, config.baseUrl)
       if (config.model) localStorage.setItem(STORAGE_KEYS.MODEL, config.model)
+      if (config.apiFormat) localStorage.setItem(STORAGE_KEYS.API_FORMAT, config.apiFormat)
       console.log('[LLM] Config restored from server')
       return config
     }
@@ -183,6 +193,7 @@ export async function restoreLLMConfigFromServer(): Promise<LLMConfig | null> {
 // ============================================
 
 interface ChatCompletionRequest {
+  [key: string]: unknown
   model: string
   messages: Array<{
     role: string
@@ -218,8 +229,239 @@ function buildHeaders(apiKey: string): Record<string, string> {
   }
 }
 
+// ============================================
+// Anthropic API 适配层
+// ============================================
+
+/** 根据配置解析实际使用的 API 协议格式 */
+export function resolveApiFormat(config: LLMConfig): 'openai' | 'anthropic' {
+  if (config.apiFormat === 'openai' || config.apiFormat === 'anthropic') {
+    return config.apiFormat
+  }
+  // auto 或 undefined: 根据 URL 推断
+  if (config.baseUrl && /anthropic/i.test(config.baseUrl)) {
+    return 'anthropic'
+  }
+  return 'openai'
+}
+
+/** Anthropic 端点: /v1/messages */
+function buildAnthropicUrl(baseUrl: string): string {
+  let url = baseUrl.replace(/\/+$/, '')
+  if (!url.endsWith('/messages')) {
+    if (!url.endsWith('/v1')) {
+      url += '/v1'
+    }
+    url += '/messages'
+  }
+  return url
+}
+
+/** Anthropic 请求头: x-api-key + anthropic-version */
+function buildAnthropicHeaders(apiKey: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'x-api-key': apiKey,
+    'anthropic-version': '2023-06-01',
+  }
+}
+
+// --- Anthropic 请求体类型 ---
+
+interface AnthropicContentBlock {
+  type: 'text' | 'tool_use' | 'tool_result'
+  text?: string
+  id?: string
+  name?: string
+  input?: Record<string, unknown>
+  tool_use_id?: string
+  content?: string
+}
+
+interface AnthropicMessage {
+  role: 'user' | 'assistant'
+  content: string | AnthropicContentBlock[]
+}
+
+interface AnthropicTool {
+  name: string
+  description?: string
+  input_schema?: Record<string, unknown>
+}
+
+interface AnthropicConvertResult {
+  system: string
+  messages: AnthropicMessage[]
+  tools?: AnthropicTool[]
+  tool_choice?: { type: string }
+}
+
 /**
- * 非流式调用 (支持 Function Calling)
+ * 将内部 OpenAI 格式的消息/tools 转换为 Anthropic API 请求格式
+ * 
+ * 核心转换:
+ * - system 消息提取为顶层 system 字段
+ * - assistant + tool_calls → content 块数组 (text + tool_use)
+ * - role:'tool' → role:'user' + tool_result 块 (连续 tool 消息合并)
+ * - tools 参数格式转换
+ * - Anthropic 要求消息严格交替 user/assistant
+ */
+function convertMessagesToAnthropic(
+  messages: SimpleChatMessage[],
+  tools?: Array<{ type: 'function'; function: FunctionDefinition }>,
+  toolChoice?: 'auto' | 'none' | 'required',
+): AnthropicConvertResult {
+  // 1. 提取 system 消息
+  const systemParts: string[] = []
+  const nonSystemMessages = messages.filter(m => {
+    if (m.role === 'system') {
+      if (m.content) systemParts.push(m.content)
+      return false
+    }
+    return true
+  })
+
+  // 2. 逐条转换，暂存 tool result
+  const converted: AnthropicMessage[] = []
+  let pendingToolResults: AnthropicContentBlock[] = []
+
+  const flushToolResults = () => {
+    if (pendingToolResults.length > 0) {
+      converted.push({ role: 'user', content: pendingToolResults })
+      pendingToolResults = []
+    }
+  }
+
+  for (const msg of nonSystemMessages) {
+    if (msg.role === 'tool') {
+      // 暂存 tool result，等下次非 tool 消息时 flush
+      pendingToolResults.push({
+        type: 'tool_result',
+        tool_use_id: msg.tool_call_id || '',
+        content: msg.content || '',
+      })
+      continue
+    }
+
+    // 遇到非 tool 消息，先 flush 暂存的 tool results
+    flushToolResults()
+
+    if (msg.role === 'assistant') {
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        // assistant + tool_calls → content 块数组
+        const blocks: AnthropicContentBlock[] = []
+        if (msg.content) {
+          blocks.push({ type: 'text', text: msg.content })
+        }
+        for (const tc of msg.tool_calls) {
+          let parsedInput: Record<string, unknown> = {}
+          try { parsedInput = JSON.parse(tc.function.arguments) } catch { /* empty */ }
+          blocks.push({
+            type: 'tool_use',
+            id: tc.id,
+            name: tc.function.name,
+            input: parsedInput,
+          })
+        }
+        converted.push({ role: 'assistant', content: blocks })
+      } else {
+        converted.push({ role: 'assistant', content: msg.content || '' })
+      }
+    } else if (msg.role === 'user') {
+      converted.push({ role: 'user', content: msg.content || '' })
+    }
+    // 其他未知 role 作为 user 处理
+    else {
+      converted.push({ role: 'user', content: msg.content || '' })
+    }
+  }
+
+  // 尾部可能还有未 flush 的 tool results
+  flushToolResults()
+
+  // 3. 合并连续同角色消息 (Anthropic 要求严格交替)
+  const merged: AnthropicMessage[] = []
+  for (const msg of converted) {
+    const prev = merged[merged.length - 1]
+    if (prev && prev.role === msg.role) {
+      // 合并 content
+      const prevBlocks = typeof prev.content === 'string'
+        ? [{ type: 'text' as const, text: prev.content }]
+        : prev.content
+      const curBlocks = typeof msg.content === 'string'
+        ? [{ type: 'text' as const, text: msg.content }]
+        : msg.content
+      prev.content = [...prevBlocks, ...curBlocks]
+    } else {
+      merged.push(msg)
+    }
+  }
+
+  // 4. tools 转换
+  let anthropicTools: AnthropicTool[] | undefined
+  if (tools && tools.length > 0) {
+    anthropicTools = tools.map(t => ({
+      name: t.function.name,
+      description: t.function.description,
+      input_schema: t.function.parameters as Record<string, unknown> | undefined,
+    }))
+  }
+
+  // 5. tool_choice 转换
+  let anthropicToolChoice: { type: string } | undefined
+  if (toolChoice && anthropicTools) {
+    if (toolChoice === 'auto') anthropicToolChoice = { type: 'auto' }
+    else if (toolChoice === 'required') anthropicToolChoice = { type: 'any' }
+    // 'none' → 不传 tool_choice
+  }
+
+  return {
+    system: systemParts.join('\n'),
+    messages: merged,
+    tools: anthropicTools,
+    tool_choice: anthropicToolChoice,
+  }
+}
+
+/**
+ * 将 Anthropic 非流式响应转换为内部 OpenAI 格式
+ */
+function convertAnthropicResponseToOpenAI(data: any): {
+  content: string
+  toolCalls: FCToolCall[]
+  finishReason: string | null
+} {
+  const content = data.content
+  let text = ''
+  const toolCalls: FCToolCall[] = []
+
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block.type === 'text') {
+        text += block.text || ''
+      } else if (block.type === 'tool_use') {
+        toolCalls.push({
+          id: block.id || '',
+          function: {
+            name: block.name || '',
+            arguments: JSON.stringify(block.input || {}),
+          },
+        })
+      }
+    }
+  }
+
+  // stop_reason 映射
+  let finishReason: string | null = null
+  if (data.stop_reason === 'end_turn') finishReason = 'stop'
+  else if (data.stop_reason === 'tool_use') finishReason = 'tool_calls'
+  else if (data.stop_reason) finishReason = data.stop_reason
+
+  return { content: text, toolCalls, finishReason }
+}
+
+/**
+ * 非流式调用 (支持 Function Calling + Anthropic 适配)
  */
 export async function chat(
   messages: SimpleChatMessage[],
@@ -231,35 +473,62 @@ export async function chat(
     throw new Error('LLM 未配置，请在设置中配置 API')
   }
 
-  const body: ChatCompletionRequest = {
-    model: cfg.model,
-    messages: messages.map(m => ({
-      role: m.role,
-      content: m.content,
-      ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-      ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-      ...(m.name ? { name: m.name } : {}),
-    })),
-    stream: false,
-  }
-
-  if (tools && tools.length > 0) {
-    body.tools = tools
-    body.tool_choice = 'auto'
-  }
-
-  // 通过本地后端代理转发 (解决 CORS)
+  const format = resolveApiFormat(cfg as LLMConfig)
   const localServer = getLocalServerUrl()
   const proxyUrl = `${localServer}/api/llm/proxy`
-  const targetUrl = buildUrl(cfg.baseUrl)
+
+  let targetUrl: string
+  let headers: Record<string, string>
+  let requestBody: Record<string, unknown>
+
+  if (format === 'anthropic') {
+    // --- Anthropic 格式 ---
+    targetUrl = buildAnthropicUrl(cfg.baseUrl)
+    headers = buildAnthropicHeaders(cfg.apiKey)
+    const converted = convertMessagesToAnthropic(
+      messages,
+      tools && tools.length > 0 ? tools : undefined,
+      tools && tools.length > 0 ? 'auto' : undefined,
+    )
+    requestBody = {
+      model: cfg.model,
+      max_tokens: 16384,
+      stream: false,
+      ...(converted.system ? { system: converted.system } : {}),
+      messages: converted.messages,
+      ...(converted.tools ? { tools: converted.tools } : {}),
+      ...(converted.tool_choice ? { tool_choice: converted.tool_choice } : {}),
+    }
+  } else {
+    // --- OpenAI 格式 (原有逻辑) ---
+    targetUrl = buildUrl(cfg.baseUrl)
+    headers = buildHeaders(cfg.apiKey)
+    const body: ChatCompletionRequest = {
+      model: cfg.model,
+      messages: messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+        ...(m.name ? { name: m.name } : {}),
+      })),
+      stream: false,
+    }
+    if (tools && tools.length > 0) {
+      body.tools = tools
+      body.tool_choice = 'auto'
+    }
+    requestBody = body
+  }
 
   const res = await fetch(proxyUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: targetUrl,
+      headers,
       apiKey: cfg.apiKey,
-      body,
+      body: requestBody,
       stream: false,
     }),
   })
@@ -270,11 +539,17 @@ export async function chat(
   }
 
   const data = await res.json()
+
+  if (format === 'anthropic') {
+    const result = convertAnthropicResponseToOpenAI(data)
+    return result.content
+  }
+
   return data.choices?.[0]?.message?.content || ''
 }
 
 /**
- * 流式调用 (SSE) - 支持 Function Calling
+ * 流式调用 (SSE) - 支持 Function Calling + Anthropic 适配
  * 
  * 当传入 tools 参数时，返回 LLMStreamResult 包含 toolCalls;
  * 未传 tools 时行为与旧版一致 (toolCalls 为空数组)。
@@ -291,37 +566,64 @@ export async function streamChat(
     throw new Error('LLM 未配置，请在设置中配置 API')
   }
 
-  const body: ChatCompletionRequest = {
-    model: cfg.model,
-    messages: messages.map(m => ({
-      role: m.role,
-      content: m.content,
-      ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-      ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-      ...(m.name ? { name: m.name } : {}),
-      // DeepSeek 思维模式: 必须传递 reasoning_content
-      ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}),
-    })),
-    stream: true,
-  }
-
-  if (tools && tools.length > 0) {
-    body.tools = tools
-    body.tool_choice = 'auto'
-  }
-
-  // 通过本地后端代理转发 LLM 请求 (解决 CORS: 部分 API 如 Moonshot 的 preflight 不返回 CORS 头)
+  const format = resolveApiFormat(cfg as LLMConfig)
   const localServer = getLocalServerUrl()
   const proxyUrl = `${localServer}/api/llm/proxy`
-  const targetUrl = buildUrl(cfg.baseUrl)
+
+  let targetUrl: string
+  let headers: Record<string, string>
+  let requestBody: Record<string, unknown>
+
+  if (format === 'anthropic') {
+    // --- Anthropic 格式 ---
+    targetUrl = buildAnthropicUrl(cfg.baseUrl)
+    headers = buildAnthropicHeaders(cfg.apiKey)
+    const converted = convertMessagesToAnthropic(
+      messages,
+      tools && tools.length > 0 ? tools : undefined,
+      tools && tools.length > 0 ? 'auto' : undefined,
+    )
+    requestBody = {
+      model: cfg.model,
+      max_tokens: 16384,
+      stream: true,
+      ...(converted.system ? { system: converted.system } : {}),
+      messages: converted.messages,
+      ...(converted.tools ? { tools: converted.tools } : {}),
+      ...(converted.tool_choice ? { tool_choice: converted.tool_choice } : {}),
+    }
+  } else {
+    // --- OpenAI 格式 (原有逻辑) ---
+    targetUrl = buildUrl(cfg.baseUrl)
+    headers = buildHeaders(cfg.apiKey)
+    const body: ChatCompletionRequest = {
+      model: cfg.model,
+      messages: messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+        ...(m.name ? { name: m.name } : {}),
+        // DeepSeek 思维模式: 必须传递 reasoning_content
+        ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}),
+      })),
+      stream: true,
+    }
+    if (tools && tools.length > 0) {
+      body.tools = tools
+      body.tool_choice = 'auto'
+    }
+    requestBody = body
+  }
 
   const res = await fetch(proxyUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: targetUrl,
+      headers,
       apiKey: cfg.apiKey,
-      body,
+      body: requestBody,
       stream: true,
     }),
     signal,
@@ -338,83 +640,156 @@ export async function streamChat(
   const decoder = new TextDecoder()
   let buffer = ''
 
-  // 累积结果
+  // 累积结果 (两种格式共享)
   let fullContent = ''
   let fullReasoningContent = ''  // DeepSeek 思维模式推理内容
   let finishReason: string | null = null
   // tool_calls 累积器: index → { id, name, arguments }
   const toolCallAccumulator: Map<number, { id: string; name: string; arguments: string }> = new Map()
 
+  /** 构建最终结果的辅助函数 */
+  const buildResult = (): LLMStreamResult => {
+    const toolCalls: FCToolCall[] = []
+    for (const [, acc] of toolCallAccumulator) {
+      toolCalls.push({
+        id: acc.id,
+        function: { name: acc.name, arguments: acc.arguments },
+      })
+    }
+    return {
+      content: fullContent,
+      toolCalls,
+      finishReason,
+      reasoningContent: fullReasoningContent || undefined,
+    }
+  }
+
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    if (format === 'anthropic') {
+      // ==========================================
+      // Anthropic SSE 解析
+      // 事件结构: event: xxx\ndata: {...}\n\n
+      // ==========================================
+      // Anthropic content_block 到 toolCallAccumulator 的 index 映射
+      // content_block_start 中 type=tool_use 的 index 对应 toolCallAccumulator 的 key
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      // 保留最后一行（可能不完整）
-      buffer = lines.pop() || ''
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
 
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed || !trimmed.startsWith('data:')) continue
+        for (const line of lines) {
+          const trimmed = line.trim()
 
-        const data = trimmed.slice(5).trim()
-        if (data === '[DONE]') {
-          // 构建最终结果
-          const toolCalls: FCToolCall[] = []
-          for (const [, acc] of toolCallAccumulator) {
-            toolCalls.push({
-              id: acc.id,
-              function: { name: acc.name, arguments: acc.arguments },
-            })
-          }
-          return { 
-            content: fullContent, 
-            toolCalls, 
-            finishReason,
-            reasoningContent: fullReasoningContent || undefined,
+          // 跳过 event: 行和空行，只处理 data: 行
+          if (!trimmed || trimmed.startsWith('event:')) continue
+          if (!trimmed.startsWith('data:')) continue
+
+          const dataStr = trimmed.slice(5).trim()
+          if (!dataStr) continue
+
+          try {
+            const parsed = JSON.parse(dataStr)
+            const eventType = parsed.type as string
+
+            if (eventType === 'content_block_start') {
+              // 工具调用开始: 记录 id 和 name
+              const block = parsed.content_block
+              if (block?.type === 'tool_use') {
+                const idx = parsed.index ?? toolCallAccumulator.size
+                toolCallAccumulator.set(idx, {
+                  id: block.id || '',
+                  name: block.name || '',
+                  arguments: '',
+                })
+              }
+            } else if (eventType === 'content_block_delta') {
+              const delta = parsed.delta
+              if (delta?.type === 'text_delta' && delta.text) {
+                // 文本增量
+                fullContent += delta.text
+                onChunk(delta.text)
+              } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
+                // 工具参数增量
+                const idx = parsed.index ?? 0
+                const acc = toolCallAccumulator.get(idx)
+                if (acc) {
+                  acc.arguments += delta.partial_json
+                }
+              }
+            } else if (eventType === 'message_delta') {
+              // 消息结束信息
+              const stopReason = parsed.delta?.stop_reason
+              if (stopReason === 'end_turn') finishReason = 'stop'
+              else if (stopReason === 'tool_use') finishReason = 'tool_calls'
+              else if (stopReason) finishReason = stopReason
+            } else if (eventType === 'message_stop') {
+              // 流结束
+              return buildResult()
+            }
+          } catch {
+            // 忽略解析错误
           }
         }
+      }
+    } else {
+      // ==========================================
+      // OpenAI SSE 解析 (原有逻辑)
+      // ==========================================
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-        try {
-          const parsed = JSON.parse(data)
-          const choice = parsed.choices?.[0]
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
 
-          // 更新 finish_reason
-          if (choice?.finish_reason) {
-            finishReason = choice.finish_reason
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed || !trimmed.startsWith('data:')) continue
+
+          const data = trimmed.slice(5).trim()
+          if (data === '[DONE]') {
+            return buildResult()
           }
 
-          const delta = choice?.delta
-          if (!delta) continue
+          try {
+            const parsed = JSON.parse(data)
+            const choice = parsed.choices?.[0]
 
-          // 累积文本内容
-          if (delta.content) {
-            fullContent += delta.content
-            onChunk(delta.content)
-          }
-
-          // DeepSeek 思维模式: 累积 reasoning_content
-          if (delta.reasoning_content) {
-            fullReasoningContent += delta.reasoning_content
-          }
-
-          // 累积 tool_calls delta
-          if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
-            for (const tc of delta.tool_calls as ToolCallDelta[]) {
-              const idx = tc.index
-              if (!toolCallAccumulator.has(idx)) {
-                toolCallAccumulator.set(idx, { id: '', name: '', arguments: '' })
-              }
-              const acc = toolCallAccumulator.get(idx)!
-              if (tc.id) acc.id = tc.id
-              if (tc.function?.name) acc.name += tc.function.name
-              if (tc.function?.arguments) acc.arguments += tc.function.arguments
+            if (choice?.finish_reason) {
+              finishReason = choice.finish_reason
             }
+
+            const delta = choice?.delta
+            if (!delta) continue
+
+            if (delta.content) {
+              fullContent += delta.content
+              onChunk(delta.content)
+            }
+
+            if (delta.reasoning_content) {
+              fullReasoningContent += delta.reasoning_content
+            }
+
+            if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
+              for (const tc of delta.tool_calls as ToolCallDelta[]) {
+                const idx = tc.index
+                if (!toolCallAccumulator.has(idx)) {
+                  toolCallAccumulator.set(idx, { id: '', name: '', arguments: '' })
+                }
+                const acc = toolCallAccumulator.get(idx)!
+                if (tc.id) acc.id = tc.id
+                if (tc.function?.name) acc.name += tc.function.name
+                if (tc.function?.arguments) acc.arguments += tc.function.arguments
+              }
+            }
+          } catch {
+            // 忽略解析错误，继续处理
           }
-        } catch {
-          // 忽略解析错误，继续处理
         }
       }
     }
@@ -422,20 +797,8 @@ export async function streamChat(
     reader.releaseLock()
   }
 
-  // 流结束但没收到 [DONE]，也返回已累积的结果
-  const toolCalls: FCToolCall[] = []
-  for (const [, acc] of toolCallAccumulator) {
-    toolCalls.push({
-      id: acc.id,
-      function: { name: acc.name, arguments: acc.arguments },
-    })
-  }
-  return { 
-    content: fullContent, 
-    toolCalls, 
-    finishReason,
-    reasoningContent: fullReasoningContent || undefined,
-  }
+  // 流结束但没收到结束标记，也返回已累积的结果
+  return buildResult()
 }
 
 /**
@@ -483,6 +846,9 @@ function buildEmbeddingUrl(baseUrl: string): string {
  * @param useLocalFallback 是否启用本地嵌入回退（默认 true）
  * @returns 嵌入向量 (float[])
  */
+// Embed API 可用性缓存: 记录哪些 baseUrl 不支持 embeddings，避免重复 400/404
+let _embedUnsupportedProviders: Set<string> = new Set()
+
 export async function embed(
   text: string,
   config?: Partial<LLMConfig>,
@@ -504,6 +870,11 @@ export async function embed(
     return []
   }
 
+  // 如果该 provider 已知不支持 embeddings，直接跳过 API 调用
+  if (_embedUnsupportedProviders.has(baseUrl)) {
+    return useLocalFallback ? localEmbed(text) : []
+  }
+
   try {
     const res = await fetch(buildEmbeddingUrl(baseUrl), {
       method: 'POST',
@@ -515,7 +886,13 @@ export async function embed(
     })
 
     if (!res.ok) {
-      console.warn(`[Embed] API error (${res.status}), using local TF-IDF fallback`)
+      // 400/404 表示该 provider 不支持 embeddings 端点，缓存避免重复请求
+      if (res.status === 400 || res.status === 404) {
+        _embedUnsupportedProviders.add(baseUrl)
+        console.warn(`[Embed] Provider ${baseUrl} does not support embeddings (${res.status}), permanently falling back to local TF-IDF`)
+      } else {
+        console.warn(`[Embed] API error (${res.status}), using local TF-IDF fallback`)
+      }
       return useLocalFallback ? localEmbed(text) : []
     }
 

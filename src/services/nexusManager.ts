@@ -6,7 +6,7 @@
 import type { NexusEntity, ToolInfo, ExecTrace } from '@/types'
 import { nexusRuleEngine, type NexusStats } from './nexusRuleEngine'
 import { genePoolService } from './genePoolService'
-import { chat, isLLMConfigured } from './llmService'
+
 
 type NexusStatsMap = Record<string, NexusStats>
 
@@ -22,48 +22,6 @@ export interface SOPPhase {
   name: string       // Phase 名称 (e.g. "需求分析与规划")
   index: number      // Phase 序号 (1-based)
   steps: SOPStep[]
-}
-
-export interface SOPTracker {
-  phases: SOPPhase[]
-  currentPhaseIndex: number  // 推断的当前 Phase (0-based, -1=未开始)
-  nexusId: string
-  nexusLabel: string
-}
-
-// SOP 适用性评估结果
-export type SOPMode = 'strict' | 'optional' | 'skip'
-
-// ---- SOP 自适应演进类型 ----
-
-export interface SOPAnnotation {
-  phase: number           // 目标 Phase 序号 (1-based)
-  type: 'recommend' | 'warning' | 'deprecated'
-  text: string
-  evidence: number        // 支撑次数
-}
-
-export interface SOPPhaseStats {
-  successes: number
-  failures: number
-  topToolChains: string[][] // 最成功的工具链 (按频次排序)
-}
-
-export interface SOPFitnessData {
-  currentVersion: number
-  ema: number                         // 指数移动平均适应度 (0~1)
-  executionsSinceRewrite: number
-  totalExecutions: number
-  lastRewriteTime: string | null      // ISO date string
-  baselineEmaBeforeRewrite: number    // 重写前的 ema 基准 (用于回滚判定)
-  tier1Annotations: SOPAnnotation[]
-  phaseStats: Record<string, SOPPhaseStats>
-  history: Array<{
-    version: number
-    ema: number
-    executions: number
-    rewriteReason: string | null
-  }>
 }
 
 // ---- IO 依赖接口 ----
@@ -379,15 +337,44 @@ export class NexusManagerService {
       const triggers = nexus.triggers || []
       score += triggers.filter(t => inputLower.includes(t.toLowerCase())).length * 3
 
+      // P2.1: label 子串匹配 (中文友好 — 逐字符拆分匹配)
+      const label = (nexus.label || '').toLowerCase()
+      if (label.length >= 2) {
+        // 完整匹配加权最高
+        if (inputLower.includes(label)) {
+          score += 5
+        } else {
+          // 逐字/词拆分: 对中文做字级别匹配，对英文做空格分词
+          const labelChunks: string[] = []
+          // 提取连续中文字符组（2字以上）和英文单词
+          const chunkPattern = /[\u4e00-\u9fff]{2,}|[a-z]{3,}/g
+          let chunkMatch: RegExpExecArray | null
+          while ((chunkMatch = chunkPattern.exec(label)) !== null) {
+            labelChunks.push(chunkMatch[0])
+          }
+          for (const chunk of labelChunks) {
+            if (inputLower.includes(chunk)) {
+              score += 2
+            }
+          }
+        }
+      }
+
       const skills = nexus.boundSkillIds || []
       score += skills.filter(s => {
         const parts = s.toLowerCase().split('-')
         return parts.some(p => p.length > 2 && inputLower.includes(p))
       }).length * 2
 
-      const desc = `${nexus.flavorText || ''} ${nexus.label || ''}`
-      const descWords = desc.toLowerCase().split(/\s+/).filter(w => w.length > 2)
-      score += descWords.filter(w => inputLower.includes(w)).length
+      const desc = `${nexus.flavorText || ''}`
+      // 对描述文本同样做中文友好的子串匹配
+      const descChunks: string[] = []
+      const descChunkPattern = /[\u4e00-\u9fff]{2,}|[a-z]{3,}/gi
+      let descMatch: RegExpExecArray | null
+      while ((descMatch = descChunkPattern.exec(desc.toLowerCase())) !== null) {
+        descChunks.push(descMatch[0])
+      }
+      score += descChunks.filter(w => inputLower.includes(w)).length
 
       if (score > bestScore) {
         bestScore = score
@@ -395,7 +382,7 @@ export class NexusManagerService {
       }
     }
 
-    if (bestScore >= 3 && bestMatch) {
+    if (bestScore >= 2 && bestMatch) {
       console.log(`[NexusRouter] P2 keyword match: "${bestMatch.label}" (score: ${bestScore})`)
       return bestMatch
     }
@@ -680,13 +667,13 @@ export class NexusManagerService {
       ctx += `---\n\n`
     }
 
-    // SOP 注入策略：结构化摘要 + 完整原文 (提高上限)
+    // SOP 作为参考资料注入（Session 级别，仅注入一次）
+    // 不再强制要求模型按 Phase 顺序执行，而是让模型根据任务需要自主参考
     const phases = this.parseSOP(sopContent)
 
     if (phases.length > 0) {
-      // 先注入结构化执行路线图（简洁、模型容易跟踪）
-      ctx += `### 📋 SOP 执行路线图\n\n`
-      ctx += `**执行原则**: 按顺序执行各阶段。如果用户指定了从某个 Phase 继续，或者对话历史中已完成某些 Phase，则直接从指定/下一个 Phase 开始，不要重复已完成的步骤。\n\n`
+      ctx += `### 📋 SOP 参考流程\n\n`
+      ctx += `以下是该 Nexus 的标准操作流程，供你参考。请根据用户的具体任务灵活运用，不必强制按顺序执行。\n\n`
       for (const phase of phases) {
         ctx += `**Phase ${phase.index}: ${phase.name}**\n`
         for (const step of phase.steps) {
@@ -697,10 +684,10 @@ export class NexusManagerService {
       ctx += `---\n\n`
     }
 
-    // 然后注入完整 SOP 原文作为参考细节（提高上限到 16000 字符）
-    const maxChars = 16000
+    // 注入 SOP 原文作为补充参考（限制在 8000 字符以内，减少上下文膨胀）
+    const maxChars = 8000
     const trimmedSOP = sopContent.length > maxChars
-      ? sopContent.slice(0, maxChars) + '\n... [SOP 原文过长，已截断。请严格参照上方路线图执行]'
+      ? sopContent.slice(0, maxChars) + '\n... [SOP 原文较长，已截断]'
       : sopContent
     ctx += trimmedSOP
 
@@ -1016,740 +1003,6 @@ export class NexusManagerService {
     return [...chineseWords, ...englishWords]
       .filter(w => !stopWords.has(w))
       .slice(0, 8) // 每步最多 8 个关键词
-  }
-
-  /**
-   * 为 Nexus 创建 SOP 执行追踪器
-   */
-  createSOPTracker(nexusId: string): SOPTracker | null {
-    if (!this.io) return null
-    const nexuses = this.io.getNexuses()
-    const nexus = nexuses?.get(nexusId)
-    if (!nexus?.sopContent) return null
-
-    const phases = this.parseSOP(nexus.sopContent)
-    if (phases.length === 0) return null
-
-    return {
-      phases,
-      currentPhaseIndex: 0, // 从第一个 Phase 开始
-      nexusId,
-      nexusLabel: nexus.label || nexusId,
-    }
-  }
-
-  /**
-   * 根据工具调用和返回内容，推断当前 SOP 执行进度
-   * 返回推断后的 phase index (0-based)
-   */
-  inferSOPProgress(
-    tracker: SOPTracker,
-    toolsUsed: string[],
-    lastToolResult: string,
-  ): number {
-    if (tracker.phases.length === 0) return -1
-
-    // 构建已有信号文本 (工具名 + 结果摘要)
-    const signalText = [
-      ...toolsUsed.map(t => t.toLowerCase()),
-      lastToolResult.slice(0, 500).toLowerCase(),
-    ].join(' ')
-
-    // 从当前 Phase 开始向后扫描，找到关键词匹配最多的 Phase
-    let bestPhaseIdx = tracker.currentPhaseIndex
-    let bestScore = 0
-
-    for (let pi = tracker.currentPhaseIndex; pi < tracker.phases.length; pi++) {
-      const phase = tracker.phases[pi]
-      let phaseScore = 0
-      for (const step of phase.steps) {
-        for (const kw of step.keywords) {
-          if (signalText.includes(kw.toLowerCase())) {
-            phaseScore++
-          }
-        }
-      }
-      if (phaseScore > bestScore) {
-        bestScore = phaseScore
-        bestPhaseIdx = pi
-      }
-    }
-
-    // 只允许前进不允许后退 (SOP 是单向流程)
-    return Math.max(bestPhaseIdx, tracker.currentPhaseIndex)
-  }
-
-  /**
-   * 生成 SOP 进度提醒文本 (注入到 ReAct 循环消息中)
-   */
-  buildSOPReminder(tracker: SOPTracker, toolsUsed: string[], lastToolResult: string): string | null {
-    if (!tracker || tracker.phases.length === 0) return null
-
-    // 推断进度
-    const inferredIdx = this.inferSOPProgress(tracker, toolsUsed, lastToolResult)
-    tracker.currentPhaseIndex = inferredIdx
-
-    const currentPhase = tracker.phases[inferredIdx]
-    if (!currentPhase) return null
-
-    const totalPhases = tracker.phases.length
-    const completedPhases = tracker.phases.slice(0, inferredIdx).map(p => p.name)
-    const nextPhase = inferredIdx + 1 < totalPhases ? tracker.phases[inferredIdx + 1] : null
-
-    // 构建简洁的提醒
-    let reminder = `\n[SOP 执行追踪 - ${tracker.nexusLabel}]\n`
-    reminder += `当前阶段: Phase ${currentPhase.index}/${totalPhases} - ${currentPhase.name}\n`
-
-    if (completedPhases.length > 0) {
-      reminder += `已完成: ${completedPhases.join(' → ')}\n`
-    }
-
-    // 列出当前 Phase 的具体步骤
-    reminder += `待执行步骤:\n`
-    for (const step of currentPhase.steps) {
-      reminder += `  ${step.index}. ${step.text}\n`
-    }
-
-    if (nextPhase) {
-      reminder += `下一阶段: ${nextPhase.name}\n`
-    }
-
-    if (nextPhase) {
-      reminder += `⚠️ 重要指令：当前阶段完成后，你必须立即开始执行下一阶段「${nextPhase.name}」的工具调用。不要停下来汇报进度，不要输出建议选项，不要询问用户是否继续。直接调用工具继续执行。只有所有阶段全部完成后才可以停下来输出最终总结。`
-    } else {
-      reminder += `这是最后一个阶段。完成后请输出最终总结。`
-    }
-    return reminder
-  }
-
-  /**
-   * 评估用户任务是否适合按 SOP 流程执行
-   * 返回: strict (强制 SOP) | optional (让模型自行判断) | skip (跳过 SOP)
-   */
-  evaluateSOPApplicability(userQuery: string, nexusId: string): { mode: SOPMode; reason: string } {
-    if (!this.io) return { mode: 'skip', reason: 'no io' }
-    const nexuses = this.io.getNexuses()
-    const nexus = nexuses?.get(nexusId)
-    if (!nexus?.sopContent) return { mode: 'skip', reason: 'no SOP content' }
-
-    const q = userQuery.trim()
-    const qLower = q.toLowerCase()
-
-    // 1. 用户明确要求按 SOP/流程执行 → strict
-    if (/(?:按照|按|遵循|执行|走|跑|启动).*(?:sop|流程|步骤|标准流程)/i.test(q) ||
-        /(?:sop|流程|步骤).*(执行|开始|启动|走)/i.test(q)) {
-      return { mode: 'strict', reason: 'user explicitly requested SOP' }
-    }
-
-    // 2. 简短/问答型 → skip (already handled by isTaskIntent, but double-check)
-    if (q.length < 15 && /[？?]$/.test(q)) {
-      return { mode: 'skip', reason: 'short question' }
-    }
-
-    // 3. Meta 级请求 (加载技能、查看信息等) → skip
-    if (/(?:加载|查看|列出|显示|有什么|哪些|了解|介绍|说明|帮助|help).*(?:技能|skill|工具|tool|能力|功能)/i.test(q)) {
-      return { mode: 'skip', reason: 'meta request about skills/tools' }
-    }
-    if (/(?:技能|skill|工具|tool).*(?:加载|列表|有哪些|是什么)/i.test(q)) {
-      return { mode: 'skip', reason: 'meta request about skills/tools' }
-    }
-
-    // 4. SOP Phase 关键词匹配: 检查用户任务是否明确匹配 SOP 中的多个 Phase
-    const phases = this.parseSOP(nexus.sopContent)
-    if (phases.length > 0) {
-      let phaseMatchCount = 0
-      for (const phase of phases) {
-        const phaseKeywords = phase.steps.flatMap(s => s.keywords)
-        const matched = phaseKeywords.some(kw => qLower.includes(kw.toLowerCase()))
-        if (matched) phaseMatchCount++
-      }
-      // 匹配超过一半的 Phase → strict (任务覆盖 SOP 多个阶段)
-      if (phaseMatchCount >= Math.ceil(phases.length / 2)) {
-        return { mode: 'strict', reason: `query matches ${phaseMatchCount}/${phases.length} SOP phases` }
-      }
-    }
-
-    // 5. 任务复杂度检测: 长任务描述且包含多个动词 → optional (让模型自己判断)
-    const taskVerbCount = (q.match(/(?:做|生成|分析|创建|修改|制作|编写|设计|开发|写|搜索|查找|对比|整理|汇总|导出|绘制|create|make|build|generate|write|analyze|design)/gi) || []).length
-    if (q.length > 80 && taskVerbCount >= 2) {
-      return { mode: 'optional', reason: 'complex task, let model decide' }
-    }
-
-    // 6. 默认: optional — 让模型自己判断是否需要 SOP
-    return { mode: 'optional', reason: 'default: model decides' }
-  }
-
-  /**
-   * 检测模型第一轮回复是否采纳了 SOP 执行
-   * 用于 optional 模式: 如果模型回复表明它选择了 SOP，后续激活 tracker
-   */
-  detectSOPAdoption(firstResponse: string): boolean {
-    if (!firstResponse) return false
-    // 检测明确的 SOP 采纳信号
-    if (firstResponse.includes('[SOP:FOLLOW]')) return true
-    if (firstResponse.includes('[SOP:FREE]')) return false
-
-    // 启发式: 模型提到了 Phase、SOP、步骤执行等
-    const sopSignals = /(?:Phase\s*1|第[一1]阶段|按照\s*SOP|SOP\s*流程|开始执行.*阶段|按.*流程执行|执行.*Phase)/i
-    if (sopSignals.test(firstResponse)) return true
-
-    return false
-  }
-
-  matchByTriggers(userQuery: string): string | null {
-    if (!this.io) return null
-    const query = userQuery.toLowerCase()
-    const nexuses = this.io.getNexuses()
-    if (!nexuses) return null
-
-    for (const [, nexus] of nexuses) {
-      if (nexus.triggers && nexus.triggers.length > 0) {
-        for (const trigger of nexus.triggers) {
-          if (query.includes(trigger.toLowerCase())) {
-            return nexus.id
-          }
-        }
-      }
-    }
-    return null
-  }
-
-  // ============================================
-  // 🧬 SOP 自适应演进系统
-  // Tier 1: 统计驱动微调 (每次执行后)
-  // Tier 2: LLM 异步重写 (条件触发)
-  // ============================================
-
-  // -- 常量 --
-  private static readonly SOP_EMA_ALPHA = 0.3          // EMA 平滑系数
-  private static readonly TIER1_MIN_EVIDENCE = 3       // Tier1 批注最少证据次数
-  private static readonly TIER2_MIN_EXECUTIONS = 10    // Tier2 最少执行次数
-  private static readonly TIER2_FITNESS_THRESHOLD = 0.55 // Tier2 触发适应度阈值
-  private static readonly TIER2_MIN_ANNOTATIONS = 5    // Tier2 至少累积批注数
-  private static readonly TIER2_COOLDOWN_DAYS = 3      // Tier2 重写冷却天数
-  private static readonly ROLLBACK_MARGIN = 0.15       // 回滚阈值 (ema 降幅)
-  private static readonly ROLLBACK_MIN_EXECUTIONS = 3  // 回滚前最少执行次数
-
-  /**
-   * 计算单次执行的适应度分数 (0~1)
-   */
-  computeFitness(trace: ExecTrace, maxTurns: number): number {
-    const success = trace.success ? 1 : 0
-    const turns = trace.turnCount || 0
-    const totalCalls = trace.tools.length
-    const errorCalls = trace.tools.filter(t => t.status === 'error').length
-    const errorRate = totalCalls > 0 ? errorCalls / totalCalls : 0
-    const efficiency = maxTurns > 0 ? Math.max(0, 1 - turns / maxTurns) : 0.5
-
-    return 0.5 * success + 0.3 * efficiency + 0.2 * (1 - errorRate)
-  }
-
-  /**
-   * 加载 Nexus 的 sop-fitness.json (通过后端 API)
-   */
-  private async loadFitness(nexusId: string): Promise<SOPFitnessData> {
-    if (!this.io) return this.defaultFitness()
-    try {
-      const res = await fetch(`${this.io.getServerUrl()}/nexuses/${encodeURIComponent(nexusId)}/fitness`)
-      if (!res.ok) return this.defaultFitness()
-      const data = await res.json()
-      if (!data || !data.currentVersion) return this.defaultFitness()
-      return data as SOPFitnessData
-    } catch { /* 网络错误或不存在 */ }
-    return this.defaultFitness()
-  }
-
-  private defaultFitness(): SOPFitnessData {
-    return {
-      currentVersion: 1,
-      ema: 0.5,
-      executionsSinceRewrite: 0,
-      totalExecutions: 0,
-      lastRewriteTime: null,
-      baselineEmaBeforeRewrite: 0.5,
-      tier1Annotations: [],
-      phaseStats: {},
-      history: [{ version: 1, ema: 0.5, executions: 0, rewriteReason: null }],
-    }
-  }
-
-  /**
-   * 持久化 sop-fitness.json (通过后端 API)
-   */
-  private async saveFitness(nexusId: string, data: SOPFitnessData): Promise<boolean> {
-    if (!this.io) return false
-    let retries = 2
-    while (retries >= 0) {
-      try {
-        const res = await fetch(`${this.io.getServerUrl()}/nexuses/${encodeURIComponent(nexusId)}/fitness`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data),
-        })
-        if (res.ok) return true
-        throw new Error(`HTTP ${res.status}`)
-      } catch (err) {
-        retries--
-        if (retries < 0) {
-          console.warn(`[SOP-Evolution] Failed to save fitness for "${nexusId}" after retries:`, err)
-          return false
-        }
-        await new Promise(r => setTimeout(r, 1000))
-      }
-    }
-    return false
-  }
-
-  /**
-   * 🧬 SOP 演进主入口 — 在每次任务执行完成后调用
-   * 1. 更新 fitness EMA
-   * 2. 更新 phase 统计
-   * 3. Tier 1: 生成/更新批注
-   * 4. 检查回滚条件
-   * 5. 检查 Tier 2 触发条件
-   */
-  async evolveSOPAfterExecution(
-    nexusId: string,
-    trace: ExecTrace,
-    sopTracker: SOPTracker | null,
-    maxTurns: number
-  ): Promise<void> {
-    if (!this.io) return
-
-    try {
-      const fitness = this.computeFitness(trace, maxTurns)
-      const data = await this.loadFitness(nexusId)
-
-      // 更新 EMA
-      const alpha = NexusManagerService.SOP_EMA_ALPHA
-      data.ema = alpha * fitness + (1 - alpha) * data.ema
-      data.executionsSinceRewrite++
-      data.totalExecutions++
-
-      console.log(`[SOP-Evolution] Nexus "${nexusId}" fitness=${fitness.toFixed(3)}, ema=${data.ema.toFixed(3)}, execSinceRewrite=${data.executionsSinceRewrite}`)
-
-      // 更新 Phase 统计
-      this.updatePhaseStats(data, trace, sopTracker)
-
-      // Tier 1: 统计驱动批注
-      this.tier1UpdateAnnotations(data, trace, sopTracker)
-
-      // 检查回滚 (仅在重写后观察期内)
-      if (data.currentVersion > 1 && data.executionsSinceRewrite >= NexusManagerService.ROLLBACK_MIN_EXECUTIONS) {
-        if (data.ema < data.baselineEmaBeforeRewrite - NexusManagerService.ROLLBACK_MARGIN) {
-          console.log(`[SOP-Evolution] 🔄 Rollback triggered! ema=${data.ema.toFixed(3)} < baseline=${data.baselineEmaBeforeRewrite.toFixed(3)} - ${NexusManagerService.ROLLBACK_MARGIN}`)
-          await this.rollbackSOP(nexusId, data)
-          // 回滚后保存 fitness 即使 rollbackSOP 内部也会保存，双保险
-          const saved = await this.saveFitness(nexusId, data)
-          if (!saved) console.error(`[SOP-Evolution] Critical: fitness save failed after rollback for "${nexusId}"`)
-          return
-        }
-      }
-
-      // 持久化 fitness (回滚/Tier2前先保存)
-      const saved = await this.saveFitness(nexusId, data)
-      if (!saved) {
-        console.error(`[SOP-Evolution] Fitness save failed for "${nexusId}", skipping Tier 1/2 writes to avoid inconsistency`)
-        return  // fitness 写不进去就不要继续写 SOP，避免数据不一致
-      }
-
-    // Tier 1: 将批注写入 NEXUS.md (每次都更新)
-    if (data.tier1Annotations.length > 0) {
-      await this.tier1WriteAnnotationsToSOP(nexusId, data)
-    }
-
-      // Tier 2: 检查是否需要 LLM 重写
-      if (this.shouldTriggerTier2(data)) {
-        console.log(`[SOP-Evolution] 🧬 Tier 2 triggered for "${nexusId}" — launching async SOP rewrite`)
-        // 异步执行，不阻塞当前任务
-        this.tier2RewriteSOP(nexusId, data).catch(err => {
-          console.warn('[SOP-Evolution] Tier 2 rewrite failed:', err)
-        })
-      }
-    } catch (err) {
-      // 顶层守卫: SOP 演进整体失败不应影响主流程
-      console.error(`[SOP-Evolution] evolveSOPAfterExecution failed for "${nexusId}":`, err)
-    }
-  }
-
-  /**
-   * 更新各 Phase 的统计数据
-   */
-  private updatePhaseStats(data: SOPFitnessData, trace: ExecTrace, sopTracker: SOPTracker | null): void {
-    if (!sopTracker || sopTracker.phases.length === 0) return
-
-    // 简化: 根据工具调用顺序和 sopTracker 的 currentPhaseIndex 归类
-    // 将所有工具调用归到 currentPhaseIndex 指向的 phase
-    const phaseKey = String(sopTracker.currentPhaseIndex + 1) // 1-based
-    if (!data.phaseStats[phaseKey]) {
-      data.phaseStats[phaseKey] = { successes: 0, failures: 0, topToolChains: [] }
-    }
-
-    const stats = data.phaseStats[phaseKey]
-    if (trace.success) {
-      stats.successes++
-    } else {
-      stats.failures++
-    }
-
-    // 记录工具链
-    const toolChain = trace.tools.filter(t => t.status === 'success').map(t => t.name)
-    if (toolChain.length > 0) {
-      stats.topToolChains.push(toolChain)
-      // 保留最近 20 条
-      if (stats.topToolChains.length > 20) {
-        stats.topToolChains = stats.topToolChains.slice(-20)
-      }
-    }
-  }
-
-  /**
-   * Tier 1: 从统计数据生成/更新批注
-   */
-  private tier1UpdateAnnotations(data: SOPFitnessData, trace: ExecTrace, sopTracker: SOPTracker | null): void {
-    if (!sopTracker || sopTracker.phases.length === 0) return
-
-    // 分析失败的工具: 反复失败的工具 → warning 批注
-    const failedTools = new Map<string, number>()
-    for (const tool of trace.tools) {
-      if (tool.status === 'error') {
-        failedTools.set(tool.name, (failedTools.get(tool.name) || 0) + 1)
-      }
-    }
-
-    // 查找已有的 warning 批注并增加证据
-    for (const [toolName, count] of failedTools) {
-      const errorSnippet = trace.tools.find(t => t.name === toolName && t.status === 'error')?.result?.slice(0, 80) || ''
-      const warningText = `${toolName} 失败 (${errorSnippet})`
-      const phaseIndex = (sopTracker.currentPhaseIndex >= 0 ? sopTracker.currentPhaseIndex : 0) + 1
-
-      const existing = data.tier1Annotations.find(
-        a => a.type === 'warning' && a.text.startsWith(toolName) && a.phase === phaseIndex
-      )
-      if (existing) {
-        existing.evidence += count
-      } else {
-        data.tier1Annotations.push({
-          phase: phaseIndex,
-          type: 'warning',
-          text: warningText,
-          evidence: count,
-        })
-      }
-    }
-
-    // 分析成功的工具链 → recommend 批注
-    const successTools = trace.tools.filter(t => t.status === 'success').map(t => t.name)
-    if (trace.success && successTools.length > 0) {
-      const chainStr = successTools.join(' → ')
-      const phaseIndex = (sopTracker.currentPhaseIndex >= 0 ? sopTracker.currentPhaseIndex : 0) + 1
-
-      const existing = data.tier1Annotations.find(
-        a => a.type === 'recommend' && a.text.includes(chainStr) && a.phase === phaseIndex
-      )
-      if (existing) {
-        existing.evidence++
-      } else {
-        data.tier1Annotations.push({
-          phase: phaseIndex,
-          type: 'recommend',
-          text: `推荐工具链: ${chainStr}`,
-          evidence: 1,
-        })
-      }
-    }
-
-    // 过滤掉证据不足的批注 (保留但不写入 SOP)
-    // 只在写入时过滤，这里全保留以积累证据
-  }
-
-  /**
-   * Tier 1: 将已达到证据阈值的批注写入 NEXUS.md 的系统区段
-   */
-  private async tier1WriteAnnotationsToSOP(nexusId: string, data: SOPFitnessData): Promise<void> {
-    if (!this.io) return
-
-    const minEvidence = NexusManagerService.TIER1_MIN_EVIDENCE
-    const activeAnnotations = data.tier1Annotations.filter(a => a.evidence >= minEvidence)
-    if (activeAnnotations.length === 0) return
-
-    // 通过 API 读取当前 NEXUS.md
-    let nexusContent: string | null = null
-    try {
-      const res = await fetch(`${this.io.getServerUrl()}/nexuses/${encodeURIComponent(nexusId)}/sop-content`)
-      if (res.ok) {
-        const json = await res.json()
-        nexusContent = json.content
-      }
-    } catch { /* ignore */ }
-    if (!nexusContent) return
-
-    // 构建批注区段
-    const annotationSection = this.buildAnnotationSection(activeAnnotations)
-
-    // 替换或追加系统区段
-    const marker = '## 🧬 执行经验 (自动更新)'
-    let newContent: string
-    if (nexusContent.includes(marker)) {
-      const markerIndex = nexusContent.indexOf(marker)
-      const beforeMarker = nexusContent.slice(0, markerIndex).trimEnd()
-      newContent = beforeMarker + '\n\n' + annotationSection
-    } else {
-      newContent = nexusContent.trimEnd() + '\n\n' + annotationSection
-    }
-
-    // 通过 API 写回
-    try {
-      const res = await fetch(`${this.io.getServerUrl()}/nexuses/${encodeURIComponent(nexusId)}/sop-content`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: newContent }),
-      })
-      if (res.ok) {
-        console.log(`[SOP-Evolution] Tier 1: wrote ${activeAnnotations.length} annotations to NEXUS.md`)
-      }
-    } catch (err) {
-      console.warn('[SOP-Evolution] Tier 1: failed to write annotations:', err)
-    }
-  }
-
-  /**
-   * 构建批注 markdown 区段
-   */
-  private buildAnnotationSection(annotations: SOPAnnotation[]): string {
-    const lines = ['## 🧬 执行经验 (自动更新)', '']
-
-    // 按 phase 分组
-    const grouped = new Map<number, SOPAnnotation[]>()
-    for (const a of annotations) {
-      if (!grouped.has(a.phase)) grouped.set(a.phase, [])
-      grouped.get(a.phase)!.push(a)
-    }
-
-    for (const [phase, anns] of [...grouped.entries()].sort((a, b) => a[0] - b[0])) {
-      lines.push(`### Phase ${phase} 经验`)
-      for (const a of anns) {
-        const icon = a.type === 'recommend' ? '✅' : a.type === 'warning' ? '⚠️' : '❌'
-        lines.push(`- ${icon} ${a.text} (${a.evidence}次执行验证)`)
-      }
-      lines.push('')
-    }
-
-    return lines.join('\n')
-  }
-
-  /**
-   * 检查是否应触发 Tier 2 重写
-   */
-  private shouldTriggerTier2(data: SOPFitnessData): boolean {
-    // 基本门槛
-    if (data.totalExecutions < NexusManagerService.TIER2_MIN_EXECUTIONS) return false
-    if (data.ema >= NexusManagerService.TIER2_FITNESS_THRESHOLD) return false
-
-    // 批注积累足够
-    const minEvidence = NexusManagerService.TIER1_MIN_EVIDENCE
-    const activeAnnotations = data.tier1Annotations.filter(a => a.evidence >= minEvidence)
-    if (activeAnnotations.length < NexusManagerService.TIER2_MIN_ANNOTATIONS) return false
-
-    // 冷却期
-    if (data.lastRewriteTime) {
-      const daysSince = (Date.now() - new Date(data.lastRewriteTime).getTime()) / (1000 * 60 * 60 * 24)
-      if (daysSince < NexusManagerService.TIER2_COOLDOWN_DAYS) return false
-    }
-
-    // LLM 可用
-    if (!isLLMConfigured()) return false
-
-    return true
-  }
-
-  /**
-   * Tier 2: LLM 异步重写 SOP
-   */
-  private async tier2RewriteSOP(nexusId: string, data: SOPFitnessData): Promise<void> {
-    if (!this.io) return
-
-    // 1. 通过 API 读取当前 SOP
-    let currentSOP: string | null = null
-    try {
-      const res = await fetch(`${this.io.getServerUrl()}/nexuses/${encodeURIComponent(nexusId)}/sop-content`)
-      if (res.ok) {
-        const json = await res.json()
-        currentSOP = json.content
-      }
-    } catch { /* ignore */ }
-    if (!currentSOP) return
-
-    // 2. 构建 Phase 统计摘要
-    const phaseReport = this.buildPhaseReport(data)
-
-    // 3. 构建批注摘要
-    const minEvidence = NexusManagerService.TIER1_MIN_EVIDENCE
-    const activeAnnotations = data.tier1Annotations.filter(a => a.evidence >= minEvidence)
-    const annotationReport = activeAnnotations.map(a => {
-      const icon = a.type === 'recommend' ? '✅' : '⚠️'
-      return `Phase ${a.phase}: ${icon} ${a.text} (${a.evidence}次)`
-    }).join('\n')
-
-    // 4. 通过 API 备份当前版本
-    try {
-      await fetch(`${this.io.getServerUrl()}/nexuses/${encodeURIComponent(nexusId)}/sop-history`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ version: String(data.currentVersion), content: currentSOP }),
-      })
-    } catch (err) {
-      console.warn('[SOP-Evolution] Failed to backup SOP version:', err)
-    }
-
-    // 5. LLM 重写
-    const prompt = `你是 SOP 优化器。基于以下执行数据，重写这个 Nexus 的 SOP。
-
-## 当前 SOP
-${currentSOP}
-
-## 执行统计 (最近 ${data.totalExecutions} 次)
-- 总体适应度 EMA: ${data.ema.toFixed(3)}
-- 重写后执行次数: ${data.executionsSinceRewrite}
-
-## 各阶段表现
-${phaseReport}
-
-## 系统发现的模式
-${annotationReport}
-
-## 重写规则
-1. 保留 frontmatter (--- 之间的 YAML) 完全不动
-2. 保留 Mission 的核心目标不变
-3. 将已验证的成功模式融入步骤描述（作为正文，不是注释）
-4. 删除或替换已证实不可用的步骤（如不存在的技能）
-5. 失败率高的阶段需要补充具体指引或替代方案
-6. 输出格式必须与原 SOP 一致（Markdown，Phase/Step 结构）
-7. 不要添加系统中不存在的工具或技能名称
-8. 不要输出 "## 🧬 执行经验 (自动更新)" 区段，该区段由系统管理
-9. 只输出完整的新 NEXUS.md 内容，不要输出任何解释`
-
-    try {
-      const newSOP = await chat([
-        { role: 'system', content: '你是一个 SOP 优化器。只输出优化后的完整 NEXUS.md 内容，不要输出解释。' },
-        { role: 'user', content: prompt },
-      ])
-
-      if (!newSOP || newSOP.length < 100) {
-        console.warn('[SOP-Evolution] Tier 2: LLM output too short, skipping')
-        return
-      }
-
-      // 清理可能的 markdown code fence
-      const cleaned = newSOP.replace(/^```(?:markdown)?\n?/i, '').replace(/\n?```$/i, '').trim()
-
-      // 6. 通过 API 写入新 SOP
-      await fetch(`${this.io.getServerUrl()}/nexuses/${encodeURIComponent(nexusId)}/sop-content`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: cleaned }),
-      })
-
-      // 7. 更新 fitness 数据
-      const newVersion = data.currentVersion + 1
-      data.history.push({
-        version: data.currentVersion,
-        ema: data.ema,
-        executions: data.executionsSinceRewrite,
-        rewriteReason: `ema=${data.ema.toFixed(3)} < ${NexusManagerService.TIER2_FITNESS_THRESHOLD}`,
-      })
-      data.baselineEmaBeforeRewrite = data.ema
-      data.currentVersion = newVersion
-      data.executionsSinceRewrite = 0
-      data.lastRewriteTime = new Date().toISOString()
-      data.tier1Annotations = []
-
-      await this.saveFitness(nexusId, data)
-
-      console.log(`[SOP-Evolution] Tier 2: SOP rewritten to v${newVersion} for "${nexusId}"`)
-
-      // 8. 通知用户
-      this.io.addToast?.({
-        type: 'info',
-        title: 'SOP 已自动优化',
-        message: `Nexus "${nexusId}" 的 SOP 已从 v${newVersion - 1} 演进到 v${newVersion}（适应度: ${data.ema.toFixed(2)}）`,
-      })
-    } catch (err) {
-      console.warn('[SOP-Evolution] Tier 2: LLM rewrite failed:', err)
-    }
-  }
-
-  /**
-   * 回滚到上一版本的 SOP
-   */
-  private async rollbackSOP(nexusId: string, data: SOPFitnessData): Promise<void> {
-    if (!this.io || data.currentVersion <= 1) return
-
-    const prevVersion = data.currentVersion - 1
-    try {
-      // 通过 API 读取历史版本
-      const res = await fetch(`${this.io.getServerUrl()}/nexuses/${encodeURIComponent(nexusId)}/sop-history?version=v${prevVersion}`)
-      if (!res.ok) {
-        console.warn(`[SOP-Evolution] Rollback failed: cannot fetch v${prevVersion}`)
-        return
-      }
-      const json = await res.json()
-      const prevContent = json.content
-      if (!prevContent) {
-        console.warn(`[SOP-Evolution] Rollback failed: v${prevVersion}.md not found`)
-        return
-      }
-
-      // 通过 API 写回 NEXUS.md
-      await fetch(`${this.io.getServerUrl()}/nexuses/${encodeURIComponent(nexusId)}/sop-content`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: prevContent }),
-      })
-
-      // 更新 fitness
-      const prevHistory = data.history.find(h => h.version === prevVersion)
-      data.currentVersion = prevVersion
-      data.executionsSinceRewrite = 0
-      data.baselineEmaBeforeRewrite = prevHistory?.ema || data.ema
-      data.lastRewriteTime = new Date().toISOString()
-
-      console.log(`[SOP-Evolution] 🔄 Rolled back to v${prevVersion} for "${nexusId}"`)
-
-      this.io.addToast?.({
-        type: 'warning',
-        title: 'SOP 已回滚',
-        message: `Nexus "${nexusId}" 的 SOP 从 v${prevVersion + 1} 回滚到 v${prevVersion}（适应度下降）`,
-      })
-    } catch (err) {
-      console.warn('[SOP-Evolution] Rollback failed:', err)
-    }
-  }
-
-  /**
-   * 构建 Phase 统计报告 (给 LLM 重写用)
-   */
-  private buildPhaseReport(data: SOPFitnessData): string {
-    const lines: string[] = []
-    for (const [phaseKey, stats] of Object.entries(data.phaseStats)) {
-      const total = stats.successes + stats.failures
-      const rate = total > 0 ? Math.round((stats.successes / total) * 100) : 0
-      lines.push(`Phase ${phaseKey}: 成功率 ${rate}% (${stats.successes}成功/${stats.failures}失败)`)
-
-      // 统计最常见的工具链
-      if (stats.topToolChains.length > 0) {
-        const chainCounts = new Map<string, number>()
-        for (const chain of stats.topToolChains) {
-          const key = chain.join(' → ')
-          chainCounts.set(key, (chainCounts.get(key) || 0) + 1)
-        }
-        const sorted = [...chainCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
-        for (const [chain, count] of sorted) {
-          lines.push(`  常用工具链: ${chain} (${count}次)`)
-        }
-      }
-    }
-    return lines.length > 0 ? lines.join('\n') : '暂无足够的阶段统计数据'
   }
 }
 

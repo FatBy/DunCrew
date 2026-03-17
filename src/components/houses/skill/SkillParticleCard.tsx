@@ -36,9 +36,9 @@ export function SkillParticleCard({
       className="absolute z-50"
       style={cardStyle}
     >
-      <div className="w-60 backdrop-blur-xl bg-skin-bg-panel/90 border border-skin-border/20 rounded-xl shadow-2xl overflow-hidden">
+      <div className="w-60 backdrop-blur-xl bg-skin-bg-panel/90 border border-stone-200 rounded-xl shadow-2xl overflow-hidden">
         {/* 标题栏 */}
-        <div className="flex items-center justify-between px-3 py-2 bg-skin-bg-secondary/30 border-b border-skin-border/10">
+        <div className="flex items-center justify-between px-3 py-2 bg-stone-50 border-b border-stone-200/60">
           <div className="flex items-center gap-2 min-w-0">
             <div className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.5)]' : 'bg-white/20'}`} />
             <span className="text-xs font-mono font-semibold text-skin-text-primary truncate">
@@ -47,7 +47,7 @@ export function SkillParticleCard({
           </div>
           <button
             onClick={onClose}
-            className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
+            className="p-0.5 rounded hover:bg-stone-100 transition-colors shrink-0"
           >
             <X className="w-3.5 h-3.5 text-skin-text-secondary" />
           </button>
@@ -76,7 +76,7 @@ export function SkillParticleCard({
               </div>
             )}
             <div className="ml-auto">
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${isActive ? 'bg-cyan-500/15 text-cyan-400' : 'bg-white/5 text-white/30'}`}>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${isActive ? 'bg-cyan-500/15 text-cyan-400' : 'bg-stone-100/80 text-stone-300'}`}>
                 {isActive ? 'ACTIVE' : 'IDLE'}
               </span>
             </div>

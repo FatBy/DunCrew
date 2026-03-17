@@ -104,7 +104,7 @@ export function InterruptedTasksWarning() {
                     {interruptedTasks.map((task) => (
                       <div
                         key={task.id}
-                        className="flex items-center gap-2 p-2 bg-black/20 rounded-lg border border-amber-500/10"
+                        className="flex items-center gap-2 p-2 bg-stone-100/60 rounded-lg border border-amber-500/10"
                       >
                         <Clock className="w-3.5 h-3.5 text-amber-400/60 flex-shrink-0" />
                         <div className="flex-1 min-w-0">
@@ -166,9 +166,9 @@ export function InterruptedTasksWarning() {
               <button
                 onClick={dismissInterruptedTasksWarning}
                 className="flex items-center gap-1.5 px-3 py-1.5 
-                         bg-white/5 border border-white/10 
-                         text-white/60 text-xs font-mono rounded-lg
-                         hover:bg-white/10 transition-colors"
+                         bg-stone-100/80 border border-stone-200 
+                         text-stone-500 text-xs font-mono rounded-lg
+                         hover:bg-stone-100 transition-colors"
               >
                 稍后处理
               </button>
@@ -177,9 +177,9 @@ export function InterruptedTasksWarning() {
           
           <button
             onClick={dismissInterruptedTasksWarning}
-            className="p-1 hover:bg-white/10 rounded transition-colors flex-shrink-0"
+            className="p-1 hover:bg-stone-100 rounded transition-colors flex-shrink-0"
           >
-            <X className="w-4 h-4 text-white/40" />
+            <X className="w-4 h-4 text-stone-400" />
           </button>
         </div>
       </motion.div>

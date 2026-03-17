@@ -309,7 +309,7 @@ export function SoulOrb({
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 1.5 }}
             >
-              <h2 className="text-4xl font-black text-white tracking-[0.2em] uppercase blur-[0.5px] drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]">
+              <h2 className="text-4xl font-black text-stone-800 tracking-[0.2em] uppercase blur-[0.5px] drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]">
                 {identity?.name || 'GENESIS'}
               </h2>
               <div className="flex items-center justify-center gap-3 mt-2 opacity-70">

@@ -29,14 +29,14 @@ export class ChatErrorBoundary extends Component<Props, State> {
         <div className="flex flex-col items-center justify-center h-full p-6 text-center">
           <AlertCircle className="w-8 h-8 text-red-400/50 mb-3" />
           <p className="text-xs font-mono text-red-400/70 mb-2">渲染出错</p>
-          <p className="text-[13px] font-mono text-white/30 mb-4 max-w-[200px] break-all">
+          <p className="text-[13px] font-mono text-stone-300 mb-4 max-w-[200px] break-all">
             {this.state.error}
           </p>
           <button
             onClick={this.handleReset}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono
-                       bg-white/5 border border-white/10 rounded-lg
-                       text-white/50 hover:text-amber-400 hover:border-amber-500/30 transition-colors"
+                       bg-stone-100/80 border border-stone-200 rounded-lg
+                       text-stone-400 hover:text-amber-400 hover:border-amber-500/30 transition-colors"
           >
             <RefreshCw className="w-3 h-3" />
             清空对话并重试

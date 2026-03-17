@@ -1,18 +1,16 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { 
-  Monitor, Info, Check, Sparkles, Eye, EyeOff, Type, Wifi, WifiOff, Palette, Globe, Languages, Zap, ExternalLink, Copy, Store, LogOut, Loader2
+  Monitor, Info, Check, Sparkles, Eye, EyeOff, Type, Wifi, WifiOff, Globe, Languages, Zap, ExternalLink, Copy, Store, LogOut, Loader2
 } from 'lucide-react'
 import { GlassCard } from '@/components/GlassCard'
 import { staggerContainer, staggerItem } from '@/utils/animations'
 import { useStore } from '@/store'
-import { testConnection } from '@/services/llmService'
+import { testConnection, resolveApiFormat } from '@/services/llmService'
 import { evoMapService, type EvoMapState } from '@/services/evoMapService'
 import { cn } from '@/utils/cn'
-import { themes } from '@/themes'
 import { useT } from '@/i18n'
 import type { TranslationKey } from '@/i18n/locales/zh'
-import type { ThemeName } from '@/types/theme'
 import type { WorldTheme } from '@/rendering/types'
 
 const WORLD_THEME_OPTIONS: Array<{
@@ -21,12 +19,8 @@ const WORLD_THEME_OPTIONS: Array<{
   descKey: TranslationKey
   color: string
 }> = [
-  { id: 'cosmos', labelKey: 'settings.world_cosmos', descKey: 'settings.world_cosmos_desc', color: 'rgb(56, 189, 248)' },
-  { id: 'cityscape', labelKey: 'settings.world_cityscape', descKey: 'settings.world_cityscape_desc', color: 'rgb(251, 191, 36)' },
-  { id: 'village', labelKey: 'settings.world_village', descKey: 'settings.world_village_desc', color: 'rgb(126, 200, 80)' },
+  { id: 'dashboard', labelKey: 'settings.world_dashboard', descKey: 'settings.world_dashboard_desc', color: 'rgb(232, 168, 56)' },
   { id: 'minimalist', labelKey: 'settings.world_minimalist', descKey: 'settings.world_minimalist_desc', color: 'rgb(168, 162, 158)' },
-  { id: 'smallville', labelKey: 'settings.world_smallville', descKey: 'settings.world_smallville_desc', color: 'rgb(34, 197, 94)' },
-  { id: 'pixeltown', labelKey: 'settings.world_pixeltown', descKey: 'settings.world_pixeltown_desc', color: 'rgb(244, 162, 97)' },
 ]
 
 const settingsData: Array<{
@@ -54,7 +48,7 @@ function ClawHubAccountSection() {
 
   if (authLoading) {
     return (
-      <div className="flex items-center gap-2 text-white/50 text-sm">
+      <div className="flex items-center gap-2 text-stone-400 text-sm">
         <Loader2 className="w-4 h-4 animate-spin" />
         验证中...
       </div>
@@ -70,8 +64,8 @@ function ClawHubAccountSection() {
               <img src={user.avatar} alt="" className="w-8 h-8 rounded-full" />
             )}
             <div>
-              <p className="text-sm text-white/90 font-medium">{user.username}</p>
-              <p className="text-xs text-white/40">{user.email}</p>
+              <p className="text-sm text-stone-800 font-medium">{user.username}</p>
+              <p className="text-xs text-stone-400">{user.email}</p>
             </div>
           </div>
           <div className="flex items-center gap-1.5">
@@ -83,7 +77,7 @@ function ClawHubAccountSection() {
         </div>
         <button
           onClick={logout}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white/50 hover:text-white/70 border border-white/10 rounded-lg hover:bg-white/5 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-stone-400 hover:text-stone-600 border border-stone-200 rounded-lg hover:bg-stone-100/80 transition-colors"
         >
           <LogOut className="w-3 h-3" />
           断开连接
@@ -94,7 +88,7 @@ function ClawHubAccountSection() {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-white/50">
+      <p className="text-xs text-stone-400">
         连接 ClawHub 账户以发布和管理你的技能。
       </p>
       <button
@@ -129,6 +123,7 @@ export function SettingsHouse() {
   const [llmModel, setLlmModel] = useState(llmConfig.model || '')
   const [llmTestStatus, setLlmTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle')
   const [showApiKey, setShowApiKey] = useState(false)
+  const [llmApiFormat, setLlmApiFormat] = useState<'auto' | 'openai' | 'anthropic'>(llmConfig.apiFormat || 'auto')
   
   // Embedding API 配置（独立于主 LLM）
   const [embedApiKey, setEmbedApiKey] = useState(llmConfig.embedApiKey || '')
@@ -142,10 +137,6 @@ export function SettingsHouse() {
     const saved = localStorage.getItem('ddos_font_scale')
     return saved ? parseFloat(saved) : 1
   })
-  
-  // 主题设置
-  const currentTheme = useStore((s) => s.currentTheme)
-  const setTheme = useStore((s) => s.setTheme)
   
   // 世界主题
   const worldTheme = useStore((s) => s.worldTheme)
@@ -173,9 +164,9 @@ export function SettingsHouse() {
   // 自动保存 LLM 配置
   useEffect(() => {
     if (llmApiKey || llmBaseUrl || llmModel) {
-      setLlmConfig({ apiKey: llmApiKey, baseUrl: llmBaseUrl, model: llmModel })
+      setLlmConfig({ apiKey: llmApiKey, baseUrl: llmBaseUrl, model: llmModel, apiFormat: llmApiFormat })
     }
-  }, [llmApiKey, llmBaseUrl, llmModel])
+  }, [llmApiKey, llmBaseUrl, llmModel, llmApiFormat])
   
   // 自动保存 Embedding 配置
   useEffect(() => {
@@ -183,7 +174,7 @@ export function SettingsHouse() {
   }, [embedApiKey, embedBaseUrl, embedModel])
   
   const saveLlmSettings = () => {
-    setLlmConfig({ apiKey: llmApiKey, baseUrl: llmBaseUrl, model: llmModel })
+    setLlmConfig({ apiKey: llmApiKey, baseUrl: llmBaseUrl, model: llmModel, apiFormat: llmApiFormat })
   }
   
   const saveEmbedSettings = () => {
@@ -216,9 +207,9 @@ export function SettingsHouse() {
           {isConnected ? (
             <Wifi className="w-4 h-4 text-emerald-400" />
           ) : (
-            <WifiOff className="w-4 h-4 text-white/30" />
+            <WifiOff className="w-4 h-4 text-stone-300" />
           )}
-          <h3 className="font-mono text-sm text-slate-300 tracking-wider">
+          <h3 className="font-mono text-sm text-stone-400 tracking-wider">
             {t('settings.system_status')}
           </h3>
         </div>
@@ -226,17 +217,17 @@ export function SettingsHouse() {
         <GlassCard className="p-4">
           <div className="space-y-2 font-mono text-xs">
             <div className="flex justify-between">
-              <span className="text-white/50">{t('settings.connection_mode')}</span>
+              <span className="text-stone-400">{t('settings.connection_mode')}</span>
               <span className={cn(
-                isConnected ? 'text-emerald-400' : 'text-white/30'
+                isConnected ? 'text-emerald-400' : 'text-stone-300'
               )}>
                 {connectionMode === 'native' ? 'Native' : 'DD-OS Cloud'} · {isConnected ? t('settings.connected') : t('settings.disconnected')}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-white/50">{t('settings.agent_status')}</span>
+              <span className="text-stone-400">{t('settings.agent_status')}</span>
               <span className={cn(
-                agentStatus === 'idle' ? 'text-white/40' :
+                agentStatus === 'idle' ? 'text-stone-400' :
                 agentStatus === 'thinking' ? 'text-cyan-400' :
                 agentStatus === 'executing' ? 'text-amber-400' :
                 'text-red-400'
@@ -248,8 +239,8 @@ export function SettingsHouse() {
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-white/50">{t('settings.loaded_data')}</span>
-              <span className="text-white/60">
+              <span className="text-stone-400">{t('settings.loaded_data')}</span>
+              <span className="text-stone-500">
                 Soul {soulCoreTruths.length > 0 ? '✓' : '–'} · 
                 Skills {skills.length} · 
                 Memories {memories.length}
@@ -257,7 +248,7 @@ export function SettingsHouse() {
             </div>
           </div>
           {isConnected && (
-            <p className="text-[13px] text-white/20 font-mono mt-3 border-t border-white/5 pt-2">
+            <p className="text-[13px] text-stone-300 font-mono mt-3 border-t border-stone-100 pt-2">
               {t('settings.auto_sync_hint')}
             </p>
           )}
@@ -275,21 +266,21 @@ export function SettingsHouse() {
         
         <GlassCard className="p-4 space-y-3">
           <div>
-            <label className="text-xs font-mono text-white/50 mb-1 block">{t('settings.api_base_url')}</label>
+            <label className="text-xs font-mono text-stone-400 mb-1 block">{t('settings.api_base_url')}</label>
             <input
               type="text"
               value={llmBaseUrl}
               onChange={(e) => setLlmBaseUrl(e.target.value)}
               onBlur={saveLlmSettings}
               placeholder="https://api.deepseek.com/v1"
-              className="w-full px-3 py-2 bg-black/30 border border-white/10 rounded-lg 
-                         text-xs font-mono text-white/70 placeholder-white/30
+              className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded-lg 
+                         text-xs font-mono text-stone-600 placeholder-stone-400
                          focus:border-amber-500/50 focus:outline-none"
             />
           </div>
           
           <div>
-            <label className="text-xs font-mono text-white/50 mb-1 block">{t('settings.api_key')}</label>
+            <label className="text-xs font-mono text-stone-400 mb-1 block">{t('settings.api_key')}</label>
             <div className="flex gap-2">
               <div className="flex-1 relative">
                 <input
@@ -298,13 +289,13 @@ export function SettingsHouse() {
                   onChange={(e) => setLlmApiKey(e.target.value)}
                   onBlur={saveLlmSettings}
                   placeholder="sk-..."
-                  className="w-full px-3 py-2 pr-8 bg-black/30 border border-white/10 rounded-lg 
-                             text-xs font-mono text-white/70 placeholder-white/30
+                  className="w-full px-3 py-2 pr-8 bg-stone-100/80 border border-stone-200 rounded-lg 
+                             text-xs font-mono text-stone-600 placeholder-stone-400
                              focus:border-amber-500/50 focus:outline-none"
                 />
                 <button
                   onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-300 hover:text-stone-500"
                 >
                   {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
@@ -313,17 +304,43 @@ export function SettingsHouse() {
           </div>
           
           <div>
-            <label className="text-xs font-mono text-white/50 mb-1 block">{t('settings.model')}</label>
+            <label className="text-xs font-mono text-stone-400 mb-1 block">{t('settings.model')}</label>
             <input
               type="text"
               value={llmModel}
               onChange={(e) => setLlmModel(e.target.value)}
               onBlur={saveLlmSettings}
               placeholder="deepseek-chat"
-              className="w-full px-3 py-2 bg-black/30 border border-white/10 rounded-lg 
-                         text-xs font-mono text-white/70 placeholder-white/30
+              className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded-lg 
+                         text-xs font-mono text-stone-600 placeholder-stone-400
                          focus:border-amber-500/50 focus:outline-none"
             />
+          </div>
+          
+          {/* API 格式选择器 */}
+          <div>
+            <label className="text-xs font-mono text-stone-400 mb-1.5 block">{t('settings.api_format')}</label>
+            <div className="grid grid-cols-3 gap-2">
+              {(['auto', 'openai', 'anthropic'] as const).map((fmt) => (
+                <button
+                  key={fmt}
+                  onClick={() => { setLlmApiFormat(fmt); saveLlmSettings() }}
+                  className={cn(
+                    'px-3 py-1.5 rounded-lg text-[11px] font-mono transition-colors border',
+                    llmApiFormat === fmt
+                      ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                      : 'bg-stone-100/60 border-stone-200 text-stone-400 hover:border-stone-200 hover:text-stone-500'
+                  )}
+                >
+                  {fmt === 'auto' ? t('settings.api_format_auto') : fmt === 'openai' ? 'OpenAI' : 'Anthropic'}
+                </button>
+              ))}
+            </div>
+            {llmApiFormat === 'auto' && llmBaseUrl && (
+              <p className="text-[11px] text-stone-300 font-mono mt-1.5">
+                {t('settings.api_format_detected').replace('{0}', resolveApiFormat({ apiKey: llmApiKey, baseUrl: llmBaseUrl, model: llmModel, apiFormat: 'auto' }).toUpperCase())}
+              </p>
+            )}
           </div>
           
           <div className="flex items-center gap-3 pt-1">
@@ -339,7 +356,7 @@ export function SettingsHouse() {
                   : llmTestStatus === 'error'
                   ? 'bg-red-500/20 border border-red-500/30 text-red-400'
                   : !llmApiKey || !llmBaseUrl || !llmModel
-                  ? 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'
+                  ? 'bg-stone-100/80 border border-stone-200 text-stone-300 cursor-not-allowed'
                   : 'bg-amber-500/20 border border-amber-500/30 text-amber-400 hover:bg-amber-500/30'
               )}
             >
@@ -355,42 +372,42 @@ export function SettingsHouse() {
             )}
           </div>
           
-          <p className="text-[13px] text-white/30 font-mono">
+          <p className="text-[13px] text-stone-300 font-mono">
             {t('settings.api_compat_hint')}
           </p>
           
           {/* Embedding API 配置（可折叠） */}
-          <div className="border-t border-white/10 pt-3 mt-3">
+          <div className="border-t border-stone-200 pt-3 mt-3">
             <button
               onClick={() => setShowEmbedConfig(!showEmbedConfig)}
-              className="flex items-center gap-2 text-xs font-mono text-white/50 hover:text-white/70 transition-colors"
+              className="flex items-center gap-2 text-xs font-mono text-stone-400 hover:text-stone-600 transition-colors"
             >
               <span className={`transition-transform ${showEmbedConfig ? 'rotate-90' : ''}`}>▶</span>
               Embedding API（可选，用于语义搜索）
             </button>
             
             {showEmbedConfig && (
-              <div className="mt-3 space-y-3 pl-4 border-l border-white/10">
-                <p className="text-[11px] text-white/30 font-mono">
+              <div className="mt-3 space-y-3 pl-4 border-l border-stone-200">
+                <p className="text-[11px] text-stone-300 font-mono">
                   如果主 API 不支持 /embeddings 接口，可在此配置独立的 Embedding API（如 OpenAI）
                 </p>
                 
                 <div>
-                  <label className="text-xs font-mono text-white/50 mb-1 block">Embed API Base URL</label>
+                  <label className="text-xs font-mono text-stone-400 mb-1 block">Embed API Base URL</label>
                   <input
                     type="text"
                     value={embedBaseUrl}
                     onChange={(e) => setEmbedBaseUrl(e.target.value)}
                     onBlur={saveEmbedSettings}
                     placeholder="https://api.openai.com/v1"
-                    className="w-full px-3 py-2 bg-black/30 border border-white/10 rounded-lg 
-                               text-xs font-mono text-white/70 placeholder-white/30
+                    className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded-lg 
+                               text-xs font-mono text-stone-600 placeholder-stone-400
                                focus:border-cyan-500/50 focus:outline-none"
                   />
                 </div>
                 
                 <div>
-                  <label className="text-xs font-mono text-white/50 mb-1 block">Embed API Key</label>
+                  <label className="text-xs font-mono text-stone-400 mb-1 block">Embed API Key</label>
                   <div className="relative">
                     <input
                       type={showEmbedKey ? 'text' : 'password'}
@@ -398,13 +415,13 @@ export function SettingsHouse() {
                       onChange={(e) => setEmbedApiKey(e.target.value)}
                       onBlur={saveEmbedSettings}
                       placeholder="sk-..."
-                      className="w-full px-3 py-2 pr-8 bg-black/30 border border-white/10 rounded-lg 
-                                 text-xs font-mono text-white/70 placeholder-white/30
+                      className="w-full px-3 py-2 pr-8 bg-stone-100/80 border border-stone-200 rounded-lg 
+                                 text-xs font-mono text-stone-600 placeholder-stone-400
                                  focus:border-cyan-500/50 focus:outline-none"
                     />
                     <button
                       onClick={() => setShowEmbedKey(!showEmbedKey)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-300 hover:text-stone-500"
                     >
                       {showEmbedKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
@@ -412,15 +429,15 @@ export function SettingsHouse() {
                 </div>
                 
                 <div>
-                  <label className="text-xs font-mono text-white/50 mb-1 block">Embed Model</label>
+                  <label className="text-xs font-mono text-stone-400 mb-1 block">Embed Model</label>
                   <input
                     type="text"
                     value={embedModel}
                     onChange={(e) => setEmbedModel(e.target.value)}
                     onBlur={saveEmbedSettings}
                     placeholder="text-embedding-3-small"
-                    className="w-full px-3 py-2 bg-black/30 border border-white/10 rounded-lg 
-                               text-xs font-mono text-white/70 placeholder-white/30
+                    className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded-lg 
+                               text-xs font-mono text-stone-600 placeholder-stone-400
                                focus:border-cyan-500/50 focus:outline-none"
                   />
                 </div>
@@ -446,7 +463,7 @@ export function SettingsHouse() {
                 'w-2 h-2 rounded-full',
                 evoMapState.connected ? 'bg-emerald-400 animate-pulse' : 'bg-white/30'
               )} />
-              <span className="text-xs font-mono text-white/60">
+              <span className="text-xs font-mono text-stone-500">
                 {evoMapState.connected ? '已连接' : '未连接'}
               </span>
             </div>
@@ -483,26 +500,26 @@ export function SettingsHouse() {
           {evoMapState.connected && (
             <>
               <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-                <div className="bg-black/20 rounded-lg p-2">
-                  <span className="text-white/40">积分</span>
+                <div className="bg-stone-100/60 rounded-lg p-2">
+                  <span className="text-stone-400">积分</span>
                   <div className="text-lg text-purple-400">{evoMapState.credits}</div>
                 </div>
-                <div className="bg-black/20 rounded-lg p-2">
-                  <span className="text-white/40">声誉</span>
+                <div className="bg-stone-100/60 rounded-lg p-2">
+                  <span className="text-stone-400">声誉</span>
                   <div className="text-lg text-cyan-400">{evoMapState.reputation}</div>
                 </div>
               </div>
               
               {evoMapState.nodeId && (
                 <div className="text-xs font-mono">
-                  <span className="text-white/40">Node ID: </span>
-                  <span className="text-white/60">{evoMapState.nodeId}</span>
+                  <span className="text-stone-400">Node ID: </span>
+                  <span className="text-stone-500">{evoMapState.nodeId}</span>
                 </div>
               )}
               
               {evoMapState.claimUrl && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-white/40">认领链接:</span>
+                  <span className="text-xs font-mono text-stone-400">认领链接:</span>
                   <a
                     href={evoMapState.claimUrl}
                     target="_blank"
@@ -515,7 +532,7 @@ export function SettingsHouse() {
                     onClick={() => {
                       navigator.clipboard.writeText(evoMapState.claimUrl || '')
                     }}
-                    className="text-white/30 hover:text-white/60"
+                    className="text-stone-300 hover:text-stone-500"
                     title="复制链接"
                   >
                     <Copy className="w-3 h-3" />
@@ -525,7 +542,7 @@ export function SettingsHouse() {
               
               {evoMapState.survivalStatus && (
                 <div className="text-xs font-mono">
-                  <span className="text-white/40">状态: </span>
+                  <span className="text-stone-400">状态: </span>
                   <span className={cn(
                     evoMapState.survivalStatus === 'alive' ? 'text-emerald-400' :
                     evoMapState.survivalStatus === 'dormant' ? 'text-amber-400' : 'text-red-400'
@@ -544,7 +561,7 @@ export function SettingsHouse() {
             </>
           )}
           
-          <p className="text-[11px] text-white/30 font-mono">
+          <p className="text-[11px] text-stone-300 font-mono">
             连接 EvoMap 协作市场，共享 AI 经验并赚取积分。
             <a href="https://evomap.ai" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline ml-1">
               了解更多
@@ -560,8 +577,8 @@ export function SettingsHouse() {
         animate="animate"
       >
         <div className="flex items-center gap-2 mb-4">
-          <Monitor className="w-4 h-4 text-slate-400" />
-          <h3 className="font-mono text-sm text-slate-300 tracking-wider">
+          <Monitor className="w-4 h-4 text-stone-400" />
+          <h3 className="font-mono text-sm text-stone-400 tracking-wider">
             {t('settings.visual')}
           </h3>
         </div>
@@ -571,14 +588,14 @@ export function SettingsHouse() {
             <motion.div key={setting.id} variants={staggerItem}>
               <GlassCard className="p-4 flex items-center justify-between">
                 <div>
-                  <h4 className="text-sm font-mono text-white/80">
+                  <h4 className="text-sm font-mono text-stone-700">
                     {t(setting.labelKey)}
                   </h4>
-                  <p className="text-xs text-white/40 mt-0.5">
+                  <p className="text-xs text-stone-400 mt-0.5">
                     {t(setting.descKey)}
                   </p>
                 </div>
-                <div className="w-10 h-5 bg-white/10 rounded-full relative cursor-pointer border border-white/10">
+                <div className="w-10 h-5 bg-stone-100 rounded-full relative cursor-pointer border border-stone-200">
                   <div
                     className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${
                       setting.enabled
@@ -596,7 +613,7 @@ export function SettingsHouse() {
             <GlassCard className="p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Type className="w-4 h-4 text-cyan-400" />
-                <h4 className="text-sm font-mono text-white/80">{t('settings.font_size')}</h4>
+                <h4 className="text-sm font-mono text-stone-700">{t('settings.font_size')}</h4>
                 <span className="ml-auto text-xs font-mono text-cyan-400">
                   {Math.round(fontScale * 100)}%
                 </span>
@@ -608,7 +625,7 @@ export function SettingsHouse() {
                 step="0.1"
                 value={fontScale}
                 onChange={(e) => setFontScale(parseFloat(e.target.value))}
-                className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer
+                className="w-full h-2 bg-stone-100 rounded-lg appearance-none cursor-pointer
                            [&::-webkit-slider-thumb]:appearance-none
                            [&::-webkit-slider-thumb]:w-4
                            [&::-webkit-slider-thumb]:h-4
@@ -617,69 +634,11 @@ export function SettingsHouse() {
                            [&::-webkit-slider-thumb]:shadow-[0_0_6px_rgba(34,211,238,0.5)]
                            [&::-webkit-slider-thumb]:cursor-pointer"
               />
-              <div className="flex justify-between text-[13px] font-mono text-white/30 mt-1">
+              <div className="flex justify-between text-[13px] font-mono text-stone-300 mt-1">
                 <span>80%</span>
                 <span>100%</span>
                 <span>150%</span>
               </div>
-            </GlassCard>
-          </motion.div>
-
-          {/* 主题切换 */}
-          <motion.div variants={staggerItem}>
-            <GlassCard className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Palette className="w-4 h-4 text-skin-accent-purple" />
-                <h4 className="text-sm font-mono text-skin-text-secondary">{t('settings.ui_theme')}</h4>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {(Object.keys(themes) as ThemeName[]).map((themeName) => {
-                  const theme = themes[themeName]
-                  const isActive = currentTheme === themeName
-                  return (
-                    <button
-                      key={themeName}
-                      onClick={() => setTheme(themeName)}
-                      className={cn(
-                        'relative p-3 rounded-lg border transition-all',
-                        isActive
-                          ? 'border-skin-accent-cyan bg-skin-accent-cyan/10'
-                          : 'border-skin-border/20 hover:border-skin-border/40 bg-skin-bg-secondary/20'
-                      )}
-                    >
-                      {/* 主题预览色块 */}
-                      <div className="flex gap-1 mb-2 justify-center">
-                        <div 
-                          className="w-3 h-3 rounded-full"
-                          style={{ backgroundColor: `rgb(${theme.colors.accentCyan})` }}
-                        />
-                        <div 
-                          className="w-3 h-3 rounded-full"
-                          style={{ backgroundColor: `rgb(${theme.colors.accentAmber})` }}
-                        />
-                        <div 
-                          className="w-3 h-3 rounded-full"
-                          style={{ backgroundColor: `rgb(${theme.colors.accentPurple})` }}
-                        />
-                      </div>
-                      <span className={cn(
-                        'text-[13px] font-mono block text-center',
-                        isActive ? 'text-skin-accent-cyan' : 'text-skin-text-tertiary'
-                      )}>
-                        {theme.label}
-                      </span>
-                      {isActive && (
-                        <div className="absolute top-1 right-1">
-                          <Check className="w-3 h-3 text-skin-accent-cyan" />
-                        </div>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-              <p className="text-[13px] text-skin-text-tertiary font-mono mt-3">
-                {t('settings.theme_apply_hint')}
-              </p>
             </GlassCard>
           </motion.div>
 
@@ -690,21 +649,18 @@ export function SettingsHouse() {
                 <Globe className="w-4 h-4 text-skin-accent-cyan" />
                 <h4 className="text-sm font-mono text-skin-text-secondary">{t('settings.world_theme')}</h4>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 {WORLD_THEME_OPTIONS.map((option) => {
                   const isActive = worldTheme === option.id
-                  // cosmos/cityscape/village/minimalist/smallville 已实现，wildlife 开发中
-                  const isAvailable = option.id === 'cosmos' || option.id === 'cityscape' || option.id === 'village' || option.id === 'minimalist' || option.id === 'smallville' || option.id === 'pixeltown'
                   return (
                     <button
                       key={option.id}
-                      onClick={() => isAvailable && setWorldTheme(option.id)}
+                      onClick={() => setWorldTheme(option.id)}
                       className={cn(
                         'relative p-3 rounded-lg border transition-all',
-                        !isAvailable && 'opacity-40 cursor-not-allowed',
                         isActive
                           ? 'border-skin-accent-cyan bg-skin-accent-cyan/10'
-                          : 'border-skin-border/20 hover:border-skin-border/40 bg-skin-bg-secondary/20'
+                          : 'border-stone-200 hover:border-skin-border/40 bg-skin-bg-secondary/20'
                       )}
                     >
                       <div 
@@ -718,7 +674,7 @@ export function SettingsHouse() {
                         {t(option.labelKey)}
                       </span>
                       <span className="text-[11px] font-mono block text-center text-skin-text-tertiary mt-0.5">
-                        {isAvailable ? t(option.descKey) : t('settings.world_dev')}
+                        {t(option.descKey)}
                       </span>
                       {isActive && (
                         <div className="absolute top-1 right-1">
@@ -749,7 +705,7 @@ export function SettingsHouse() {
                     'relative p-3 rounded-lg border transition-all',
                     locale === 'zh'
                       ? 'border-skin-accent-cyan bg-skin-accent-cyan/10'
-                      : 'border-skin-border/20 hover:border-skin-border/40 bg-skin-bg-secondary/20'
+                      : 'border-stone-200 hover:border-skin-border/40 bg-skin-bg-secondary/20'
                   )}
                 >
                   <span className={cn(
@@ -770,7 +726,7 @@ export function SettingsHouse() {
                     'relative p-3 rounded-lg border transition-all',
                     locale === 'en'
                       ? 'border-skin-accent-cyan bg-skin-accent-cyan/10'
-                      : 'border-skin-border/20 hover:border-skin-border/40 bg-skin-bg-secondary/20'
+                      : 'border-stone-200 hover:border-skin-border/40 bg-skin-bg-secondary/20'
                   )}
                 >
                   <span className={cn(
@@ -797,16 +753,16 @@ export function SettingsHouse() {
       {/* 关于 */}
       <div>
         <div className="flex items-center gap-2 mb-4">
-          <Info className="w-4 h-4 text-slate-400" />
-          <h3 className="font-mono text-sm text-slate-300 tracking-wider">
+          <Info className="w-4 h-4 text-stone-400" />
+          <h3 className="font-mono text-sm text-stone-400 tracking-wider">
             {t('settings.about')}
           </h3>
         </div>
         <GlassCard className="p-4">
-          <div className="space-y-2 font-mono text-xs text-white/50">
+          <div className="space-y-2 font-mono text-xs text-stone-400">
             <div className="flex justify-between">
               <span>{t('settings.version')}</span>
-              <span className="text-white/70">DD-OS v1.0.0</span>
+              <span className="text-stone-600">DD-OS v1.0.0</span>
             </div>
             <div className="flex justify-between">
               <span>{t('settings.run_mode')}</span>

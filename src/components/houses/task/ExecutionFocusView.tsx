@@ -51,7 +51,7 @@ function TaskProgressBar({ plan }: { plan: TaskPlan }) {
 
   return (
     <div className="mb-3">
-      <div className="h-2 bg-white/10 rounded-full overflow-hidden mb-2">
+      <div className="h-2 bg-stone-100 rounded-full overflow-hidden mb-2">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${progress}%` }}
@@ -62,21 +62,21 @@ function TaskProgressBar({ plan }: { plan: TaskPlan }) {
           )}
         />
       </div>
-      <div className="flex items-center gap-3 text-[11px] font-mono">
-        <span className="text-white/50">{completed}/{total} 完成</span>
+      <div className="flex items-center gap-3 text-[13px] font-mono">
+        <span className="text-stone-400">{completed}/{total} 完成</span>
         {executing > 0 && (
           <span className="flex items-center gap-1 text-cyan-400">
-            <Play className="w-3 h-3" /> {executing} 执行中
+            <Play className="w-3.5 h-3.5" /> {executing} 执行中
           </span>
         )}
         {blocked > 0 && (
           <span className="flex items-center gap-1 text-amber-400">
-            <Pause className="w-3 h-3" /> {blocked} 阻塞
+            <Pause className="w-3.5 h-3.5" /> {blocked} 阻塞
           </span>
         )}
         {failed > 0 && (
           <span className="flex items-center gap-1 text-red-400">
-            <XCircle className="w-3 h-3" /> {failed} 失败
+            <XCircle className="w-3.5 h-3.5" /> {failed} 失败
           </span>
         )}
       </div>
@@ -117,17 +117,17 @@ function SubTaskTreeView({ plan }: { plan: TaskPlan }) {
   const layers = getTaskLayers(subTasks)
 
   return (
-    <div className="rounded-lg border border-white/10 overflow-hidden">
+    <div className="rounded-lg border border-stone-200 overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/8 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 bg-stone-100/80 hover:bg-white/8 transition-colors"
       >
-        <Activity className="w-3.5 h-3.5 text-cyan-400" />
-        <span className="text-[13px] font-mono text-white/60">
+        <Activity className="w-4 h-4 text-cyan-400" />
+        <span className="text-sm font-mono text-stone-500">
           子任务 ({subTasks.length})
         </span>
         <motion.div animate={{ rotate: expanded ? 180 : 0 }} transition={{ duration: 0.2 }} className="ml-auto">
-          <ChevronDown className="w-3.5 h-3.5 text-white/30" />
+          <ChevronDown className="w-3.5 h-3.5 text-stone-300" />
         </motion.div>
       </button>
 
@@ -144,10 +144,10 @@ function SubTaskTreeView({ plan }: { plan: TaskPlan }) {
               {layers.map((layer, layerIdx) => (
                 <div key={layerIdx} className="space-y-1.5">
                   {layers.length > 1 && (
-                    <div className="flex items-center gap-2 text-[10px] font-mono text-white/30 mb-1">
-                      <div className="h-px flex-1 bg-white/10" />
+                    <div className="flex items-center gap-2 text-xs font-mono text-stone-300 mb-1">
+                      <div className="h-px flex-1 bg-stone-100" />
                       <span>Layer {layerIdx}</span>
-                      <div className="h-px flex-1 bg-white/10" />
+                      <div className="h-px flex-1 bg-stone-100" />
                     </div>
                   )}
                   <div className="flex flex-wrap gap-2">
@@ -157,39 +157,39 @@ function SubTaskTreeView({ plan }: { plan: TaskPlan }) {
                       const isExec = task.status === 'executing'
                       return (
                         <div key={task.id} className={cn(
-                          'flex-1 min-w-[200px] p-2.5 rounded-lg border transition-all',
+                          'flex-1 min-w-[200px] p-3 rounded-lg border transition-all',
                           task.status === 'done' && 'bg-emerald-500/5 border-emerald-500/20',
                           task.status === 'failed' && 'bg-red-500/5 border-red-500/20',
                           task.status === 'executing' && 'bg-cyan-500/5 border-cyan-500/30 animate-pulse',
                           task.status === 'blocked' && 'bg-amber-500/5 border-amber-500/20',
                           task.status === 'paused_for_approval' && 'bg-yellow-500/10 border-yellow-500/30',
-                          task.status === 'pending' && 'bg-white/3 border-white/10',
+                          task.status === 'pending' && 'bg-white/3 border-stone-200',
                           task.status === 'ready' && 'bg-green-500/5 border-green-500/20',
-                          task.status === 'skipped' && 'bg-white/3 border-white/10 opacity-50',
+                          task.status === 'skipped' && 'bg-white/3 border-stone-200 opacity-50',
                         )}>
                           <div className="flex items-start gap-2">
-                            <div className={cn('w-5 h-5 rounded flex items-center justify-center flex-shrink-0', `bg-${config.color}-500/20`)}>
-                              <StatusIcon className={cn('w-3 h-3', `text-${config.color}-400`, isExec && 'animate-spin')} />
+                            <div className={cn('w-6 h-6 rounded flex items-center justify-center flex-shrink-0', `bg-${config.color}-500/20`)}>
+                              <StatusIcon className={cn('w-3.5 h-3.5', `text-${config.color}-400`, isExec && 'animate-spin')} />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5">
-                                <span className="text-[11px] font-mono text-white/40">[{task.id}]</span>
-                                <span className={cn('text-[11px] font-mono', `text-${config.color}-400`)}>{config.label}</span>
+                                <span className="text-[13px] font-mono text-stone-400">[{task.id}]</span>
+                                <span className={cn('text-[13px] font-mono', `text-${config.color}-400`)}>{config.label}</span>
                               </div>
-                              <p className="text-[12px] text-white/70 mt-0.5 leading-relaxed line-clamp-2">{task.description}</p>
+                              <p className="text-sm text-stone-600 mt-0.5 leading-relaxed line-clamp-2">{task.description}</p>
                               {task.dependsOn.length > 0 && (
-                                <div className="flex items-center gap-1 mt-1 text-[10px] text-white/30">
+                                <div className="flex items-center gap-1 mt-1 text-xs text-stone-300">
                                   <span>依赖:</span>
                                   {task.dependsOn.map(dep => (
-                                    <span key={dep} className="bg-white/10 px-1 rounded">{dep}</span>
+                                    <span key={dep} className="bg-stone-100 px-1 rounded">{dep}</span>
                                   ))}
                                 </div>
                               )}
                               {task.result && task.status === 'done' && (
-                                <p className="text-[11px] text-emerald-400/70 mt-1 line-clamp-1">+ {task.result.slice(0, 50)}...</p>
+                                <p className="text-[13px] text-emerald-400/70 mt-1 line-clamp-1">+ {task.result.slice(0, 50)}...</p>
                               )}
                               {task.error && (
-                                <p className="text-[11px] text-red-400/70 mt-1 line-clamp-1">x {task.error}</p>
+                                <p className="text-[13px] text-red-400/70 mt-1 line-clamp-1">x {task.error}</p>
                               )}
                             </div>
                           </div>
@@ -226,18 +226,18 @@ function ToolArgsBlock({ args }: { args: Record<string, unknown> }) {
     <div className="mt-1">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1 text-[10px] font-mono text-cyan-400/50 hover:text-cyan-400/80 transition-colors"
+        className="flex items-center gap-1 text-xs font-mono text-cyan-400/50 hover:text-cyan-400/80 transition-colors"
       >
-        <Code className="w-2.5 h-2.5" />
+        <Code className="w-3 h-3" />
         <span>{expanded ? '收起参数' : '查看参数'}</span>
-        {!expanded && entries.length > 3 && <span className="text-white/20">+{entries.length - 3}</span>}
+        {!expanded && entries.length > 3 && <span className="text-stone-300">+{entries.length - 3}</span>}
       </button>
       {expanded ? (
-        <pre className="mt-1 p-2 bg-black/30 rounded text-[10px] text-white/40 font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto border border-white/5">
+        <pre className="mt-1 p-2 bg-stone-100/80 rounded text-xs text-stone-400 font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto border border-stone-100">
           {JSON.stringify(args, null, 2)}
         </pre>
       ) : (
-        <p className="text-[10px] text-white/25 font-mono mt-0.5 truncate">{preview}</p>
+        <p className="text-xs text-stone-300 font-mono mt-0.5 truncate">{preview}</p>
       )}
     </div>
   )
@@ -272,8 +272,8 @@ function ExecutionStepsViewer({ steps, output, error, duration }: {
 
   if (!steps?.length && !output && !error) {
     return (
-      <div className="p-3 bg-white/5 rounded-lg border border-white/10">
-        <p className="text-xs text-white/40 font-mono">暂无执行记录</p>
+      <div className="p-3 bg-stone-100/80 rounded-lg border border-stone-200">
+        <p className="text-xs text-stone-400 font-mono">暂无执行记录</p>
       </div>
     )
   }
@@ -281,45 +281,45 @@ function ExecutionStepsViewer({ steps, output, error, duration }: {
   return (
     <div className="space-y-2">
       {output && (
-        <div className="p-3 bg-emerald-500/5 rounded-lg border border-emerald-500/15">
+        <div className="p-4 bg-emerald-500/5 rounded-lg border border-emerald-500/15">
           <div className="flex items-center gap-1.5 mb-1.5">
-            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-            <span className="text-[13px] font-mono text-emerald-400 font-medium">执行结果</span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span className="text-sm font-mono text-emerald-400 font-medium">执行结果</span>
             {duration !== undefined && (
-              <span className="text-[12px] font-mono text-white/30 ml-auto">{(duration / 1000).toFixed(1)}s</span>
+              <span className="text-[13px] font-mono text-stone-300 ml-auto">{(duration / 1000).toFixed(1)}s</span>
             )}
           </div>
-          <pre className="text-xs text-white/70 whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto font-mono">{output}</pre>
+          <pre className="text-sm text-stone-600 whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto font-mono">{output}</pre>
         </div>
       )}
 
       {error && (
-        <div className="p-3 bg-red-500/5 rounded-lg border border-red-500/15">
+        <div className="p-4 bg-red-500/5 rounded-lg border border-red-500/15">
           <div className="flex items-center gap-1.5 mb-1.5">
-            <AlertCircle className="w-3 h-3 text-red-400" />
-            <span className="text-[13px] font-mono text-red-400 font-medium">执行错误</span>
+            <AlertCircle className="w-4 h-4 text-red-400" />
+            <span className="text-sm font-mono text-red-400 font-medium">执行错误</span>
             <button
               onClick={handleOneClickFix}
-              className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[11px] font-mono hover:bg-amber-500/25 transition-colors"
+              className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[13px] font-mono hover:bg-amber-500/25 transition-colors"
             >
-              <Zap className="w-3 h-3" />
+              <Zap className="w-3.5 h-3.5" />
               一键修复
             </button>
           </div>
-          <p className="text-xs text-red-300/80 font-mono">{error}</p>
+          <p className="text-sm text-red-300/80 font-mono">{error}</p>
         </div>
       )}
 
       {steps && steps.length > 0 && (
-        <div className="rounded-lg border border-white/10 overflow-hidden">
+        <div className="rounded-lg border border-stone-200 overflow-hidden">
           <button
             onClick={() => setStepsExpanded(!stepsExpanded)}
-            className="w-full flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/8 transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 bg-stone-100/80 hover:bg-white/8 transition-colors"
           >
-            <Activity className="w-3 h-3 text-white/40" />
-            <span className="text-[13px] font-mono text-white/50">执行步骤 ({steps.length})</span>
+            <Activity className="w-4 h-4 text-stone-400" />
+            <span className="text-sm font-mono text-stone-400">执行步骤 ({steps.length})</span>
             <motion.div animate={{ rotate: stepsExpanded ? 180 : 0 }} transition={{ duration: 0.2 }} className="ml-auto">
-              <ChevronDown className="w-3 h-3 text-white/30" />
+              <ChevronDown className="w-3.5 h-3.5 text-stone-300" />
             </motion.div>
           </button>
 
@@ -339,21 +339,21 @@ function ExecutionStepsViewer({ steps, output, error, duration }: {
                     const label = stepTypeLabels[step.type] || '输出'
                     const hasToolArgs = step.type === 'tool_call' && step.toolArgs && Object.keys(step.toolArgs).length > 0
                     return (
-                      <div key={step.id || i} className="flex gap-2 px-3 py-2 border-t border-white/5 hover:bg-white/3">
-                        <div className={cn('w-5 h-5 rounded flex items-center justify-center flex-shrink-0 mt-0.5', `bg-${sConfig.color}-500/15`)}>
-                          <StepIcon className={cn('w-3 h-3', `text-${sConfig.color}-400`)} />
+                      <div key={step.id || i} className="flex gap-2.5 px-3 py-2.5 border-t border-stone-100 hover:bg-white/3">
+                        <div className={cn('w-6 h-6 rounded flex items-center justify-center flex-shrink-0 mt-0.5', `bg-${sConfig.color}-500/15`)}>
+                          <StepIcon className={cn('w-3.5 h-3.5', `text-${sConfig.color}-400`)} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className={cn('text-[12px] font-mono font-medium', `text-${sConfig.color}-400`)}>{label}</span>
+                            <span className={cn('text-sm font-mono font-medium', `text-${sConfig.color}-400`)}>{label}</span>
                             {step.toolName && (
-                              <span className="text-[12px] font-mono text-white/30 bg-white/5 px-1 rounded">{step.toolName}</span>
+                              <span className="text-[13px] font-mono text-stone-300 bg-stone-100/80 px-1.5 rounded">{step.toolName}</span>
                             )}
                             {step.duration !== undefined && (
-                              <span className="text-[11px] font-mono text-white/20 ml-auto">{step.duration}ms</span>
+                              <span className="text-[13px] font-mono text-stone-300 ml-auto">{step.duration}ms</span>
                             )}
                           </div>
-                          <p className="text-[11px] text-white/50 font-mono mt-0.5 whitespace-pre-wrap break-all leading-relaxed line-clamp-6">
+                          <p className="text-[13px] text-stone-500 font-mono mt-0.5 whitespace-pre-wrap break-all leading-relaxed line-clamp-6">
                             {step.content}
                           </p>
                           {hasToolArgs && (
@@ -399,10 +399,10 @@ export function ExecutionFocusView({ task, onTerminate }: ExecutionFocusViewProp
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse flex-shrink-0" />
           <div className="min-w-0">
-            <h2 className="text-sm font-mono text-cyan-200 truncate">
+            <h2 className="text-base font-mono text-cyan-600 truncate">
               {task.title}
             </h2>
-            <p className="text-xs font-mono text-white/40 truncate mt-0.5">
+            <p className="text-sm font-mono text-stone-400 truncate mt-0.5">
               {latestSummary}
             </p>
           </div>

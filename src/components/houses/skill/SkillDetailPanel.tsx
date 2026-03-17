@@ -145,7 +145,7 @@ function DomainBar({ stat, maxScore }: { stat: DomainStats; maxScore: number }) 
       >
         {config.name}
       </span>
-      <div className="flex-1 h-5 bg-white/5 rounded-full overflow-hidden relative">
+      <div className="flex-1 h-5 bg-stone-100/80 rounded-full overflow-hidden relative">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${percent}%` }}
@@ -153,11 +153,11 @@ function DomainBar({ stat, maxScore }: { stat: DomainStats; maxScore: number }) 
           className="h-full rounded-full relative"
           style={{ backgroundColor: `${config.color}30`, borderRight: `2px solid ${config.color}` }}
         />
-        <span className="absolute inset-0 flex items-center px-2 text-xs font-mono text-white/40">
+        <span className="absolute inset-0 flex items-center px-2 text-xs font-mono text-stone-400">
           {stat.abilityScore > 0 ? stat.abilityScore.toLocaleString() : '-'}
         </span>
       </div>
-      <span className="w-8 text-xs font-mono text-white/30 text-right flex-shrink-0">
+      <span className="w-8 text-xs font-mono text-stone-300 text-right flex-shrink-0">
         {stat.skillCount}
       </span>
       <div className="w-10 flex items-center justify-end flex-shrink-0">
@@ -171,7 +171,7 @@ function DomainBar({ stat, maxScore }: { stat: DomainStats; maxScore: number }) 
             <TrendingDown className="w-3 h-3" />
           </span>
         ) : (
-          <Minus className="w-3 h-3 text-white/20" />
+          <Minus className="w-3 h-3 text-stone-300" />
         )}
       </div>
     </div>
@@ -187,10 +187,10 @@ function GrowthSummary({ snapshot }: { snapshot: AbilitySnapshot }) {
   const hasGrowth = weeklyGrowth.newSkills > 0 || weeklyGrowth.scoreChange > 0
 
   return (
-    <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+    <div className="p-3 rounded-lg bg-stone-100/80 border border-stone-200">
       <div className="flex items-center gap-2 mb-2">
         <TrendingUp className="w-4 h-4 text-cyan-400" />
-        <span className="text-xs font-mono text-white/40 uppercase">Growth</span>
+        <span className="text-xs font-mono text-stone-400 uppercase">Growth</span>
       </div>
       {hasGrowth ? (
         <div className="space-y-1">
@@ -210,7 +210,7 @@ function GrowthSummary({ snapshot }: { snapshot: AbilitySnapshot }) {
           )}
         </div>
       ) : (
-        <p className="text-xs font-mono text-white/25">No data yet</p>
+        <p className="text-xs font-mono text-stone-300">No data yet</p>
       )}
     </div>
   )
@@ -264,7 +264,7 @@ function RecentActiveSkills({ skillIds }: { skillIds: string[] }) {
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <Star className="w-4 h-4 text-amber-400" />
-        <span className="text-xs font-mono text-white/40 uppercase">Recent Active</span>
+        <span className="text-xs font-mono text-stone-400 uppercase">Recent Active</span>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {skillIds.slice(0, 6).map(id => {
@@ -272,11 +272,11 @@ function RecentActiveSkills({ skillIds }: { skillIds: string[] }) {
           return (
             <span
               key={id}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white/5 border border-white/10 text-xs font-mono text-white/50"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded bg-stone-100/80 border border-stone-200 text-xs font-mono text-stone-400"
             >
               <span className="text-cyan-400">{id}</span>
               {stats && (
-                <span className="text-white/25">x{stats.callCount}</span>
+                <span className="text-stone-300">x{stats.callCount}</span>
               )}
             </span>
           )
@@ -299,8 +299,8 @@ function SkillListItem({ skill }: { skill: SkillNode }) {
 
   return (
     <div className={cn(
-      'flex items-center gap-2 px-3 py-1.5 rounded hover:bg-white/5 transition-colors',
-      isActive ? 'text-white/50' : 'text-white/25'
+      'flex items-center gap-2 px-3 py-1.5 rounded hover:bg-stone-100/80 transition-colors',
+      isActive ? 'text-stone-400' : 'text-stone-300'
     )}>
       <div className={cn(
         'w-1.5 h-1.5 rounded-full flex-shrink-0',
@@ -308,7 +308,7 @@ function SkillListItem({ skill }: { skill: SkillNode }) {
       )} />
       <span className="text-xs font-mono truncate flex-1">{skill.name}</span>
       {stats && stats.callCount > 0 && (
-        <span className="text-xs font-mono text-white/20 flex-shrink-0">
+        <span className="text-xs font-mono text-stone-300 flex-shrink-0">
           {stats.callCount}x
         </span>
       )}
@@ -339,16 +339,16 @@ function SkillDomainGroup({
     <div className="mb-1">
       <button
         onClick={onToggle}
-        className="w-full flex items-center gap-2 px-3 py-2 rounded hover:bg-white/5 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 rounded hover:bg-stone-100/80 transition-colors"
       >
         <ChevronRight className={cn(
-          'w-3 h-3 text-white/25 transition-transform',
+          'w-3 h-3 text-stone-300 transition-transform',
           expanded && 'rotate-90'
         )} />
         <span className="text-xs font-mono flex-1 text-left" style={{ color: config.color }}>
           {config.name}
         </span>
-        <span className="text-xs font-mono text-white/25">{skills.length}</span>
+        <span className="text-xs font-mono text-stone-300">{skills.length}</span>
       </button>
 
       <AnimatePresence initial={false}>
@@ -447,7 +447,7 @@ export function SkillDetailPanel({ snapshot, skills, isExpanded, onToggle, stats
             transition={{ duration: 0.3, ease: 'easeOut' }}
             className="overflow-hidden"
           >
-            <div className="border border-white/10 rounded-xl p-4">
+            <div className="border border-stone-200 rounded-xl p-4">
               {/* 标题栏 */}
               <div className="flex items-center gap-3 mb-4">
                 <Brain className="w-5 h-5 text-cyan-400" />
@@ -467,12 +467,12 @@ export function SkillDetailPanel({ snapshot, skills, isExpanded, onToggle, stats
                 </button>
 
                 {/* 视图切换 */}
-                <div className="ml-auto flex items-center gap-1 bg-white/5 rounded-lg p-0.5">
+                <div className="ml-auto flex items-center gap-1 bg-stone-100/80 rounded-lg p-0.5">
                   <button
                     onClick={() => setViewMode('dashboard')}
                     className={cn(
                       'px-2 py-1 text-xs font-mono rounded transition-colors',
-                      viewMode === 'dashboard' ? 'bg-cyan-500/20 text-cyan-400' : 'text-white/30 hover:text-white/50'
+                      viewMode === 'dashboard' ? 'bg-cyan-500/20 text-cyan-400' : 'text-stone-300 hover:text-stone-400'
                     )}
                   >
                     <BarChart3 className="w-3.5 h-3.5" />
@@ -481,14 +481,14 @@ export function SkillDetailPanel({ snapshot, skills, isExpanded, onToggle, stats
                     onClick={() => setViewMode('list')}
                     className={cn(
                       'px-2 py-1 text-xs font-mono rounded transition-colors',
-                      viewMode === 'list' ? 'bg-cyan-500/20 text-cyan-400' : 'text-white/30 hover:text-white/50'
+                      viewMode === 'list' ? 'bg-cyan-500/20 text-cyan-400' : 'text-stone-300 hover:text-stone-400'
                     )}
                   >
                     <ChevronDown className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={onToggle}
-                    className="px-2 py-1 text-xs font-mono rounded text-white/30 hover:text-white/50 transition-colors"
+                    className="px-2 py-1 text-xs font-mono rounded text-stone-300 hover:text-stone-400 transition-colors"
                     title="收起"
                   >
                     <ChevronUp className="w-3.5 h-3.5" />
@@ -505,8 +505,8 @@ export function SkillDetailPanel({ snapshot, skills, isExpanded, onToggle, stats
                       <RadarChart domains={snapshot.domains} />
                     </div>
                     <div className="w-40 space-y-3">
-                      <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-center">
-                        <p className="text-xs font-mono text-white/40 uppercase mb-1">Total Score</p>
+                      <div className="p-3 rounded-lg bg-stone-100/80 border border-stone-200 text-center">
+                        <p className="text-xs font-mono text-stone-400 uppercase mb-1">Total Score</p>
                         <motion.p
                           key={snapshot.totalScore}
                           initial={{ scale: 1.2, color: '#22d3ee' }}
@@ -521,7 +521,7 @@ export function SkillDetailPanel({ snapshot, skills, isExpanded, onToggle, stats
                         <div className="space-y-1.5">
                           <div className="flex items-center gap-1.5">
                             <Award className="w-3.5 h-3.5 text-amber-400" />
-                            <span className="text-xs font-mono text-white/40 uppercase">Milestones</span>
+                            <span className="text-xs font-mono text-stone-400 uppercase">Milestones</span>
                           </div>
                           <MilestonesBadge milestones={snapshot.milestones} />
                         </div>
@@ -532,10 +532,10 @@ export function SkillDetailPanel({ snapshot, skills, isExpanded, onToggle, stats
                   {/* 能力域详情 */}
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-mono text-white/40 uppercase">Domain Breakdown</span>
-                      <span className="text-xs font-mono text-white/20 ml-auto">Score</span>
-                      <span className="text-xs font-mono text-white/20 w-8 text-right">Qty</span>
-                      <span className="text-xs font-mono text-white/20 w-10 text-right">Trend</span>
+                      <span className="text-xs font-mono text-stone-400 uppercase">Domain Breakdown</span>
+                      <span className="text-xs font-mono text-stone-300 ml-auto">Score</span>
+                      <span className="text-xs font-mono text-stone-300 w-8 text-right">Qty</span>
+                      <span className="text-xs font-mono text-stone-300 w-10 text-right">Trend</span>
                     </div>
                     {snapshot.domains
                       .sort((a, b) => b.abilityScore - a.abilityScore)
@@ -552,19 +552,19 @@ export function SkillDetailPanel({ snapshot, skills, isExpanded, onToggle, stats
                 /* ==================== 列表视图 ==================== */
                 <div className="space-y-2">
                   <div className="relative mb-3">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/25" />
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-stone-300" />
                     <input
                       type="text"
                       placeholder="Search skills..."
                       value={searchQuery}
                       onChange={e => setSearchQuery(e.target.value)}
-                      className="w-full pl-8 pr-3 py-2 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white/60 placeholder:text-white/20 focus:outline-none focus:border-cyan-500/30"
+                      className="w-full pl-8 pr-3 py-2 bg-stone-100/80 border border-stone-200 rounded-lg text-xs font-mono text-stone-500 placeholder:text-stone-300 focus:outline-none focus:border-cyan-500/30"
                     />
                   </div>
 
                   {searchQuery ? (
                     <div>
-                      <p className="text-xs font-mono text-white/25 mb-2">{filteredSkills.length} results</p>
+                      <p className="text-xs font-mono text-stone-300 mb-2">{filteredSkills.length} results</p>
                       {filteredSkills.map(skill => (
                         <SkillListItem key={skill.id} skill={skill} />
                       ))}

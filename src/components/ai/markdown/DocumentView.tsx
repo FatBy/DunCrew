@@ -65,21 +65,21 @@ export function DocumentView({ content, containerWidth = 'main' }: DocumentViewP
       </div>
 
       {/* 文档容器 */}
-      <div className="flex-1 min-w-0 bg-gray-900/40 border border-white/10 rounded-xl overflow-hidden">
+      <div className="flex-1 min-w-0 bg-white/40 border border-stone-200 rounded-xl overflow-hidden">
         {/* 顶部栏：nexus 模式或 main 无 TOC 时显示目录按钮 */}
         {hasToc && (
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-white/5">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-stone-100">
             {!isMain && (
               <button
                 onClick={() => setTocOpen(!tocOpen)}
-                className="flex items-center gap-1.5 text-xs font-mono text-white/50 hover:text-cyan-400 transition-colors"
+                className="flex items-center gap-1.5 text-xs font-mono text-stone-400 hover:text-cyan-400 transition-colors"
               >
                 <List className="w-3.5 h-3.5" />
                 <span>目录 ({headings.length})</span>
               </button>
             )}
             {isMain && (
-              <span className="text-xs font-mono text-white/30">
+              <span className="text-xs font-mono text-stone-300">
                 {headings.length} 个章节
               </span>
             )}
@@ -89,7 +89,7 @@ export function DocumentView({ content, containerWidth = 'main' }: DocumentViewP
         <div className="flex">
           {/* 左侧 TOC (仅 main 模式) */}
           {isMain && hasToc && (
-            <div className="w-[180px] flex-shrink-0 border-r border-white/5 py-3 px-1 overflow-y-auto max-h-[70vh]">
+            <div className="w-[180px] flex-shrink-0 border-r border-stone-100 py-3 px-1 overflow-y-auto max-h-[70vh]">
               <TableOfContents
                 headings={headings}
                 scrollContainer={contentRef.current}
@@ -114,7 +114,7 @@ export function DocumentView({ content, containerWidth = 'main' }: DocumentViewP
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/40 z-50"
+                className="fixed inset-0 bg-stone-900/10 z-50"
                 onClick={() => setTocOpen(false)}
               />
               <motion.div
@@ -122,13 +122,13 @@ export function DocumentView({ content, containerWidth = 'main' }: DocumentViewP
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: -280, opacity: 0 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                className="fixed left-0 top-0 bottom-0 w-[280px] bg-gray-900/95 backdrop-blur-sm border-r border-white/10 z-50 py-4 px-2 overflow-y-auto"
+                className="fixed left-0 top-0 bottom-0 w-[280px] bg-white/95 backdrop-blur-sm border-r border-stone-200 z-50 py-4 px-2 overflow-y-auto"
               >
                 <div className="flex items-center justify-between px-2 mb-3">
-                  <span className="text-xs font-mono text-white/60">文档目录</span>
+                  <span className="text-xs font-mono text-stone-500">文档目录</span>
                   <button
                     onClick={() => setTocOpen(false)}
-                    className="text-white/40 hover:text-white/70 transition-colors"
+                    className="text-stone-400 hover:text-stone-600 transition-colors"
                   >
                     <X className="w-4 h-4" />
                   </button>

@@ -24,8 +24,8 @@ export function AISummaryCard({ view }: AISummaryCardProps) {
 
   if (!configured) {
     return (
-      <div className="mb-4 px-4 py-3 bg-white/5 border border-white/10 rounded-lg">
-        <div className="flex items-center gap-2 text-xs font-mono text-white/40">
+      <div className="mb-4 px-4 py-3 bg-stone-100/80 border border-stone-200 rounded-lg">
+        <div className="flex items-center gap-2 text-xs font-mono text-stone-400">
           <Sparkles className="w-3.5 h-3.5" />
           <span>AI 未配置 - 前往设置页面配置 LLM API 以启用智能分析</span>
         </div>
@@ -52,7 +52,7 @@ export function AISummaryCard({ view }: AISummaryCardProps) {
             generateSummary(view)
           }}
           disabled={summary.loading}
-          className="p-1 text-white/30 hover:text-amber-400 transition-colors disabled:animate-spin"
+          className="p-1 text-stone-300 hover:text-amber-400 transition-colors disabled:animate-spin"
         >
           <RefreshCw className="w-3 h-3" />
         </button>
@@ -60,8 +60,8 @@ export function AISummaryCard({ view }: AISummaryCardProps) {
 
       {summary.loading ? (
         <div className="flex items-center gap-2">
-          <div className="h-3 bg-white/10 rounded animate-pulse flex-1" />
-          <div className="h-3 bg-white/10 rounded animate-pulse w-1/3" />
+          <div className="h-3 bg-stone-100 rounded animate-pulse flex-1" />
+          <div className="h-3 bg-stone-100 rounded animate-pulse w-1/3" />
         </div>
       ) : summary.error ? (
         <div className="flex items-center gap-2 text-xs text-red-400/70 font-mono">
@@ -69,11 +69,11 @@ export function AISummaryCard({ view }: AISummaryCardProps) {
           <span className="truncate">{summary.error}</span>
         </div>
       ) : summary.content ? (
-        <p className="text-xs font-mono text-white/60 leading-relaxed">
+        <p className="text-xs font-mono text-stone-500 leading-relaxed">
           {summary.content}
         </p>
       ) : (
-        <p className="text-xs font-mono text-white/30">点击刷新生成 AI 分析</p>
+        <p className="text-xs font-mono text-stone-300">点击刷新生成 AI 分析</p>
       )}
     </motion.div>
   )

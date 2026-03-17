@@ -17,7 +17,7 @@ export function SkillParticleTooltip({ skillName, isActive, x, y }: SkillParticl
       className="absolute z-40 pointer-events-none"
       style={{ left: x + 12, top: y - 16 }}
     >
-      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-skin-bg-panel/90 backdrop-blur-md border border-skin-border/20 shadow-lg">
+      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-skin-bg-panel/90 backdrop-blur-md border border-stone-200 shadow-lg">
         <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-cyan-400' : 'bg-white/20'}`} />
         <span className="text-[11px] font-mono text-skin-text-primary whitespace-nowrap">
           {skillName}

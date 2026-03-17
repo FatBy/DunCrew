@@ -5,6 +5,7 @@
 // ============================================
 
 import type { NexusEntity } from '@/types'
+import { scoringToVisualLevel } from '@/types'
 import type { EntityRenderer, RenderContext, Point, BufferCanvas } from '../types'
 import { TILE_WIDTH, TILE_HEIGHT } from '../utils/coordinateTransforms'
 
@@ -91,7 +92,7 @@ export class BlockRenderer implements EntityRenderer {
     // 基于 ID 计算独特的建筑特征
     const hash = getHash(nexus.id)
     const colors = COLOR_PALETTE[hash % COLOR_PALETTE.length]
-    const level = Math.min(Math.max(nexus.level || 1, 1), 5)
+    const level = Math.min(Math.max(scoringToVisualLevel(nexus.scoring), 1), 5)
     
     // Level 差异化高度和宽度
     const cfg = LEVEL_CONFIG[level] || LEVEL_CONFIG[1]

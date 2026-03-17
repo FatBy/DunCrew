@@ -194,7 +194,9 @@ export const createSessionsSlice: StateCreator<SessionsSlice> = (set, get) => ({
   
   // Native 模式: 实时执行任务管理 (带持久化)
   addActiveExecution: (task) => set((state) => {
-    const newExecutions = [...state.activeExecutions, task].slice(-50)
+    // 去重：如果已存在相同 ID 的任务，先过滤掉旧的
+    const filtered = state.activeExecutions.filter(t => t.id !== task.id)
+    const newExecutions = [...filtered, task].slice(-50)
     persistTaskHistory(newExecutions)
     return { activeExecutions: newExecutions }
   }),

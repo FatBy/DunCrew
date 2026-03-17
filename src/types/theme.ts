@@ -2,7 +2,7 @@
 // DD-OS 主题系统类型定义
 // ============================================
 
-export type ThemeName = 'default' | 'cyberpunk' | 'light'
+export type ThemeName = 'warm'
 
 // CSS 变量键名映射
 export interface ThemeColors {
@@ -16,6 +16,7 @@ export interface ThemeColors {
   textPrimary: string    // 主文本 (原 white)
   textSecondary: string  // 次文本 (原 white/60)
   textMuted: string      // 弱文本 (原 white/30)
+  textTertiary: string   // 第三级文本
 
   // 边框
   borderSubtle: string   // 浅边框 (原 white/10)
@@ -27,6 +28,49 @@ export interface ThemeColors {
   accentEmerald: string
   accentPurple: string
   accentRed: string
+}
+
+// Dashboard 专用配色 Token
+export interface DashboardPalette {
+  // 节点背景 (渐变起止色)
+  nodeGradientFrom: string
+  nodeGradientTo: string
+  nodeBorder: string
+  nodeGlow: string
+
+  // 连接线
+  linkColor: string
+  linkActiveColor: string
+
+  // 成长阶段色
+  stageEgg: string
+  stageHatchling: string
+  stageYouth: string
+  stageAdult: string
+  stageMaster: string
+
+  // 情绪色
+  emotionHappy: string
+  emotionSad: string
+  emotionNeutral: string
+
+  // 成就徽章底色
+  achievementGold: string
+  achievementSilver: string
+  achievementBronze: string
+
+  // 悬浮卡片
+  hoverCardBg: string
+  hoverCardBorder: string
+
+  // 角色基因色 (仅生物态主题使用，其他主题可不填)
+  roleResearcher?: string
+  roleCoder?: string
+  roleAnalyst?: string
+  roleCreator?: string
+  roleOperator?: string
+  roleGeneral?: string
+  cellPatternColor?: string
 }
 
 // GameCanvas 专用色板
@@ -59,6 +103,7 @@ export interface Theme {
   description: string
   colors: ThemeColors
   canvas: CanvasPalette
+  dashboard: DashboardPalette
 }
 
 // 主题存储状态

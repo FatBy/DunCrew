@@ -58,7 +58,7 @@ function WeatherOutput({ content }: { content: string }) {
           
           if (trimmed.startsWith('查询时间') || trimmed.startsWith('Location')) {
             return (
-              <div key={i} className="text-xs text-white/40 border-b border-white/10 pb-1">
+              <div key={i} className="text-xs text-stone-400 border-b border-stone-200 pb-1">
                 {trimmed}
               </div>
             )
@@ -70,13 +70,13 @@ function WeatherOutput({ content }: { content: string }) {
                 <span className="text-xl font-bold text-cyan-400">
                   {trimmed.match(/\d+°?C?/)?.[0] || ''}
                 </span>
-                <span className="text-sm text-white/60">{trimmed}</span>
+                <span className="text-sm text-stone-500">{trimmed}</span>
               </div>
             )
           }
           
           return (
-            <div key={i} className="text-sm text-white/70 leading-relaxed pl-3 border-l-2 border-white/10">
+            <div key={i} className="text-sm text-stone-600 leading-relaxed pl-3 border-l-2 border-stone-200">
               {trimmed}
             </div>
           )
@@ -99,7 +99,7 @@ function SearchOutput({ content }: { content: string }) {
       
       <div className="space-y-1.5 max-h-80 overflow-y-auto">
         {lines.map((line, i) => (
-          <div key={i} className="text-sm text-white/70 leading-relaxed py-1 border-b border-white/5 last:border-0">
+          <div key={i} className="text-sm text-stone-600 leading-relaxed py-1 border-b border-stone-100 last:border-0">
             {line}
           </div>
         ))}
@@ -117,7 +117,7 @@ function FileOutput({ content }: { content: string }) {
         <span className="text-sm font-medium">文件内容</span>
       </div>
       
-      <pre className="text-sm text-white/70 leading-relaxed bg-black/30 rounded-lg p-3 overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap">
+      <pre className="text-sm text-stone-600 leading-relaxed bg-stone-100/80 rounded-lg p-3 overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap">
         {content}
       </pre>
     </div>
@@ -150,7 +150,7 @@ function CommandOutput({ content }: { content: string }) {
         )}
       </div>
       
-      <pre className="text-sm font-mono text-emerald-400/80 leading-relaxed bg-black/40 rounded-lg p-3 overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap">
+      <pre className="text-sm font-mono text-emerald-400/80 leading-relaxed bg-stone-900/10 rounded-lg p-3 overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap">
         {content}
       </pre>
     </div>
@@ -226,17 +226,17 @@ function FileCreatedOutput({ content }: { content: string }) {
       <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 space-y-2">
         <div className="flex items-center gap-2">
           <FileText className="w-4 h-4 text-emerald-400/60" />
-          <span className="text-sm font-mono text-white/80">{data.fileName}</span>
+          <span className="text-sm font-mono text-stone-700">{data.fileName}</span>
           {data.fileSize !== undefined && (
-            <span className="text-xs text-white/40 ml-auto">{data.fileSize} 字节</span>
+            <span className="text-xs text-stone-400 ml-auto">{data.fileSize} 字节</span>
           )}
         </div>
         
         {data.filePath && (
           <div className="flex items-start gap-2">
-            <span className="text-xs text-white/40 flex-shrink-0 mt-0.5">路径</span>
+            <span className="text-xs text-stone-400 flex-shrink-0 mt-0.5">路径</span>
             <span 
-              className="text-xs font-mono text-white/50 break-all" 
+              className="text-xs font-mono text-stone-400 break-all" 
               title={data.filePath}
             >
               {data.filePath}
@@ -321,7 +321,7 @@ function LogViewer({ lines }: { lines: string[] }) {
       data={lines}
       atBottomStateChange={setAtBottom}
       itemContent={(_index: number, line: string) => (
-        <div className="text-xs font-mono text-emerald-400/80 leading-relaxed px-1 min-h-[1.25rem]">
+        <div className="text-sm font-mono text-emerald-400/80 leading-relaxed px-1 min-h-[1.25rem]">
           {line || '\u00A0'}
         </div>
       )}
@@ -365,12 +365,12 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
           <span className="text-xs font-mono text-purple-400 font-medium">
             任务建议
           </span>
-          <span className="text-[13px] font-mono text-white/30 ml-auto">
+          <span className="text-[13px] font-mono text-stone-300 ml-auto">
             本地服务未启动
           </span>
         </div>
         
-        <div className="text-sm font-mono text-white/70 mb-3 leading-relaxed">
+        <div className="text-sm font-mono text-stone-600 mb-3 leading-relaxed">
           {content ? <MarkdownRenderer content={content} /> : ''}
         </div>
         
@@ -381,7 +381,7 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
               'flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono transition-colors',
               copied
                 ? 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-400'
-                : 'bg-white/5 border border-white/10 text-white/60 hover:text-purple-400 hover:border-purple-500/30'
+                : 'bg-stone-100/80 border border-stone-200 text-stone-500 hover:text-purple-400 hover:border-purple-500/30'
             )}
           >
             {copied ? (
@@ -424,7 +424,7 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
     <motion.div
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
-      className="rounded-lg border border-white/10 overflow-hidden bg-slate-900/80"
+      className="rounded-lg border border-stone-200 overflow-hidden bg-white/90 backdrop-blur-xl"
     >
       {/* 状态栏 - 精简 */}
       <div className={cn(
@@ -444,14 +444,14 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
         </span>
         {/* 仅当 content 与 output 不同时才在状态栏显示 content 摘要，避免重复 */}
         {content && content !== execution.output && (
-          <span className="text-xs font-mono text-white/40 ml-1 truncate flex-1">
+          <span className="text-xs font-mono text-stone-400 ml-1 truncate flex-1">
             {content.slice(0, 60)}{content.length > 60 ? '...' : ''}
           </span>
         )}
         {logLines.length > 0 && (
           <button
             onClick={handleCopyOutput}
-            className="text-white/30 hover:text-white/60 transition-colors flex-shrink-0"
+            className="text-stone-300 hover:text-stone-500 transition-colors flex-shrink-0"
             title="复制输出"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -461,7 +461,7 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
       
       {/* 输出内容 - 默认展开、全宽、大字体 */}
       {logLines.length > 0 && (
-        <div className="border-t border-white/5">
+        <div className="border-t border-stone-100">
           {logLines.length > 100 ? (
             <div style={{ height: '20rem' }}>
               <LogViewer lines={logLines} />
@@ -509,16 +509,16 @@ function FileCreatedCard({ file }: { file: { filePath: string; fileName: string;
     <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 space-y-2">
       <div className="flex items-center gap-2">
         <FileText className="w-4 h-4 text-emerald-400/60" />
-        <span className="text-sm font-mono text-white/80">{file.fileName}</span>
+        <span className="text-sm font-mono text-stone-700">{file.fileName}</span>
         {file.fileSize !== undefined && (
-          <span className="text-xs text-white/40 ml-auto">{file.fileSize} 字节</span>
+          <span className="text-xs text-stone-400 ml-auto">{file.fileSize} 字节</span>
         )}
       </div>
 
       {file.filePath && (
         <div className="flex items-start gap-2">
-          <span className="text-xs text-white/40 flex-shrink-0 mt-0.5">路径</span>
-          <span className="text-xs font-mono text-white/50 break-all" title={file.filePath}>
+          <span className="text-xs text-stone-400 flex-shrink-0 mt-0.5">路径</span>
+          <span className="text-xs font-mono text-stone-400 break-all" title={file.filePath}>
             {file.filePath}
           </span>
         </div>
@@ -582,41 +582,46 @@ export function ChatMessage({ message, containerWidth = 'main' }: ChatMessagePro
 
       {/* 普通文本消息气泡 */}
       {!isAssistantLongForm && !(message.execution?.status === 'suggestion') && message.content && !hasExecution && (
-        <div className={cn('flex gap-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
+        <div className={cn('flex gap-4 max-w-3xl mx-auto', isUser ? 'flex-row-reverse' : 'flex-row')}>
+          {/* Avatar */}
+          {isUser ? (
+            <div className="w-8 h-8 rounded-full bg-stone-100 border border-stone-200 flex items-center justify-center flex-shrink-0">
+              <User className="w-4 h-4 text-stone-500" />
+            </div>
+          ) : (
+            <div className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center flex-shrink-0">
+              <Bot className="w-4 h-4 text-amber-500" />
+            </div>
+          )}
           <div className={cn(
-            'w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0',
-            isUser ? 'bg-cyan-500/20' : 'bg-amber-500/20'
+            'flex-1 flex flex-col',
+            isUser ? 'items-end' : 'items-start'
           )}>
-            {isUser 
-              ? <User className="w-3.5 h-3.5 text-cyan-400" />
-              : <Bot className="w-3.5 h-3.5 text-amber-400" />
-            }
-          </div>
-          <div className={cn(
-            isUser ? 'max-w-[80%]' : 'max-w-[85%]',
-            'space-y-0'
-          )}>
+            {/* Name label */}
+            <span className="text-stone-400 text-xs font-bold mb-1 mx-1">
+              {isUser ? 'YOU' : 'Assistant'}
+            </span>
             <div className={cn(
-              'px-3 py-2 rounded-lg text-sm leading-relaxed',
+              'px-5 py-3.5 text-[13px] leading-relaxed shadow-sm',
               isUser
-                ? 'bg-cyan-500/10 border border-cyan-500/20 text-white/80 font-mono'
+                ? 'bg-stone-800 text-stone-50 rounded-2xl rounded-tr-sm max-w-[80%]'
                 : isError
-              ? 'bg-red-500/10 border border-red-500/20 text-red-300 font-mono'
-              : 'bg-white/5 border border-white/10 text-white/70'
-          )}>
-            {isError && (
-              <div className="flex items-center gap-1 mb-1 text-red-400">
-                <AlertCircle className="w-3 h-3" />
-                <span className="text-[13px]">错误</span>
-              </div>
-            )}
-            {isUser ? (
-              <div className="whitespace-pre-wrap break-words">{message.content}</div>
-            ) : (
-              <MarkdownRenderer content={displayContent} />
-            )}
-          </div>
-            {/* 建议选项卡片 — 放在气泡外部，独立渲染 */}
+                  ? 'bg-red-50 border border-red-200 text-red-600 rounded-2xl rounded-tl-sm'
+                  : 'bg-stone-50 border border-stone-100 text-stone-700 rounded-2xl rounded-tl-sm'
+            )}>
+              {isError && (
+                <div className="flex items-center gap-1 mb-1 text-red-500">
+                  <AlertCircle className="w-3 h-3" />
+                  <span className="text-[13px] font-bold">错误</span>
+                </div>
+              )}
+              {isUser ? (
+                <div className="whitespace-pre-wrap break-words">{message.content}</div>
+              ) : (
+                <MarkdownRenderer content={displayContent} />
+              )}
+            </div>
+            {/* 建议选项卡片 */}
             {!isUser && suggestions && (
               <SuggestionChips
                 prompt={suggestions.prompt}
@@ -660,14 +665,17 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex gap-2"
+      className="flex gap-4 max-w-3xl mx-auto"
     >
-      <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 bg-amber-500/20">
-        <Bot className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+      <div className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center flex-shrink-0">
+        <Bot className="w-4 h-4 text-amber-500 animate-pulse" />
       </div>
-      <div className="max-w-[80%] px-3 py-2 rounded-lg text-sm leading-relaxed bg-white/5 border border-amber-500/20 text-white/70">
-        <MarkdownRenderer content={content} />
-        <span className="inline-block w-1.5 h-3.5 bg-amber-400/60 ml-0.5 animate-pulse" />
+      <div className="flex-1 flex flex-col items-start">
+        <span className="text-stone-400 text-xs font-bold mb-1 ml-1">Assistant</span>
+        <div className="bg-stone-50 border border-stone-100 rounded-2xl rounded-tl-sm px-5 py-3.5 text-[13px] text-stone-700 leading-relaxed shadow-sm">
+          <MarkdownRenderer content={content} />
+          <span className="inline-block w-1.5 h-3.5 bg-amber-400/60 ml-0.5 animate-pulse" />
+        </div>
       </div>
     </motion.div>
   )

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { Check, Play, ListChecks } from 'lucide-react'
+import { Check, Play, ChevronRight } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { useStore } from '@/store'
 
@@ -152,6 +152,56 @@ export function parseSuggestions(content: string): ParsedSuggestions | null {
     }
   }
 
+  // 方案D: 自然语言内联选项 — 识别"是A，还是B？或者C？"等口语化选项
+  {
+    const trimmedContent = content.trimEnd()
+    const lastParaBreak = trimmedContent.lastIndexOf('\n\n')
+    const lastParagraph = lastParaBreak >= 0
+      ? trimmedContent.slice(lastParaBreak + 2)
+      : trimmedContent
+
+    // 整个末段必须以问号结尾，且包含"还是"/"或者"等分隔词
+    if (/[？?]\s*$/.test(lastParagraph) && /(?:还是|或者|或是|亦或)/.test(lastParagraph)) {
+      const questionBody = lastParagraph.replace(/[？?]\s*$/, '')
+      const splitPattern = /(?:[，,；;。\s])*(?:还是|或者|或是|亦或|又或者|又或)(?:[，,\s])*/
+      const parts = questionBody.split(splitPattern).map(s => s.trim()).filter(s => s.length > 0)
+
+      if (parts.length >= 2) {
+        const cleanOption = (s: string) =>
+          s.replace(/^(?:是|要|想|需要|选择|去|做)\s*/, '')
+           .replace(/[？?。，,！!：:]+$/, '')
+           .replace(/\*\*/g, '')
+           .trim()
+
+        const items: SuggestionItem[] = []
+        for (const part of parts) {
+          const label = cleanOption(part)
+          if (label.length >= 2 && label.length <= 60) {
+            items.push({
+              index: items.length,
+              label,
+              letter: LETTERS[items.length] || `${items.length + 1}`,
+            })
+          }
+        }
+
+        if (items.length >= 2 && items.length <= 6) {
+          const startIdx = lastParaBreak >= 0 ? lastParaBreak : 0
+          const promptRaw = lastParagraph.replace(/[？?]\s*$/, '').trim()
+          const promptText = promptRaw.length > 50
+            ? promptRaw.slice(0, 50) + '...'
+            : promptRaw
+          return {
+            contentBefore: content.slice(0, startIdx).trimEnd(),
+            contentAfter: '',
+            prompt: promptText || '你可以选择以下方向：',
+            items,
+          }
+        }
+      }
+    }
+  }
+
   return null
 }
 
@@ -205,7 +255,7 @@ interface SuggestionChipsProps {
   disabled?: boolean
 }
 
-export function SuggestionChips({ prompt, items, aiContent, disabled }: SuggestionChipsProps) {
+export function SuggestionChips({ prompt: _prompt, items, aiContent, disabled }: SuggestionChipsProps) {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [executed, setExecuted] = useState(false)
   const sendChat = useStore((s) => s.sendChat)
@@ -255,77 +305,69 @@ export function SuggestionChips({ prompt, items, aiContent, disabled }: Suggesti
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.15 }}
-      className="mt-3 rounded-lg border border-amber-500/15 bg-[#1a1a2e] overflow-hidden"
+      className="mt-4 space-y-2"
     >
-      {/* 引导语 */}
-      <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-amber-500/10 bg-[#1e1e35]">
-        <ListChecks className="w-3.5 h-3.5 text-amber-400/70 flex-shrink-0" />
-        <span className="text-sm text-white/60">{prompt}</span>
-      </div>
-
-      {/* 选项列表 — 竖排 */}
-      <div className="divide-y divide-white/5 bg-[#16162a]">
-        {items.map((item) => {
-          const isSelected = selected.has(item.index)
-          return (
-            <button
-              key={item.index}
-              onClick={() => {
-                if (selected.size === 0 && !isDisabled) {
-                  handleSingleClick(item)
-                } else {
-                  toggleItem(item.index)
-                }
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault()
+      {/* 选项列表 — 独立卡片式按钮 */}
+      {items.map((item) => {
+        const isSelected = selected.has(item.index)
+        return (
+          <button
+            key={item.index}
+            onClick={() => {
+              if (selected.size === 0 && !isDisabled) {
+                handleSingleClick(item)
+              } else {
                 toggleItem(item.index)
-              }}
-              disabled={isDisabled}
-              className={cn(
-                'w-full flex items-center gap-3 px-3 py-2.5 text-left transition-all duration-150',
-                isDisabled
-                  ? 'opacity-40 cursor-not-allowed'
-                  : 'cursor-pointer',
-                isSelected
-                  ? 'bg-amber-500/10'
-                  : executed
-                  ? 'bg-transparent'
-                  : 'hover:bg-amber-500/5'
-              )}
-            >
-              {/* 编号 */}
-              <span className={cn(
-                'w-6 h-6 rounded flex items-center justify-center text-xs font-mono font-bold flex-shrink-0 transition-colors',
-                isSelected
-                  ? 'bg-amber-500/25 text-amber-300 border border-amber-500/40'
-                  : executed
-                  ? 'bg-white/5 text-white/20 border border-white/8'
-                  : 'bg-white/8 text-white/50 border border-white/12'
-              )}>
-                {isSelected ? <Check className="w-3 h-3" /> : item.letter}
-              </span>
+              }
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              toggleItem(item.index)
+            }}
+            disabled={isDisabled}
+            className={cn(
+              'w-full text-left group flex items-center gap-3 bg-white border rounded-xl p-3 transition-all shadow-sm',
+              isDisabled
+                ? 'opacity-40 cursor-not-allowed border-stone-200'
+                : isSelected
+                  ? 'border-amber-300 bg-amber-50'
+                  : 'border-stone-200 hover:border-amber-300 hover:bg-amber-50 cursor-pointer'
+            )}
+          >
+            {/* 编号徽章 */}
+            <span className={cn(
+              'w-6 h-6 shrink-0 rounded flex items-center justify-center text-xs font-black transition-colors',
+              isSelected
+                ? 'bg-amber-200 text-amber-700'
+                : 'bg-stone-100 text-stone-500 group-hover:bg-amber-200 group-hover:text-amber-700'
+            )}>
+              {isSelected ? <Check className="w-3.5 h-3.5" /> : item.letter}
+            </span>
 
-              {/* 选项文本 */}
-              <span className={cn(
-                'text-sm font-mono flex-1 transition-colors',
-                isSelected
-                  ? 'text-amber-300'
-                  : executed
-                  ? 'text-white/25'
-                  : 'text-white/70'
-              )}>
-                {item.label}
-              </span>
-            </button>
-          )
-        })}
-      </div>
+            {/* 选项文本 */}
+            <span className={cn(
+              'text-xs font-bold flex-1 transition-colors',
+              isSelected
+                ? 'text-stone-800'
+                : executed
+                  ? 'text-stone-400'
+                  : 'text-stone-600 group-hover:text-stone-800'
+            )}>
+              {item.label}
+            </span>
+
+            {/* 箭头 */}
+            {!isDisabled && !isSelected && (
+              <ChevronRight className="w-4 h-4 text-stone-300 ml-auto opacity-0 group-hover:opacity-100 group-hover:text-amber-500 transition-all transform -translate-x-2 group-hover:translate-x-0" />
+            )}
+          </button>
+        )
+      })}
 
       {/* 底部操作栏 */}
-      <div className="px-3 py-2 border-t border-white/6 bg-[#1e1e35] flex items-center gap-2">
+      <div className="pt-2 border-t border-stone-200/60 flex items-center gap-2">
         {!executed && selected.size === 0 && (
-          <span className="text-xs text-white/25">单击直接执行，右键多选</span>
+          <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">单击直接执行，右键多选</span>
         )}
 
         {selected.size > 0 && !executed && (
@@ -333,19 +375,17 @@ export function SuggestionChips({ prompt, items, aiContent, disabled }: Suggesti
             <button
               onClick={handleExecute}
               disabled={isDisabled}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-1 rounded text-xs font-mono transition-colors',
-                'bg-amber-500/20 border border-amber-500/40 text-amber-300',
-                'hover:bg-amber-500/30',
-                'disabled:opacity-40 disabled:cursor-not-allowed'
-              )}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold
+                         bg-amber-100 border border-amber-200 text-amber-700
+                         hover:bg-amber-200 transition-colors
+                         disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Play className="w-3 h-3" />
+              <Play className="w-3.5 h-3.5" />
               执行选中 ({selected.size})
             </button>
             <button
               onClick={() => setSelected(new Set())}
-              className="text-xs text-white/25 hover:text-white/40 transition-colors"
+              className="text-xs font-bold text-stone-400 hover:text-stone-600 transition-colors"
             >
               清除
             </button>
@@ -353,8 +393,8 @@ export function SuggestionChips({ prompt, items, aiContent, disabled }: Suggesti
         )}
 
         {executed && (
-          <div className="flex items-center gap-1.5 text-xs text-emerald-400/50">
-            <Check className="w-3 h-3" />
+          <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-500">
+            <Check className="w-3.5 h-3.5" />
             <span>已发送</span>
           </div>
         )}

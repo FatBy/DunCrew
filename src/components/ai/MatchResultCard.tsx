@@ -13,7 +13,7 @@ interface MatchResultCardProps {
 const scoreColor = (score: number) => {
   if (score >= 80) return 'bg-emerald-500/20 text-emerald-400'
   if (score >= 50) return 'bg-blue-500/20 text-blue-400'
-  return 'bg-white/10 text-white/40'
+  return 'bg-stone-100 text-stone-400'
 }
 
 export function MatchResultCard({ result, accentColor, onClick, index }: MatchResultCardProps) {
@@ -52,7 +52,7 @@ export function MatchResultCard({ result, accentColor, onClick, index }: MatchRe
 
       {/* 描述 */}
       {result.description && (
-        <p className="text-[11px] text-white/40 mb-1.5 line-clamp-2 leading-relaxed">
+        <p className="text-[11px] text-stone-400 mb-1.5 line-clamp-2 leading-relaxed">
           {result.description}
         </p>
       )}
@@ -71,7 +71,7 @@ export function MatchResultCard({ result, accentColor, onClick, index }: MatchRe
           {result.extras.map((tag) => (
             <span
               key={tag}
-              className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-white/30"
+              className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-stone-100/80 text-stone-300"
             >
               {tag}
             </span>

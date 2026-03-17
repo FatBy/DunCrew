@@ -99,6 +99,7 @@ export function generateCssVars(colors: ThemeColors): Record<string, string> {
     '--color-text-primary': colors.textPrimary,
     '--color-text-secondary': colors.textSecondary,
     '--color-text-muted': colors.textMuted,
+    '--color-text-tertiary': colors.textTertiary,
     '--color-border-subtle': colors.borderSubtle,
     '--color-border-medium': colors.borderMedium,
     '--color-accent-cyan': colors.accentCyan,

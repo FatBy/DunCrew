@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Sparkles, Building2 } from 'lucide-react'
 import { useStore } from '@/store'
+import { createInitialScoring } from '@/types'
 
 export function BuildProposalModal() {
   const currentProposal = useStore((s) => s.currentProposal)
@@ -23,8 +24,7 @@ export function BuildProposalModal() {
       addNexus({
         id: nexusId,
         position: { gridX, gridY },
-        level: 1,
-        xp: 0,
+        scoring: createInitialScoring(),
         visualDNA: accepted.previewVisualDNA,
         label: accepted.suggestedName,
         constructionProgress: 0, // 开始建造动画
@@ -56,7 +56,7 @@ export function BuildProposalModal() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={rejectProposal}
-            className="fixed inset-0 bg-black/70 backdrop-blur-md z-[100]"
+            className="fixed inset-0 bg-stone-900/10 backdrop-blur-[4px] z-[100]"
           />
           
           {/* 弹窗 - 使用 inset-0 m-auto 实现居中，避免与 framer-motion transform 冲突 */}
@@ -66,27 +66,27 @@ export function BuildProposalModal() {
             exit={{ opacity: 0, scale: 0.9 }}
             className="fixed inset-0 z-[101] m-auto
                        w-[90%] max-w-md h-fit
-                       bg-slate-900/98 border-2 border-amber-500/40 
+                       bg-white border border-stone-200/98 border-2 border-amber-500/40 
                        rounded-2xl shadow-[0_0_60px_rgba(245,158,11,0.3)]
                        overflow-hidden"
           >
             {/* 头部 */}
-            <div className="flex items-center justify-between p-4 border-b border-white/5">
+            <div className="flex items-center justify-between p-4 border-b border-stone-100">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-amber-400" />
                 <span className="font-mono text-sm text-amber-400">Observer Signal</span>
               </div>
               <button 
                 onClick={rejectProposal}
-                className="p-1 hover:bg-white/10 rounded transition-colors"
+                className="p-1 hover:bg-stone-100 rounded transition-colors"
               >
-                <X className="w-4 h-4 text-white/50" />
+                <X className="w-4 h-4 text-stone-400" />
               </button>
             </div>
             
             {/* 内容 */}
             <div className="p-6">
-              <p className="text-sm text-white/80 mb-6 leading-relaxed">
+              <p className="text-sm text-stone-700 mb-6 leading-relaxed">
                 指挥官，我检测到您的行为模式。是否将此固化为 Nexus？
               </p>
               
@@ -100,13 +100,13 @@ export function BuildProposalModal() {
                 </div>
                 
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-mono text-lg text-white/90 mb-1">
+                  <h3 className="font-mono text-lg text-stone-800 mb-1">
                     {currentProposal.suggestedName}
                   </h3>
                   <p className="text-xs font-mono" style={dynamicText}>
                     Nexus
                   </p>
-                  <p className="text-xs text-white/50 mt-1">
+                  <p className="text-xs text-stone-400 mt-1">
                     基于行为模式创建
                   </p>
                 </div>
@@ -117,22 +117,22 @@ export function BuildProposalModal() {
                 className="mb-6 p-3 rounded-lg border-l-2"
                 style={{ ...dynamicBg, borderLeftColor: `hsla(${hue}, 70%, 50%, 0.5)` }}
               >
-                <p className="text-xs text-white/70 leading-relaxed">
+                <p className="text-xs text-stone-600 leading-relaxed">
                   {currentProposal.purposeSummary}
                 </p>
               </div>
               
               {/* 触发证据 */}
-              <div className="mb-6 p-3 bg-white/5 rounded-lg border border-white/5">
-                <p className="text-[13px] font-mono text-white/40 mb-2">检测依据：</p>
+              <div className="mb-6 p-3 bg-stone-100/80 rounded-lg border border-stone-100">
+                <p className="text-[13px] font-mono text-stone-400 mb-2">检测依据：</p>
                 <div className="space-y-1">
                   {currentProposal.triggerPattern.evidence.slice(0, 3).map((ev, i) => (
-                    <p key={i} className="text-xs font-mono text-white/60 truncate">
+                    <p key={i} className="text-xs font-mono text-stone-500 truncate">
                       • {ev}
                     </p>
                   ))}
                 </div>
-                <p className="text-[13px] font-mono text-white/30 mt-2">
+                <p className="text-[13px] font-mono text-stone-300 mt-2">
                   置信度: {Math.round(currentProposal.triggerPattern.confidence * 100)}%
                 </p>
               </div>
@@ -141,8 +141,8 @@ export function BuildProposalModal() {
               <div className="flex gap-3">
                 <button
                   onClick={rejectProposal}
-                  className="flex-1 py-2.5 px-4 rounded-lg border border-white/10 
-                           text-sm font-mono text-white/60 hover:bg-white/5 transition-colors"
+                  className="flex-1 py-2.5 px-4 rounded-lg border border-stone-200 
+                           text-sm font-mono text-stone-500 hover:bg-stone-100/80 transition-colors"
                 >
                   稍后再说
                 </button>

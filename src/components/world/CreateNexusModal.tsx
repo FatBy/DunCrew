@@ -3,6 +3,7 @@ import { motion, AnimatePresence, useDragControls } from 'framer-motion'
 import { X, Plus, Building2, FileText, Sparkles, Loader2, Wand2, GripHorizontal, Zap, Tag, Target, ChevronDown, Check, Search } from 'lucide-react'
 import { useStore } from '@/store'
 import { simpleVisualDNA } from '@/store/slices/worldSlice'
+import { createInitialScoring } from '@/types'
 
 export interface NexusInitialData {
   name?: string
@@ -106,8 +107,7 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
     addNexus({
       id: nexusId,
       position: { gridX, gridY },
-      level: 1,
-      xp: 0,
+      scoring: createInitialScoring(),
       visualDNA,
       label: name.trim(),
       constructionProgress: 0, // 触发建造动画
@@ -157,7 +157,7 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={handleClose}
-            className="fixed inset-0 bg-black/70 backdrop-blur-md z-[100]"
+            className="fixed inset-0 bg-stone-900/10 backdrop-blur-[4px] z-[100]"
           />
           
           {/* 拖动约束区域 */}
@@ -176,17 +176,17 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
             dragMomentum={false}
             className="fixed inset-0 z-[101] m-auto
                        w-[90%] max-w-lg h-fit max-h-[85vh]
-                       bg-slate-900/98 border-2 border-cyan-500/30 
+                       bg-white border border-stone-200/98 border-2 border-cyan-500/30 
                        rounded-2xl shadow-[0_0_60px_rgba(6,182,212,0.2)]
                        overflow-hidden pointer-events-auto"
           >
             {/* 头部 - 可拖动区域 */}
             <div 
-              className="flex items-center justify-between p-4 border-b border-white/10 cursor-grab active:cursor-grabbing"
+              className="flex items-center justify-between p-4 border-b border-stone-200 cursor-grab active:cursor-grabbing"
               onPointerDown={(e) => dragControls.start(e)}
             >
               <div className="flex items-center gap-2">
-                <GripHorizontal className="w-4 h-4 text-white/30" />
+                <GripHorizontal className="w-4 h-4 text-stone-300" />
                 {initialData?.isFromChat ? (
                   <Wand2 className="w-5 h-5 text-amber-400" />
                 ) : (
@@ -198,10 +198,10 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
               </div>
               <button 
                 onClick={handleClose}
-                className="p-1 hover:bg-white/10 rounded transition-colors"
+                className="p-1 hover:bg-stone-100 rounded transition-colors"
                 disabled={isCreating || isAnalyzing}
               >
-                <X className="w-4 h-4 text-white/50" />
+                <X className="w-4 h-4 text-stone-400" />
               </button>
             </div>
             
@@ -245,7 +245,7 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
               
               {/* 名称输入 */}
               <div>
-                <label className="block text-xs font-mono text-white/50 mb-2">
+                <label className="block text-xs font-mono text-stone-400 mb-2">
                   Nexus 名称 <span className="text-red-400">*</span>
                 </label>
                 <input
@@ -253,8 +253,8 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="例如：代码审查专家、文档生成器..."
-                  className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg
-                           text-sm text-white/90 placeholder:text-white/30
+                  className="w-full px-3 py-2.5 bg-stone-100/80 border border-stone-200 rounded-lg
+                           text-sm text-stone-800 placeholder:text-stone-300
                            focus:outline-none focus:border-cyan-500/50 transition-colors"
                   autoFocus
                   disabled={isAnalyzing}
@@ -263,16 +263,16 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
               
               {/* 描述输入 */}
               <div>
-                <label className="block text-xs font-mono text-white/50 mb-2">
-                  简短描述 <span className="text-white/30">(可选)</span>
+                <label className="block text-xs font-mono text-stone-400 mb-2">
+                  简短描述 <span className="text-stone-300">(可选)</span>
                 </label>
                 <input
                   type="text"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="这个 Nexus 的主要用途..."
-                  className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg
-                           text-sm text-white/90 placeholder:text-white/30
+                  className="w-full px-3 py-2.5 bg-stone-100/80 border border-stone-200 rounded-lg
+                           text-sm text-stone-800 placeholder:text-stone-300
                            focus:outline-none focus:border-cyan-500/50 transition-colors"
                   disabled={isAnalyzing}
                 />
@@ -280,23 +280,23 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
               
               {/* SOP 内容 */}
               <div>
-                <label className="flex items-center gap-1.5 text-xs font-mono text-white/50 mb-2">
+                <label className="flex items-center gap-1.5 text-xs font-mono text-stone-400 mb-2">
                   <FileText className="w-3.5 h-3.5" />
-                  标准作业程序 (SOP) <span className="text-white/30">(核心)</span>
+                  标准作业程序 (SOP) <span className="text-stone-300">(核心)</span>
                 </label>
                 <textarea
                   value={sopContent}
                   onChange={(e) => setSopContent(e.target.value)}
                   placeholder="定义 Nexus 的行为规范、工作流程、注意事项等...&#10;&#10;支持 Markdown 格式，建议包含：&#10;- 执行流程步骤&#10;- 关键参数配置&#10;- 质量检查点&#10;- 注意事项"
                   rows={8}
-                  className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg
-                           text-sm text-white/90 placeholder:text-white/30 resize-y min-h-[120px]
+                  className="w-full px-3 py-2.5 bg-stone-100/80 border border-stone-200 rounded-lg
+                           text-sm text-stone-800 placeholder:text-stone-300 resize-y min-h-[120px]
                            focus:outline-none focus:border-cyan-500/50 transition-colors
                            font-mono text-xs leading-relaxed"
                   disabled={isAnalyzing}
                 />
                 {sopContent && (
-                  <p className="text-xs text-white/30 mt-1.5">
+                  <p className="text-xs text-stone-300 mt-1.5">
                     已填充 {sopContent.length} 字符
                   </p>
                 )}
@@ -304,7 +304,7 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
               
               {/* 绑定技能 */}
               <div>
-                <label className="flex items-center justify-between text-xs font-mono text-white/50 mb-2">
+                <label className="flex items-center justify-between text-xs font-mono text-stone-400 mb-2">
                   <span className="flex items-center gap-1.5">
                     <Zap className="w-3.5 h-3.5" />
                     绑定技能 
@@ -332,17 +332,17 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
                       exit={{ opacity: 0, height: 0 }}
                       className="mb-3 overflow-hidden"
                     >
-                      <div className="p-3 bg-slate-800/50 border border-white/10 rounded-lg">
+                      <div className="p-3 bg-stone-50 border border-stone-200 rounded-lg">
                         {/* 搜索框 */}
                         <div className="relative mb-2">
-                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-stone-300" />
                           <input
                             type="text"
                             value={skillSearchQuery}
                             onChange={(e) => setSkillSearchQuery(e.target.value)}
                             placeholder="搜索已安装技能..."
-                            className="w-full pl-8 pr-3 py-2 bg-white/5 border border-white/10 rounded-lg
-                                     text-xs text-white/90 placeholder:text-white/30
+                            className="w-full pl-8 pr-3 py-2 bg-stone-100/80 border border-stone-200 rounded-lg
+                                     text-xs text-stone-800 placeholder:text-stone-300
                                      focus:outline-none focus:border-cyan-500/50"
                           />
                         </div>
@@ -360,22 +360,22 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
                                   className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left
                                            transition-colors ${isSelected 
                                              ? 'bg-green-500/20 border border-green-500/30' 
-                                             : 'hover:bg-white/5 border border-transparent'}`}
+                                             : 'hover:bg-stone-100/80 border border-transparent'}`}
                                 >
                                   <div className={`w-4 h-4 rounded border flex items-center justify-center
                                                 ${isSelected 
                                                   ? 'bg-green-500 border-green-500' 
-                                                  : 'border-white/30'}`}>
+                                                  : 'border-stone-300'}`}>
                                     {isSelected && <Check className="w-3 h-3 text-white" />}
                                   </div>
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-xs text-white/90 truncate">{skillName}</p>
+                                    <p className="text-xs text-stone-800 truncate">{skillName}</p>
                                     {skill.description && (
-                                      <p className="text-[10px] text-white/40 truncate">{skill.description}</p>
+                                      <p className="text-[10px] text-stone-400 truncate">{skill.description}</p>
                                     )}
                                   </div>
                                   {skill.category && (
-                                    <span className="text-[10px] text-white/30 px-1.5 py-0.5 bg-white/5 rounded">
+                                    <span className="text-[10px] text-stone-300 px-1.5 py-0.5 bg-stone-100/80 rounded">
                                       {skill.category}
                                     </span>
                                   )}
@@ -383,13 +383,13 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
                               )
                             })
                           ) : (
-                            <p className="text-xs text-white/30 text-center py-3">
+                            <p className="text-xs text-stone-300 text-center py-3">
                               {skillSearchQuery ? '未找到匹配的技能' : '暂无可用技能'}
                             </p>
                           )}
                         </div>
                         
-                        <p className="text-[10px] text-white/30 mt-2 pt-2 border-t border-white/5">
+                        <p className="text-[10px] text-stone-300 mt-2 pt-2 border-t border-stone-100">
                           绑定技能后，Nexus 执行时会优先使用这些能力
                         </p>
                       </div>
@@ -431,7 +431,7 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
                 )}
                 
                 {boundSkills.length === 0 && !showSkillPicker && (
-                  <p className="text-xs text-white/30">点击"添加"从已安装技能中选择</p>
+                  <p className="text-xs text-stone-300">点击"添加"从已安装技能中选择</p>
                 )}
               </div>
               
@@ -441,7 +441,7 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
                 >
-                  <label className="flex items-center gap-1.5 text-xs font-mono text-white/50 mb-2">
+                  <label className="flex items-center gap-1.5 text-xs font-mono text-stone-400 mb-2">
                     <Tag className="w-3.5 h-3.5" />
                     分类标签
                   </label>
@@ -478,7 +478,7 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
                     <Target className="w-3.5 h-3.5" />
                     核心目标
                   </label>
-                  <p className="text-sm text-white/80">{initialData.objective}</p>
+                  <p className="text-sm text-stone-700">{initialData.objective}</p>
                 </motion.div>
               )}
               
@@ -497,7 +497,7 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
                     <Sparkles className="w-6 h-6" style={dynamicText} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-mono text-sm text-white/90 truncate">{name}</p>
+                    <p className="font-mono text-sm text-stone-800 truncate">{name}</p>
                     <p className="text-xs mt-0.5" style={dynamicText}>预览样式</p>
                   </div>
                 </motion.div>
@@ -508,8 +508,8 @@ export function CreateNexusModal({ isOpen, onClose, initialData, isAnalyzing }: 
                 <button
                   onClick={handleClose}
                   disabled={isCreating || isAnalyzing}
-                  className="flex-1 py-2.5 px-4 rounded-lg border border-white/10 
-                           text-sm font-mono text-white/60 hover:bg-white/5 transition-colors
+                  className="flex-1 py-2.5 px-4 rounded-lg border border-stone-200 
+                           text-sm font-mono text-stone-500 hover:bg-stone-100/80 transition-colors
                            disabled:opacity-50"
                 >
                   取消

@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import type { ChatMessage, AISummary, LLMConfig, ViewType, ExecutionStatus, ApprovalRequest, MemoryEntry, JournalEntry, Conversation, ConversationMeta, ConversationType, QuestSession, QuestPhase, ExplorationResult, Subagent, SubagentTask, ContextEntry, TaskPlan, Session } from '@/types'
+import type { ChatMessage, AISummary, LLMConfig, ViewType, ExecutionStatus, ApprovalRequest, MemoryEntry, JournalEntry, Conversation, ConversationMeta, ConversationType, Session } from '@/types'
 import { getLLMConfig, saveLLMConfig, isLLMConfigured, streamChat, chat } from '@/services/llmService'
 import { buildSummaryMessages, buildChatMessages, parseExecutionCommands, stripExecutionBlocks, buildJournalPrompt, parseJournalResult } from '@/services/contextBuilder'
 import { localClawService } from '@/services/LocalClawService'
@@ -328,24 +328,6 @@ export interface AiSlice {
   // 将 Gateway sessions 的完成结果回填到 DD-OS 对话
   syncGatewaySessionsToConversations: (sessions: Session[]) => void
 
-  // ============================================
-  // 交互式 Quest 系统 (Qoder 风格)
-  // ============================================
-  activeQuestSession: QuestSession | null
-  questSubagents: Map<string, Subagent>
-  
-  // Quest Actions
-  startQuestSession: (userGoal: string) => void
-  updateQuestPhase: (phase: QuestPhase) => void
-  setQuestProposedPlan: (plan: TaskPlan | null) => void
-  addExplorationResult: (result: ExplorationResult) => void
-  spawnSubagent: (task: SubagentTask) => string
-  updateSubagent: (id: string, updates: Partial<Subagent>) => void
-  collectSubagentResults: () => ExplorationResult[]
-  confirmQuestPlan: () => void
-  cancelQuestSession: () => void
-  appendToQuestContext: (entry: ContextEntry) => void
-  completeQuestSession: (result: string) => void
 
   // 内部辅助方法
   _addMessageToActiveConv: (msg: ChatMessage) => void
@@ -373,165 +355,6 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
   isChatOpen: false,
   setChatOpen: (open) => set({ isChatOpen: open }),
 
-  // ============================================
-  // 交互式 Quest 系统状态
-  // ============================================
-  activeQuestSession: null,
-  questSubagents: new Map(),
-
-  startQuestSession: (userGoal) => {
-    const sessionId = `quest-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-    const session: QuestSession = {
-      id: sessionId,
-      phase: 'exploring',
-      userGoal,
-      explorationResults: [],
-      proposedPlan: null,
-      accumulatedContext: [],
-      subagents: [],
-      createdAt: Date.now(),
-    }
-    set({ activeQuestSession: session, questSubagents: new Map() })
-    console.log('[Quest] Started session:', sessionId)
-  },
-
-  updateQuestPhase: (phase) => {
-    const session = get().activeQuestSession
-    if (!session) return
-    set({ activeQuestSession: { ...session, phase } })
-  },
-
-  setQuestProposedPlan: (plan) => {
-    const session = get().activeQuestSession
-    if (!session) return
-    set({ activeQuestSession: { ...session, proposedPlan: plan, phase: plan ? 'confirming' : session.phase } })
-  },
-
-  addExplorationResult: (result) => {
-    const session = get().activeQuestSession
-    if (!session) return
-    set({ activeQuestSession: { ...session, explorationResults: [...session.explorationResults, result] } })
-  },
-
-  spawnSubagent: (task) => {
-    const agentId = `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-    const subagent: Subagent = { id: agentId, type: task.type, task: task.task, status: 'pending', tools: task.tools, startedAt: Date.now() }
-    const newMap = new Map(get().questSubagents)
-    newMap.set(agentId, subagent)
-    const session = get().activeQuestSession
-    if (session) {
-      set({ questSubagents: newMap, activeQuestSession: { ...session, subagents: [...session.subagents, subagent] } })
-    } else {
-      set({ questSubagents: newMap })
-    }
-    return agentId
-  },
-
-  updateSubagent: (id, updates) => {
-    const newMap = new Map(get().questSubagents)
-    const existing = newMap.get(id)
-    if (!existing) return
-    const updated = { ...existing, ...updates }
-    newMap.set(id, updated)
-    const session = get().activeQuestSession
-    if (session) {
-      set({ questSubagents: newMap, activeQuestSession: { ...session, subagents: session.subagents.map(s => s.id === id ? updated : s) } })
-    } else {
-      set({ questSubagents: newMap })
-    }
-  },
-
-  collectSubagentResults: () => {
-    const session = get().activeQuestSession
-    if (!session) return []
-    const results: ExplorationResult[] = []
-    for (const agent of session.subagents) {
-      if (agent.status === 'completed' && agent.result) {
-        results.push({ source: 'codebase', query: agent.task, summary: agent.result.slice(0, 500), details: [], timestamp: agent.completedAt || Date.now() })
-      }
-    }
-    return results
-  },
-
-  confirmQuestPlan: () => {
-    const session = get().activeQuestSession
-    if (!session || !session.proposedPlan) return
-    set({ activeQuestSession: { ...session, phase: 'executing' } })
-    
-    // 创建任务条目以便在 TaskHouse 中显示
-    const execId = `quest-${session.id}`
-    const fullState = get() as any
-    fullState.addActiveExecution?.({
-      id: execId,
-      title: session.proposedPlan.title || session.userGoal.slice(0, 50),
-      description: session.userGoal,
-      status: 'executing',
-      priority: 'high',
-      timestamp: new Date().toISOString(),
-      executionSteps: [],
-    })
-    
-    const execStartTime = Date.now()
-    
-    // 异步执行确认后的计划（不阻塞 UI）
-    localClawService.executeConfirmedQuestPlan(session, (step) => {
-      // 将执行步骤追加到 TaskHouse
-      fullState.appendExecutionStep?.(execId, step)
-    }).then(result => {
-      const execDuration = Date.now() - execStartTime
-      get().completeQuestSession(result)
-      
-      // 更新任务状态为完成
-      fullState.updateActiveExecution?.(execId, {
-        status: 'done',
-        executionOutput: result,
-        executionDuration: execDuration,
-      })
-      
-      // 添加最终结果消息到聊天
-      get()._addMessageToActiveConv({
-        id: `quest-result-${Date.now()}`,
-        role: 'assistant',
-        content: result,
-        timestamp: Date.now(),
-      })
-    }).catch((err: any) => {
-      const execDuration = Date.now() - execStartTime
-      get().completeQuestSession(`执行失败: ${err.message}`)
-      
-      // 更新任务状态为失败
-      fullState.updateActiveExecution?.(execId, {
-        status: 'failed',
-        executionOutput: `执行失败: ${err.message}`,
-        executionDuration: execDuration,
-      })
-      
-      get()._addMessageToActiveConv({
-        id: `quest-error-${Date.now()}`,
-        role: 'assistant',
-        content: `Quest 执行失败: ${err.message}`,
-        timestamp: Date.now(),
-        error: true,
-      })
-    })
-  },
-
-  cancelQuestSession: () => {
-    set({ activeQuestSession: null, questSubagents: new Map() })
-  },
-
-  appendToQuestContext: (entry) => {
-    const session = get().activeQuestSession
-    if (!session) return
-    const newContext = [...session.accumulatedContext, entry].slice(-50)
-    set({ activeQuestSession: { ...session, accumulatedContext: newContext } })
-  },
-
-  completeQuestSession: (result) => {
-    const session = get().activeQuestSession
-    if (!session) return
-    set({ activeQuestSession: { ...session, phase: 'completed', finalResult: result, completedAt: Date.now() } })
-  },
 
   // 从后端加载数据 (应用启动后调用)
   // 新架构: 先加载元数据列表，消息按需懒加载
@@ -1119,74 +942,33 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
         }))
 
         // 2. 创建实时任务 (在 TaskHouse 显示，含执行步骤)
-        // 注意：Quest 模式下，任务由 sendMessageWithQuestPlan 创建，这里先不创建
         const fullState = get() as any
         
         // 🔧 修复：优先使用当前会话的 nexusId，而非全局 activeNexusId
         const activeConv = fullState.conversations?.get(fullState.activeConversationId)
         const activeNexusId = activeConv?.nexusId || fullState.activeNexusId
         
-        // Quest 模式已禁用：所有任务走传统 ReAct 直接执行
-        const useQuestMode = false
-        
-        // 仅在传统模式下预先创建任务
-        if (!useQuestMode) {
-          fullState.addActiveExecution?.({
-            id: execId,
-            title: message.slice(0, 50),
-            description: message,
-            status: 'executing',
-            priority: 'high',
-            timestamp: new Date().toISOString(),
-            executionSteps: [],
-          })
-        }
+        fullState.addActiveExecution?.({
+          id: execId,
+          title: message.slice(0, 50),
+          description: message,
+          status: 'executing',
+          priority: 'high',
+          timestamp: new Date().toISOString(),
+          executionSteps: [],
+        })
 
         // 2.5. 启动 Nexus 执行状态 (如果有激活的 Nexus)
         if (activeNexusId) {
           fullState.startNexusExecution?.(activeNexusId)
         }
 
-        // 3. 选择执行模式：Quest 模式（有 Nexus 或复杂任务）vs 传统 ReAct 模式
-        // Quest 模式触发条件（放宽）：
-        // - 消息包含 /quest 命令
-        // - 或者有激活的 Nexus（无论消息长度）
-        // - 或者消息长度超过 50 字符（可能需要分解任务）
-        
+        // 3. 执行 ReAct 模式
         try {
           let result: string
           
-          if (useQuestMode) {
-            // Quest 模式：交互式规划流程（探索→规划→确认→执行）
-            console.log('[AI] Using Interactive Quest mode')
-            
-            // 移除 /quest 标记
-            const cleanMessage = message.replace(/\/quest\s*/gi, '').trim()
-            
-            // 启动交互式 Quest（到确认阶段暂停，不自动执行）
-            try {
-              const session = await localClawService.startInteractiveQuest(
-                cleanMessage,
-                activeNexusId || undefined,
-                (phase) => get().updateQuestPhase(phase),
-                (explorationResult) => get().addExplorationResult(explorationResult)
-              )
-              // session.phase === 'confirming'，UI 渲染 QuestPlanConfirmation
-              // 用户点击确认后由 confirmQuestPlan 触发执行
-              result = `已生成任务计划「${session.proposedPlan?.title || cleanMessage.slice(0, 30)}」，请在下方确认执行。`
-            } catch (questError: any) {
-              console.error('[AI] Interactive Quest failed, falling back to direct execution:', questError)
-              // 降级：直接执行
-              result = await localClawService.sendMessageWithQuestPlan(
-                cleanMessage,
-                activeNexusId || undefined,
-                (step) => {
-                  (get() as any).appendExecutionStep?.(execId, step)
-                }
-              )
-            }
-          } else {
-            // 传统 ReAct 模式 (传入 nexusId 以注入 SOP)
+          {
+            // ReAct 模式 (传入 nexusId 以注入 SOP)
 
             // 构建对话历史：从当前会话中提取最近的 user/assistant 消息对
             // 排除当前消息(已在 userMsg 中)和占位消息(execution 消息)

@@ -59,7 +59,7 @@ export function CrashRecoveryBanner() {
                   上次会话可能因错误而中断 ({crashInfo?.time})
                 </p>
                 {crashInfo && (
-                  <p className="text-xs text-white/50 mt-1.5 font-mono truncate">
+                  <p className="text-xs text-stone-400 mt-1.5 font-mono truncate">
                     {crashInfo.message.slice(0, 80)}
                     {crashInfo.message.length > 80 && '...'}
                   </p>
@@ -78,7 +78,7 @@ export function CrashRecoveryBanner() {
               <button
                 onClick={handleViewLogs}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono
-                         bg-white/5 border border-white/10 rounded-lg
+                         bg-stone-100/80 border border-stone-200 rounded-lg
                          text-amber-300/80 hover:text-amber-200 hover:border-amber-500/30 transition-colors"
               >
                 <Bug className="w-3 h-3" />
@@ -87,8 +87,8 @@ export function CrashRecoveryBanner() {
               <button
                 onClick={() => window.location.reload()}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono
-                         bg-white/5 border border-white/10 rounded-lg
-                         text-white/60 hover:text-white hover:border-white/30 transition-colors"
+                         bg-stone-100/80 border border-stone-200 rounded-lg
+                         text-stone-500 hover:text-stone-800 hover:border-stone-300 transition-colors"
               >
                 <RefreshCw className="w-3 h-3" />
                 刷新页面
@@ -96,7 +96,7 @@ export function CrashRecoveryBanner() {
               <button
                 onClick={handleDismiss}
                 className="ml-auto px-3 py-1.5 text-xs font-mono
-                         text-white/40 hover:text-white/60 transition-colors"
+                         text-stone-400 hover:text-stone-500 transition-colors"
               >
                 忽略
               </button>
@@ -112,14 +112,14 @@ export function CrashRecoveryBanner() {
                   className="overflow-hidden"
                 >
                   <div className="mt-3 pt-3 border-t border-amber-500/20">
-                    <p className="text-xs text-white/40 mb-2">最近错误日志:</p>
+                    <p className="text-xs text-stone-400 mb-2">最近错误日志:</p>
                     <div className="max-h-40 overflow-auto space-y-2">
                       {logs.slice(0, 5).map((log, i) => (
                         <div
                           key={i}
-                          className="text-[11px] font-mono bg-black/30 rounded p-2"
+                          className="text-[11px] font-mono bg-stone-100/80 rounded p-2"
                         >
-                          <div className="flex items-center gap-2 text-white/30 mb-1">
+                          <div className="flex items-center gap-2 text-stone-300 mb-1">
                             <span className={
                               log.type === 'error' ? 'text-red-400' :
                               log.type === 'unhandledrejection' ? 'text-orange-400' :
@@ -129,7 +129,7 @@ export function CrashRecoveryBanner() {
                             </span>
                             <span>{new Date(log.timestamp).toLocaleString()}</span>
                           </div>
-                          <p className="text-white/60 break-all">
+                          <p className="text-stone-500 break-all">
                             {log.message}
                           </p>
                         </div>

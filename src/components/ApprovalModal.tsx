@@ -38,7 +38,7 @@ export function ApprovalModal() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => respondToApproval(false)}
-            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-stone-900/10 backdrop-blur-[4px] z-50"
           />
 
           {/* 弹窗 */}
@@ -49,7 +49,7 @@ export function ApprovalModal() {
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
             className={cn(
               'fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50',
-              'w-[90%] max-w-lg bg-slate-900/95 rounded-xl shadow-2xl overflow-hidden',
+              'w-[90%] max-w-lg bg-white/95 backdrop-blur-3xl rounded-xl shadow-2xl overflow-hidden',
               isCritical 
                 ? 'border-2 border-red-500/50' 
                 : 'border border-amber-500/30'
@@ -85,9 +85,9 @@ export function ApprovalModal() {
 
               <button
                 onClick={() => respondToApproval(false)}
-                className="relative p-1 hover:bg-white/10 rounded transition-colors"
+                className="relative p-1 hover:bg-stone-100 rounded transition-colors"
               >
-                <X className="w-4 h-4 text-white/50" />
+                <X className="w-4 h-4 text-stone-400" />
               </button>
             </div>
 
@@ -104,7 +104,7 @@ export function ApprovalModal() {
                   )} />
                 </div>
                 <div className="flex-1">
-                  <p className="text-sm text-white/90 font-medium">
+                  <p className="text-sm text-stone-800 font-medium">
                     {t('approval.request')}
                   </p>
                   <p className={cn(
@@ -123,7 +123,7 @@ export function ApprovalModal() {
                   ? 'bg-red-950/50 border border-red-500/30' 
                   : 'bg-amber-950/30 border border-amber-500/20'
               )}>
-                <div className="flex items-center gap-2 mb-2 text-white/50">
+                <div className="flex items-center gap-2 mb-2 text-stone-400">
                   <span className="text-[13px] uppercase tracking-wider">{t('approval.tool')}</span>
                   <span className={cn(
                     'px-1.5 py-0.5 rounded text-[13px]',
@@ -132,14 +132,14 @@ export function ApprovalModal() {
                     {pendingApproval.toolName}
                   </span>
                 </div>
-                <pre className="text-white/80 whitespace-pre-wrap break-all">
+                <pre className="text-stone-700 whitespace-pre-wrap break-all">
                   {formatArgs()}
                 </pre>
               </div>
 
               {/* 风险等级 */}
               <div className="flex items-center gap-2">
-                <span className="text-xs text-white/40">{t('approval.risk')}</span>
+                <span className="text-xs text-stone-400">{t('approval.risk')}</span>
                 <span className={cn(
                   'px-2 py-1 rounded text-xs font-mono',
                   isCritical 
@@ -148,18 +148,18 @@ export function ApprovalModal() {
                 )}>
                   {isCritical ? 'CRITICAL' : 'HIGH'}
                 </span>
-                <span className="text-[13px] text-white/30 ml-auto">
+                <span className="text-[13px] text-stone-300 ml-auto">
                   {t('approval.auto_reject')}
                 </span>
               </div>
             </div>
 
             {/* 按钮 */}
-            <div className="flex gap-3 p-4 border-t border-white/5 bg-white/[0.02]">
+            <div className="flex gap-3 p-4 border-t border-stone-100 bg-stone-50">
               <button
                 onClick={() => respondToApproval(false)}
-                className="flex-1 py-3 px-4 rounded-lg border border-white/10 
-                         text-sm font-mono text-white/60 hover:bg-white/5 
+                className="flex-1 py-3 px-4 rounded-lg border border-stone-200 
+                         text-sm font-mono text-stone-500 hover:bg-stone-100/80 
                          transition-colors flex items-center justify-center gap-2"
               >
                 <X className="w-4 h-4" />

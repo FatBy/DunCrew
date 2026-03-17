@@ -23,7 +23,7 @@ export function GlassCard({ children, className, themeColor, onClick }: GlassCar
     <div
       onClick={onClick}
       className={cn(
-        'bg-skin-bg-panel/40 backdrop-blur-xl border border-skin-border/10 shadow-2xl rounded-2xl',
+        'bg-white/95 backdrop-blur-3xl border border-white/80 shadow-[0_30px_80px_rgba(0,0,0,0.08)] rounded-[2rem]',
         glow && `ring-1 ${glow}`,
         className
       )}

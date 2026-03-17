@@ -1,24 +1,14 @@
 import type { StateCreator } from 'zustand'
-import type { NexusEntity, CameraState, GridPosition, RenderSettings, VisualDNA, BuildingConfig } from '@/types'
+import type { NexusEntity, CameraState, GridPosition, RenderSettings, VisualDNA, NexusScoring } from '@/types'
+import { createInitialScoring } from '@/types'
 import type { WorldTheme } from '@/rendering/types'
-import { getCityBlockSystem } from '@/rendering/isometric/CityBlockSystem'
 import { localServerService } from '@/services/localServerService'
-
-// XP 等级阈值
-const XP_THRESHOLDS = [0, 20, 100, 500] as const
 
 // 后端数据键名
 const DATA_KEY_NEXUSES = 'nexuses_state'
 
 // localStorage key for Nexus persistence (备份/缓存)
 const NEXUS_STORAGE_KEY = 'ddos_nexuses'
-
-export function xpToLevel(xp: number): number {
-  for (let i = XP_THRESHOLDS.length - 1; i >= 0; i--) {
-    if (xp >= XP_THRESHOLDS[i]) return i + 1
-  }
-  return 1
-}
 
 // ---- 持久化函数 (后端 + localStorage 双写) ----
 
@@ -57,12 +47,6 @@ function loadNexusesFromStorage(): Map<string, NexusEntity> {
 const TILE_WIDTH = 128
 const TILE_HEIGHT = 64
 
-// 建筑配置生成数组
-const BODY_TYPES = ['office', 'lab', 'factory', 'library', 'tower', 'warehouse']
-const ROOF_TYPES = ['flat', 'dome', 'antenna', 'satellite', 'chimney', 'garden']
-const BASE_TYPES = ['concrete', 'steel', 'glass', 'stone']
-const PLANET_TEXTURES = ['bands', 'storm', 'core', 'crystal'] as const
-
 // 简易同步哈希 -> VisualDNA (不依赖 crypto.subtle)
 export function simpleVisualDNA(id: string): VisualDNA {
   let hash = 0
@@ -74,14 +58,6 @@ export function simpleVisualDNA(id: string): VisualDNA {
   const primaryHue = h % 360
   const geometryVariant = h % 4
   
-  // 动态生成建筑配置
-  const buildingConfig: BuildingConfig = {
-    base: BASE_TYPES[h % BASE_TYPES.length],
-    body: BODY_TYPES[(h >> 2) % BODY_TYPES.length],
-    roof: ROOF_TYPES[(h >> 4) % ROOF_TYPES.length],
-    themeColor: `hsl(${primaryHue}, 70%, 50%)`,
-  }
-  
   return {
     primaryHue,
     primarySaturation: 50 + (h >> 8) % 40,
@@ -90,10 +66,6 @@ export function simpleVisualDNA(id: string): VisualDNA {
     textureMode: 'solid',
     glowIntensity: 0.5 + ((h >> 4) % 50) / 100,
     geometryVariant,
-    planetTexture: PLANET_TEXTURES[geometryVariant],
-    ringCount: 1 + (h >> 6) % 3,
-    ringTilts: [0.15, -0.3, 0.1].slice(0, 1 + (h >> 6) % 3),
-    buildingConfig,
   }
 }
 
@@ -128,7 +100,7 @@ export interface WorldSlice {
   // Nexus Actions
   addNexus: (nexus: NexusEntity) => void
   removeNexus: (id: string) => void
-  updateNexusXP: (id: string, xpDelta: number) => void
+  updateNexusScoring: (id: string, scoring: NexusScoring) => void
   updateNexusPosition: (id: string, position: GridPosition) => void
   selectNexus: (id: string | null) => void
   setActiveNexus: (id: string | null) => void
@@ -171,7 +143,7 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
     showLabels: true,
     enableGlow: true,
   },
-  worldTheme: 'minimalist' as WorldTheme,
+  worldTheme: 'dashboard' as WorldTheme,
   // 执行状态初始值
   executingNexusId: null,
   executionStartTime: null,
@@ -197,13 +169,11 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
     }
   }),
 
-  updateNexusXP: (id, xpDelta) => set((state) => {
+  updateNexusScoring: (id, scoring) => set((state) => {
     const nexus = state.nexuses.get(id)
     if (!nexus) return state
     const next = new Map(state.nexuses)
-    const newXP = (nexus.xp || 0) + xpDelta
-    const newLevel = xpToLevel(newXP)
-    next.set(id, { ...nexus, xp: newXP, level: newLevel, updatedAt: Date.now() })
+    next.set(id, { ...nexus, scoring, updatedAt: Date.now() })
     saveNexusesToStorage(next)
     return { nexuses: next }
   }),
@@ -223,10 +193,8 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
     const nexus = state.nexuses.get(id)
     if (!nexus) return state
     
-    // 使用地块系统吸附位置到地块中心
-    const blockSystem = getCityBlockSystem()
-    const snappedPos = blockSystem.snapToBlockCenter(position.gridX, position.gridY)
-    const snappedPosition = { gridX: snappedPos.isoX, gridY: snappedPos.isoY }
+    // 简单网格吸附
+    const snappedPosition = { gridX: Math.round(position.gridX), gridY: Math.round(position.gridY) }
     
     const next = new Map(state.nexuses)
     next.set(id, { ...nexus, position: snappedPosition, updatedAt: Date.now() })
@@ -240,16 +208,22 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
 
   setNexusesFromServer: (nexuses) => set((state) => {
     const next = new Map(state.nexuses)
-    const blockSystem = getCityBlockSystem()
     
-    // 清空地块系统，重新分配
-    blockSystem.clear()
+    // 使用已占用位置集合来避免重叠
+    const usedPositions = new Set<string>()
+    for (const [, n] of next) {
+      usedPositions.add(`${n.position.gridX},${n.position.gridY}`)
+    }
+    
+    let autoIdx = 0
     
     for (const serverNexus of nexuses) {
       const existing = next.get(serverNexus.id)
-      const serverXP = serverNexus.xp || 0
-      const existingXP = existing?.xp || 0
-      const xp = Math.max(serverXP, existingXP)  // 后端为权威源，取较大值作为安全合并
+
+      // V2: 合并 scoring (本地已有分数优先，防止服务器空数据覆盖)
+      const serverScoring = serverNexus.scoring
+      const hasRealServerScoring = serverScoring && typeof serverScoring === 'object' && (serverScoring.score > 0 || serverScoring.totalRuns > 0)
+      const scoring = hasRealServerScoring ? serverScoring : (existing?.scoring || createInitialScoring())
 
       // 构建 VisualDNA：优先使用服务器提供的 visual_dna，否则从 ID 生成
       let visualDNA: VisualDNA
@@ -268,21 +242,27 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
         visualDNA = existing?.visualDNA || simpleVisualDNA(serverNexus.id)
       }
 
-      // 强制重新分配地块位置（确保每个 Nexus 独占一个地块）
-      const block = blockSystem.allocateBlock(serverNexus.id, 
-        existing?.position?.gridX ?? 0, 
-        existing?.position?.gridY ?? 0
-      )
-      const snappedPosition = { gridX: block.centerIsoX, gridY: block.centerIsoY }
+      // 位置分配：优先保留已有位置，否则按网格递增分配
+      let position = existing?.position
+      if (!position || (position.gridX === 0 && position.gridY === 0 && usedPositions.has('0,0'))) {
+        // 简单行布局：每行5个，间距2
+        let gx = 0, gy = 0
+        do {
+          autoIdx++
+          gx = (autoIdx % 5) * 2 - 4
+          gy = Math.floor(autoIdx / 5) * 2 - 2
+        } while (usedPositions.has(`${gx},${gy}`))
+        position = { gridX: gx, gridY: gy }
+      }
+      usedPositions.add(`${position.gridX},${position.gridY}`)
 
       next.set(serverNexus.id, {
         // 保留前端已有的状态 (constructionProgress 等)
         ...existing,
         // 从服务器合并的数据
         id: serverNexus.id,
-        position: snappedPosition,  // 使用吸附后的位置
-        level: xpToLevel(xp),
-        xp,
+        position,
+        scoring,
         visualDNA,
         label: serverNexus.label || serverNexus.name || serverNexus.id,
         constructionProgress: existing?.constructionProgress ?? 1,
@@ -390,7 +370,17 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
     // 仅当完成的是当前正在执行的 Nexus 时才更新
     if (state.executingNexusId !== nexusId) return state
     const nexus = state.nexuses.get(nexusId)
+
+    // 更新 nexus 实体的 updatedAt 并持久化
+    let nextNexuses = state.nexuses
+    if (nexus) {
+      nextNexuses = new Map(state.nexuses)
+      nextNexuses.set(nexusId, { ...nexus, updatedAt: Date.now() })
+      saveNexusesToStorage(nextNexuses)
+    }
+
     return {
+      nexuses: nextNexuses,
       executingNexusId: null,
       executionStartTime: null,
       lastExecutionResult: {
@@ -442,7 +432,11 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
           const serverTime = serverNexus.updatedAt || serverNexus.createdAt || 0
           const existingTime = existing?.updatedAt || existing?.createdAt || 0
           if (!existing || serverTime >= existingTime) {
-            mergedMap.set(serverNexus.id, serverNexus)
+            // 保护本地已有的 scoring：服务器数据无实质分数时保留本地
+            const sScoring = serverNexus.scoring
+            const hasRealScoring = sScoring && typeof sScoring === 'object' && (sScoring.score > 0 || sScoring.totalRuns > 0)
+            const preservedScoring = hasRealScoring ? sScoring : (existing?.scoring || serverNexus.scoring)
+            mergedMap.set(serverNexus.id, { ...serverNexus, scoring: preservedScoring! })
           }
         }
       }
@@ -474,15 +468,15 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
   
   syncAgentsAsNexuses: (agents, _skills) => set((state) => {
     const next = new Map(state.nexuses)
-    const blockSystem = getCityBlockSystem()
     let changed = false
     
-    // Seed block system with all existing nexus positions so new allocations don't overlap
-    for (const [id, nexus] of next) {
-      if (nexus.position && (nexus.position.gridX !== 0 || nexus.position.gridY !== 0)) {
-        blockSystem.allocateBlock(id, nexus.position.gridX, nexus.position.gridY)
-      }
+    // 收集已占用位置
+    const usedPositions = new Set<string>()
+    for (const [, nexus] of next) {
+      usedPositions.add(`${nexus.position.gridX},${nexus.position.gridY}`)
     }
+    
+    let autoIdx = 0
     
     for (const agent of agents) {
       const agentId = `oc-agent-${agent.id}`
@@ -494,11 +488,18 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
       const displayName = agent.name || agent.identity?.name || agent.id
       const visualDNA = existing?.visualDNA || simpleVisualDNA(agentId)
       
-      // 使用地块系统分配不重叠的位置
-      const preferX = existing?.position?.gridX ?? 0
-      const preferY = existing?.position?.gridY ?? 0
-      const block = blockSystem.allocateBlock(agentId, preferX, preferY)
-      const position = { gridX: block.centerIsoX, gridY: block.centerIsoY }
+      // 位置分配：保留已有位置或分配新位置
+      let position = existing?.position
+      if (!position || (position.gridX === 0 && position.gridY === 0 && usedPositions.has('0,0'))) {
+        let gx = 0, gy = 0
+        do {
+          autoIdx++
+          gx = (autoIdx % 5) * 2 - 4
+          gy = Math.floor(autoIdx / 5) * 2 - 2
+        } while (usedPositions.has(`${gx},${gy}`))
+        position = { gridX: gx, gridY: gy }
+      }
+      usedPositions.add(`${position.gridX},${position.gridY}`)
       
       next.set(agentId, {
         ...existing,
@@ -506,8 +507,7 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
         label: displayName,
         flavorText: `OpenClaw Agent: ${agent.id}`,
         position,
-        level: existing?.level || 1,
-        xp: existing?.xp || 0,
+        scoring: existing?.scoring || createInitialScoring(),
         visualDNA,
         constructionProgress: 1,
         createdAt: existing?.createdAt || Date.now(),

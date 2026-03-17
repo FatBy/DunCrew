@@ -20,7 +20,7 @@ export function SoulAnimalAvatar({ mbtiResult, identity, loading, className = ''
     return (
       <div className={`flex flex-col items-center justify-center gap-4 ${className}`}>
         <div className="relative w-48 h-48">
-          <div className="absolute inset-0 rounded-full bg-skin-bg-secondary/30 animate-pulse" />
+          <div className="absolute inset-0 rounded-full bg-stone-50 animate-pulse" />
           <div className="absolute inset-0 flex items-center justify-center">
             <Loader2 className="w-8 h-8 text-skin-accent-cyan/40 animate-spin" />
           </div>
@@ -54,7 +54,7 @@ export function SoulAnimalAvatar({ mbtiResult, identity, loading, className = ''
           <div className="absolute -inset-3 rounded-full opacity-20 blur-xl pointer-events-none bg-gradient-to-br from-skin-accent-cyan via-skin-accent-purple to-skin-accent-amber" />
 
           {/* Image container */}
-          <div className="relative w-48 h-48 rounded-full overflow-hidden border-2 border-skin-border/10 shadow-[0_0_40px_rgba(0,0,0,0.4)]">
+          <div className="relative w-48 h-48 rounded-full overflow-hidden border-2 border-stone-200/60 shadow-[0_0_40px_rgba(0,0,0,0.4)]">
             {!imgError ? (
               <img
                 src={avatarSrc}
@@ -64,14 +64,14 @@ export function SoulAnimalAvatar({ mbtiResult, identity, loading, className = ''
                 onError={() => setImgError(true)}
               />
             ) : (
-              <div className="w-full h-full flex items-center justify-center bg-skin-bg-secondary/40">
+              <div className="w-full h-full flex items-center justify-center bg-stone-100">
                 <Brain className="w-16 h-16 text-skin-accent-cyan/30" />
               </div>
             )}
 
             {/* Loading overlay */}
             {!imgLoaded && !imgError && (
-              <div className="absolute inset-0 flex items-center justify-center bg-skin-bg-secondary/40">
+              <div className="absolute inset-0 flex items-center justify-center bg-stone-100">
                 <Loader2 className="w-8 h-8 text-skin-accent-cyan/40 animate-spin" />
               </div>
             )}

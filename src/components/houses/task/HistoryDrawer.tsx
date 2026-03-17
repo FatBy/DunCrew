@@ -150,7 +150,7 @@ export function HistoryDrawer({ isOpen, onClose, inline = false, tasks: customTa
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="absolute inset-0 bg-black/40 z-30"
+            className="absolute inset-0 bg-stone-900/10 z-30"
             onClick={onClose}
           />
 
@@ -161,19 +161,19 @@ export function HistoryDrawer({ isOpen, onClose, inline = false, tasks: customTa
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
             className="absolute top-0 right-0 h-full w-[384px] max-w-[90%] bg-[#0a0f1e]/95 backdrop-blur-xl
-                       border-l border-white/10 z-40 flex flex-col"
+                       border-l border-stone-200 z-40 flex flex-col"
           >
             {/* 标题栏 */}
-            <div className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
-              <h3 className="text-sm font-mono text-white/80">
+            <div className="flex items-center justify-between p-4 border-b border-stone-200 flex-shrink-0">
+              <h3 className="text-sm font-mono text-stone-700">
                 历史任务
-                <span className="ml-2 text-xs text-white/30 bg-white/5 px-2 py-0.5 rounded">
+                <span className="ml-2 text-xs text-stone-300 bg-stone-100/80 px-2 py-0.5 rounded">
                   {historyTasks.length}
                 </span>
               </h3>
               <button
                 onClick={onClose}
-                className="p-1 text-white/30 hover:text-white/70 transition-colors"
+                className="p-1 text-stone-300 hover:text-stone-600 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -182,7 +182,7 @@ export function HistoryDrawer({ isOpen, onClose, inline = false, tasks: customTa
             {/* 任务列表 */}
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
               {historyTasks.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 text-white/20">
+                <div className="flex flex-col items-center justify-center py-16 text-stone-300">
                   <Clock className="w-8 h-8 mb-2" />
                   <span className="text-xs font-mono">暂无历史记录</span>
                 </div>
@@ -201,7 +201,7 @@ export function HistoryDrawer({ isOpen, onClose, inline = false, tasks: customTa
 
             {/* 底部操作栏 */}
             {historyTasks.length > 0 && (
-              <div className="p-3 border-t border-white/10 flex-shrink-0">
+              <div className="p-3 border-t border-stone-200 flex-shrink-0">
                 <button
                   onClick={() => {
                     if (window.confirm('确定清空所有历史任务？')) {
@@ -251,7 +251,7 @@ function HistoryTaskCard({ task, isExpanded, onToggle, onDelete, onRetry, isRetr
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <h4 className="text-xs font-medium text-white/80 truncate flex-1">
+              <h4 className="text-xs font-medium text-stone-700 truncate flex-1">
                 {task.title}
               </h4>
               <span className={cn(
@@ -263,7 +263,7 @@ function HistoryTaskCard({ task, isExpanded, onToggle, onDelete, onRetry, isRetr
             </div>
 
             {!isExpanded && (
-              <p className="text-[11px] text-white/40 mt-0.5 line-clamp-1">
+              <p className="text-[11px] text-stone-400 mt-0.5 line-clamp-1">
                 {task.description}
               </p>
             )}
@@ -278,15 +278,15 @@ function HistoryTaskCard({ task, isExpanded, onToggle, onDelete, onRetry, isRetr
                   transition={{ duration: 0.2 }}
                   className="overflow-hidden"
                 >
-                  <div className="mt-2 p-2 bg-white/5 rounded border border-white/10">
-                    <p className="text-[11px] text-white/60 whitespace-pre-wrap leading-relaxed">
+                  <div className="mt-2 p-2 bg-stone-100/80 rounded border border-stone-200">
+                    <p className="text-[11px] text-stone-500 whitespace-pre-wrap leading-relaxed">
                       {task.description || '-'}
                     </p>
                   </div>
 
                   {task.executionOutput && (
                     <div className="mt-2 p-2 bg-emerald-500/5 rounded border border-emerald-500/15">
-                      <pre className="text-[11px] text-white/60 whitespace-pre-wrap max-h-40 overflow-y-auto font-mono">
+                      <pre className="text-[11px] text-stone-500 whitespace-pre-wrap max-h-40 overflow-y-auto font-mono">
                         {task.executionOutput}
                       </pre>
                     </div>
@@ -314,7 +314,7 @@ function HistoryTaskCard({ task, isExpanded, onToggle, onDelete, onRetry, isRetr
                     </button>
                   )}
 
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono text-white/30">
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono text-stone-300">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-2.5 h-2.5" />
                       {new Date(task.timestamp).toLocaleString('zh-CN')}
@@ -343,7 +343,7 @@ function HistoryTaskCard({ task, isExpanded, onToggle, onDelete, onRetry, isRetr
             </AnimatePresence>
 
             {!isExpanded && (
-              <div className="flex items-center gap-2 mt-1 text-[10px] font-mono text-white/25">
+              <div className="flex items-center gap-2 mt-1 text-[10px] font-mono text-stone-300">
                 {task.executionDuration !== undefined && (
                   <span>{(task.executionDuration / 1000).toFixed(1)}s</span>
                 )}
@@ -353,7 +353,7 @@ function HistoryTaskCard({ task, isExpanded, onToggle, onDelete, onRetry, isRetr
           </div>
 
           <motion.div animate={{ rotate: isExpanded ? 90 : 0 }} transition={{ duration: 0.2 }}>
-            <ChevronRight className="w-3 h-3 text-white/15 flex-shrink-0" />
+            <ChevronRight className="w-3 h-3 text-stone-300 flex-shrink-0" />
           </motion.div>
         </div>
       </GlassCard>

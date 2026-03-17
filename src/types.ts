@@ -154,80 +154,6 @@ export interface TaskPlan {
   autoApprove?: boolean         // 自动批准低风险操作
 }
 
-// ============================================
-// 交互式 Quest 系统 (Qoder 风格)
-// ============================================
-
-// Quest 阶段状态机
-export type QuestPhase = 
-  | 'idle'           // 空闲
-  | 'exploring'      // 探索阶段（并行子代理搜索代码）
-  | 'planning'       // 规划阶段（生成任务计划）
-  | 'confirming'     // 确认阶段（用户审查计划）
-  | 'executing'      // 执行阶段
-  | 'completed'      // 完成
-
-// Quest 会话（完整的交互式任务流程）
-export interface QuestSession {
-  id: string
-  phase: QuestPhase
-  userGoal: string                         // 用户原始目标
-  explorationResults: ExplorationResult[]  // 探索阶段收集的结果
-  proposedPlan: TaskPlan | null            // 生成的任务计划
-  accumulatedContext: ContextEntry[]       // 累积的上下文
-  subagents: Subagent[]                    // 活跃的子代理
-  createdAt: number
-  completedAt?: number
-  finalResult?: string                     // 最终执行结果
-}
-
-// 探索结果
-export interface ExplorationResult {
-  source: 'codebase' | 'symbol' | 'file' | 'grep'
-  query: string
-  summary: string
-  details: ExplorationDetail[]
-  timestamp: number
-}
-
-export interface ExplorationDetail {
-  filePath?: string
-  lineNumber?: number
-  content?: string
-  symbolName?: string
-  symbolType?: string
-  relation?: string
-}
-
-// 子代理
-export interface Subagent {
-  id: string
-  type: 'explore' | 'plan' | 'execute'
-  task: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  progress?: number                       // 0-100
-  result?: string
-  error?: string
-  startedAt?: number
-  completedAt?: number
-  tools: string[]                         // 可用工具列表
-}
-
-// 子代理任务定义
-export interface SubagentTask {
-  type: 'explore' | 'plan' | 'execute'
-  task: string
-  tools: string[]
-  context?: string                        // 上下文信息
-}
-
-// 上下文条目（用于跨步骤累积）
-export interface ContextEntry {
-  type: 'exploration' | 'execution' | 'clarification' | 'user_feedback'
-  content: string
-  timestamp: number
-  source?: string                         // 来源（子代理ID、工具名等）
-}
 
 // 符号查询结果
 export interface SymbolResult {
@@ -606,6 +532,8 @@ export interface LLMConfig {
   apiKey: string
   baseUrl: string
   model: string
+  // API 协议格式: 'auto' 自动检测 | 'openai' OpenAI 兼容 | 'anthropic' Anthropic 原生
+  apiFormat?: 'auto' | 'openai' | 'anthropic'
   // 独立的 Embedding API 配置（可选）
   embedApiKey?: string
   embedBaseUrl?: string
@@ -749,29 +677,14 @@ export interface ToolInfo {
 
 // [已废弃] 固定类型限制已移除，改为基于 ID 动态生成视觉样式
 
-// 建筑配置 (城市主题)
-export interface BuildingConfig {
-  base: string           // 地基类型 (concrete, steel, glass, stone)
-  body: string           // 主体类型 (office, lab, factory, library, tower, warehouse)
-  roof: string           // 屋顶类型 (flat, dome, antenna, satellite, chimney, garden)
-  props?: string[]       // 装饰物 (signs, lights, wires, plants, machines)
-  themeColor?: string    // 主题色 (用于发光效果)
-}
-
 export interface VisualDNA {
   primaryHue: number        // 0-360
   primarySaturation: number // 40-100
   primaryLightness: number  // 30-70
   accentHue: number         // 0-360
   textureMode: 'solid' | 'wireframe' | 'gradient'
-  // 星球纹理配置 (cosmos 主题)
-  planetTexture?: 'bands' | 'storm' | 'core' | 'crystal'
-  ringCount?: number            // 1-3
-  ringTilts?: number[]          // 环倾角数组
   glowIntensity: number     // 0-1
   geometryVariant: number   // 0-3 (sub-variant within archetype)
-  // 城市主题：建筑配置 (用于 cityscape 主题)
-  buildingConfig?: BuildingConfig
   // AI 生图：自定义图片 URL (高级用户)
   customImageUrl?: string
 }
@@ -784,12 +697,8 @@ export interface GridPosition {
 export interface NexusEntity {
   id: string
   position: GridPosition
-  /** @deprecated V2: 使用 scoring.score + getScoreTier() 替代 */
-  level: number
-  /** @deprecated V2: 使用 scoring 替代 */
-  xp: number
-  // V2: 评分系统
-  scoring?: NexusScoring
+  // V2: 评分系统 (替代旧 xp/level)
+  scoring: NexusScoring
   visualDNA: VisualDNA
   label?: string            // LLM-generated name
   constructionProgress: number // 0-1 (1 = fully built)
@@ -1466,7 +1375,7 @@ export const SCORING_RULES = {
   EXPERT_THRESHOLD: 80,
   CAPABLE_THRESHOLD: 60,
   LEARNING_THRESHOLD: 40,
-  INITIAL_SCORE: 50,
+  INITIAL_SCORE: 0,
   MAX_RECENT_RUNS: 20,
 } as const
 
@@ -1549,6 +1458,16 @@ export function createInitialScoring(): NexusScoring {
     recentRuns: [],
     lastUpdated: Date.now(),
   }
+}
+
+/** 从 NexusScoring 映射到视觉等级 (1-5)，供渲染器使用 */
+export function scoringToVisualLevel(scoring?: NexusScoring): number {
+  const score = scoring?.score ?? 0
+  if (score >= 80) return 5   // Expert
+  if (score >= 60) return 4   // Capable
+  if (score >= 40) return 3   // Learning
+  if (score >= 20) return 2   // Weak
+  return 1                    // New
 }
 
 // ============================================
@@ -1823,3 +1742,86 @@ export type AbortTarget =
   | { level: 'child'; childRunId: string }
   | { level: 'step'; stepIndex: number }
   | { level: 'compact' }
+
+// ============================================
+// V3: File Registry + L1 Memory
+// ============================================
+
+// 文件注册表条目
+export interface FileRegistryEntry {
+  path: string              // 归一化路径 (/ 分隔)
+  mtime: number             // 最后修改时间戳(ms), 写操作更新
+  lastAccessed: number      // 最后访问时间戳
+  accessCount: number       // 累计访问次数
+  nexusId: string | null    // 首次访问时关联的 Nexus ID
+  registeredAt: number      // 首次注册时间
+}
+
+// L1 热记忆快照 (只存元数据，不存原始工具输出)
+export interface L1ActionSnapshot {
+  turn: number              // ReAct 循环轮次
+  action: string            // 工具名 (toolName)
+  target: string            // 操作目标 (路径或参数摘要, max 100 字符)
+  status: 'success' | 'error'
+  resultSize: number        // 原始结果字节数
+  resultPreview: string     // 结果前 200 字符
+  nexusId: string           // 所属 Nexus
+  timestamp: number
+}
+
+// File Registry 配置
+export const FILE_REGISTRY_CONFIG = {
+  MAX_ENTRIES: 500,
+  STALE_THRESHOLD_MS: 7 * 24 * 60 * 60 * 1000, // 7 天未访问视为过期
+  PERSIST_DEBOUNCE_MS: 5000,
+  LOCALSTORAGE_KEY: 'ddos_file_registry',
+  FILE_OPS: ['readFile', 'writeFile', 'appendFile', 'listDir'] as const,
+} as const
+
+// L1 Memory 配置
+export const L1_MEMORY_CONFIG = {
+  HOT_MAX_SNAPSHOTS: 5,          // L1-Hot 保留最近 5 轮
+  SNAPSHOT_PREVIEW_CHARS: 200,   // resultPreview 截取长度
+  SNAPSHOT_TARGET_CHARS: 100,    // target 截取长度
+} as const
+
+// ============================================
+// V3: Confidence Scoring + L1→L0 Promotion
+// ============================================
+
+// 置信度信号
+export interface ConfidenceSignal {
+  type: 'environment' | 'human_feedback' | 'system_failure' | 'decay'
+  delta: number             // 分值变化量 (归一化到 0-1 范围)
+  source: string            // 来源描述
+  timestamp: number
+}
+
+// L1 记忆条目 (带置信度追踪)
+export interface L1MemoryEntry {
+  id: string
+  nexusId: string
+  content: string
+  confidence: number        // 0.0 ~ 1.0
+  signals: ConfidenceSignal[]
+  promotedToL0: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+// 置信度信号分值
+export const CONFIDENCE_SIGNALS = {
+  ENVIRONMENT_ASSERTION: 0.15,   // Critic 验证通过
+  HUMAN_POSITIVE: 0.15,          // 用户正面反馈
+  HUMAN_NEGATIVE: -0.15,         // 用户负面反馈
+  SYSTEM_FAILURE: -0.2,          // 系统/工具执行失败
+  GENE_MATCH: 0.05,              // 与高置信基因匹配
+} as const
+
+// L0 晋升配置
+export const L0_PROMOTION_CONFIG = {
+  PROMOTION_THRESHOLD: 0.7,      // 置信度 >= 0.7 才能提升
+  MIN_SIGNALS_FOR_PROMOTION: 3,  // 至少 3 个信号
+  DECAY_HALF_LIFE_DAYS: 30,      // L0 记忆半衰期
+  INITIAL_CONFIDENCE: 0.3,       // 新条目初始置信度
+} as const

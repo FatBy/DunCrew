@@ -15,9 +15,6 @@ import { AddSkillModal } from './AddSkillModal'
 import { CreateNexusModal, NexusInitialData } from '@/components/world/CreateNexusModal'
 import { autoInstallSkills } from '@/services/installService'
 import { ConversationSidebar } from './ConversationSidebar'
-// Quest 模式已禁用
-// import { SubagentMonitor } from './SubagentMonitor'
-// import { QuestPlanConfirmation } from './QuestPlanConfirmation'
 import { useT } from '@/i18n'
 
 export function AIChatPanel() {
@@ -420,19 +417,19 @@ export function AIChatPanel() {
             onClick={() => setIsOpen(true)}
             className="fixed bottom-6 left-1/2 z-[45]
                        flex items-center gap-4 px-8 py-4 
-                       bg-slate-900/80 backdrop-blur-2xl 
-                       border border-white/20 rounded-2xl
-                       hover:bg-slate-900/90 hover:border-white/30
+                       bg-white/90 backdrop-blur-xl backdrop-blur-2xl 
+                       border border-stone-200 rounded-2xl
+                       hover:bg-white/95 backdrop-blur-3xl hover:border-stone-300
                        transition-all cursor-pointer
-                       shadow-[0_8px_40px_rgba(0,0,0,0.5)]
+                       shadow-[0_8px_40px_rgba(0,0,0,0.08)]
                        group"
             style={{ transform: 'translateX(-50%)' }}
           >
             <Sparkles className="w-5 h-5 text-skin-accent-amber group-hover:text-skin-accent-amber/80" />
-            <span className="text-base font-mono text-white/60 group-hover:text-white/80 transition-colors">
+            <span className="text-base font-mono text-stone-500 group-hover:text-stone-700 transition-colors">
               {t('chat.input_placeholder')}
             </span>
-            <span className="flex items-center gap-1.5 text-xs font-mono text-white/30 border border-white/15 rounded-lg px-2 py-1">
+            <span className="flex items-center gap-1.5 text-xs font-mono text-stone-400 border border-stone-200 rounded-lg px-2 py-1">
               <Command className="w-3.5 h-3.5" />K
             </span>
             {visibleMsgCount > 0 && (
@@ -457,7 +454,7 @@ export function AIChatPanel() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsOpen(false)}
-              className="fixed inset-0 z-[50] bg-black/40 backdrop-blur-sm"
+              className="fixed inset-0 z-[50] bg-stone-900/5 backdrop-blur-sm"
             />
             
             {/* 拖动约束区域 */}
@@ -477,25 +474,25 @@ export function AIChatPanel() {
               dragMomentum={false}
               className="fixed top-0 bottom-0 left-[70px] right-0 m-auto z-[52]
                          w-[1200px] max-w-[calc(100%-90px)] h-[80vh] max-h-[850px]
-                         bg-skin-bg-primary/92 backdrop-blur-2xl 
-                         border border-skin-border/20
-                         rounded-2xl
+                         bg-white/95 backdrop-blur-3xl 
+                         border border-white/80
+                         rounded-[2rem]
                          flex flex-col overflow-hidden
-                         shadow-[0_0_80px_rgba(0,0,0,0.6),0_0_30px_rgba(245,158,11,0.08)]
+                         shadow-[0_20px_60px_rgba(0,0,0,0.05)]
                          pointer-events-auto"
             >
               {/* Header - 可拖动区域 */}
               <div 
-                className="flex items-center justify-between px-6 py-4 border-b border-skin-border/15 cursor-grab active:cursor-grabbing"
+                className="flex items-center justify-between px-6 py-4 border-b border-stone-100 bg-white/50 z-20 cursor-grab active:cursor-grabbing"
                 onPointerDown={(e) => dragControls.start(e)}
               >
                 <div className="flex items-center gap-3">
-                  <GripHorizontal className="w-4 h-4 text-skin-text-tertiary/50" />
+                  <GripHorizontal className="w-4 h-4 text-stone-300" />
                   {/* 侧边栏折叠按钮 */}
                   <button
                     onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                    className="p-1.5 text-skin-text-tertiary hover:text-skin-text-secondary 
-                               hover:bg-white/5 rounded-lg transition-colors"
+                    className="p-1.5 text-stone-400 hover:text-stone-600 
+                               hover:bg-stone-100 rounded-lg transition-colors"
                     title={sidebarCollapsed ? "展开会话列表" : "收起会话列表"}
                   >
                     {sidebarCollapsed ? (
@@ -504,51 +501,52 @@ export function AIChatPanel() {
                       <PanelLeftClose className="w-4 h-4" />
                     )}
                   </button>
-                  <Sparkles className="w-5 h-5 text-skin-accent-amber" />
-                  <span className="text-lg font-mono text-skin-accent-amber font-semibold">AI Assistant</span>
-                  <span className="text-sm font-mono text-skin-text-tertiary px-2.5 py-1 bg-skin-bg-secondary/40 rounded-lg">
+                  <div className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                  </div>
+                  <h2 className="text-lg font-black text-stone-800 tracking-wide">AI Assistant</h2>
+                  <span className="ml-1 px-2 py-0.5 rounded-md bg-stone-100 border border-stone-200 text-[10px] font-bold text-stone-400 uppercase tracking-widest">
                     {currentView}
                   </span>
                   {agentStatus === 'thinking' && (
-                    <span className="text-sm font-mono text-skin-accent-cyan animate-pulse flex items-center gap-1.5 ml-2">
+                    <span className="text-sm font-mono text-stone-500 animate-pulse flex items-center gap-1.5 ml-2">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('task.agent_thinking')}
                     </span>
                   )}
                   {agentStatus === 'executing' && (
-                    <span className="text-sm font-mono text-skin-accent-amber animate-pulse flex items-center gap-1.5 ml-2">
+                    <span className="text-sm font-mono text-amber-600 animate-pulse flex items-center gap-1.5 ml-2">
                       <Zap className="w-3.5 h-3.5" /> {t('task.agent_executing')}
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
-                  {/* 创建 Nexus 按钮 - 更明显 */}
+                <div className="flex items-center gap-3">
+                  {/* 创建 Nexus 按钮 */}
                   <button
                     onClick={handleCreateNexus}
                     disabled={chatStreaming || isObserverAnalyzing}
-                    className="flex items-center gap-1.5 px-3 py-1.5 
-                             text-sm font-mono text-amber-400 
-                             bg-amber-500/10 border border-amber-500/30 rounded-lg
-                             hover:bg-amber-500/20 hover:border-amber-500/40
+                    className="flex items-center gap-1.5 text-xs font-bold text-amber-600 
+                             bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-lg
                              transition-colors disabled:opacity-30 disabled:pointer-events-none"
                     title="从对话创建 Nexus"
                   >
                     {isObserverAnalyzing ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <Wand2 className="w-4 h-4" />
+                      <Wand2 className="w-3.5 h-3.5" />
                     )}
                     <span>创建 Nexus</span>
                   </button>
+                  <div className="w-px h-4 bg-stone-200" />
                   <button
                     onClick={clearChat}
-                    className="p-2.5 text-skin-text-tertiary hover:text-red-400 transition-colors rounded-lg hover:bg-white/5"
+                    className="text-stone-400 hover:text-red-400 transition-colors"
                     title={t('chat.clear')}
                   >
-                    <Trash2 className="w-4.5 h-4.5" />
+                    <Trash2 className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => setIsOpen(false)}
-                    className="p-2.5 text-skin-text-tertiary hover:text-skin-text-secondary transition-colors rounded-lg hover:bg-white/5"
+                    className="text-stone-400 hover:text-rose-500 transition-colors"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -556,7 +554,7 @@ export function AIChatPanel() {
               </div>
 
               {/* 主体内容区：侧边栏 + 聊天区 */}
-              <div className="flex-1 flex overflow-hidden">
+              <div className="flex-1 flex overflow-hidden bg-[#faf9f8]">
                 {/* 会话侧边栏 */}
                 <AnimatePresence mode="wait">
                   {!sidebarCollapsed && (
@@ -573,29 +571,31 @@ export function AIChatPanel() {
                 </AnimatePresence>
 
                 {/* 聊天主区域 */}
-                <div className="flex-1 flex flex-col min-w-0">
+                <div className="flex-1 flex flex-col min-w-0 bg-white relative">
+                  {/* 背景轻微纹理 */}
+                  <div className="absolute inset-0 pointer-events-none opacity-[0.02]" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
                   {/* Messages */}
-                  <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                  <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 z-10">
                 <ChatErrorBoundary onReset={clearChat}>
                 {!configured ? (
                   <div className="flex flex-col items-center justify-center h-full text-center">
-                    <Sparkles className="w-16 h-16 text-skin-accent-amber/30 mb-5" />
-                    <p className="text-lg font-mono text-skin-text-tertiary mb-2">{t('chat.not_configured')}</p>
-                    <p className="text-base font-mono text-skin-text-tertiary/60">
+                    <Sparkles className="w-16 h-16 text-stone-200 mb-5" />
+                    <p className="text-lg font-mono text-stone-500 mb-2">{t('chat.not_configured')}</p>
+                    <p className="text-base font-mono text-stone-400">
                       {t('chat.configure_prompt')}
                     </p>
                   </div>
                 ) : isMessagesLoading ? (
                   <div className="flex flex-col items-center justify-center h-full text-center">
-                    <Loader2 className="w-10 h-10 text-skin-text-tertiary/40 mb-4 animate-spin" />
-                    <p className="text-sm font-mono text-skin-text-tertiary/60">
+                    <Loader2 className="w-10 h-10 text-stone-300 mb-4 animate-spin" />
+                    <p className="text-sm font-mono text-stone-400">
                       加载对话记录...
                     </p>
                   </div>
                 ) : chatMessages.length === 0 && !chatStreaming ? (
                   <div className="flex flex-col items-center justify-center h-full text-center">
-                    <MessageSquare className="w-16 h-16 text-skin-text-primary/10 mb-5" />
-                    <p className="text-lg font-mono text-skin-text-tertiary mb-4">
+                    <MessageSquare className="w-16 h-16 text-stone-200 mb-5" />
+                    <p className="text-lg font-mono text-stone-400 mb-4">
                       {t('chat.input_placeholder')}
                     </p>
                     
@@ -603,10 +603,8 @@ export function AIChatPanel() {
                     <button
                       onClick={handleCreateNexus}
                       className="flex items-center gap-3 px-6 py-3.5 mb-8
-                                 bg-gradient-to-r from-amber-500/20 to-cyan-500/10
-                                 border border-amber-500/30 rounded-xl
-                                 text-amber-400 hover:border-amber-500/50
-                                 hover:from-amber-500/30 hover:to-cyan-500/15
+                                 bg-amber-50 border border-amber-200 rounded-xl
+                                 text-amber-600 hover:bg-amber-100 hover:border-amber-300
                                  transition-all duration-300 group"
                     >
                       <Wand2 className="w-5 h-5 group-hover:rotate-12 transition-transform duration-300" />
@@ -619,8 +617,8 @@ export function AIChatPanel() {
                           <button
                             key={cmd.label}
                             onClick={() => handleQuickCommand(cmd.prompt)}
-                            className="px-4 py-2.5 text-sm font-mono bg-skin-bg-secondary/30 border border-skin-border/15 
-                                       rounded-xl text-skin-text-secondary hover:text-skin-accent-amber hover:border-skin-accent-amber/30 
+                            className="px-4 py-2.5 text-sm font-mono bg-white border border-stone-200 
+                                       rounded-xl text-stone-600 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-50
                                        transition-colors"
                           >
                             {cmd.label}
@@ -642,8 +640,6 @@ export function AIChatPanel() {
                         {chatError}
                       </div>
                     )}
-                    {/* Quest 交互式流程 UI - 已禁用 */}
-                    {/* <QuestPhaseRenderer /> */}
                   </>
                 )}
                 <div ref={messagesEndRef} />
@@ -652,14 +648,14 @@ export function AIChatPanel() {
 
               {/* Quick Commands Bar */}
               {configured && chatMessages.length > 0 && quickCommands.length > 0 && (
-                <div className="px-6 py-3 border-t border-skin-border/10 flex gap-2.5 overflow-x-auto">
+                <div className="px-6 py-3 border-t border-stone-100 flex gap-2 overflow-x-auto z-10">
                   {quickCommands.map((cmd) => (
                     <button
                       key={cmd.label}
                       onClick={() => handleQuickCommand(cmd.prompt)}
                       disabled={chatStreaming}
-                      className="flex-shrink-0 px-4 py-2 text-sm font-mono bg-skin-bg-secondary/30 border border-skin-border/15 
-                                 rounded-xl text-skin-text-tertiary hover:text-skin-accent-amber hover:border-skin-accent-amber/30 
+                      className="flex-shrink-0 px-4 py-2 text-sm font-mono bg-white border border-stone-200 
+                                 rounded-xl text-stone-500 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-50
                                  transition-colors disabled:opacity-50"
                     >
                       {cmd.label}
@@ -668,161 +664,142 @@ export function AIChatPanel() {
                 </div>
               )}
 
-              {/* Input */}
+              {/* Input - 清透浮动式 */}
               {configured && (
-                <div className="px-6 py-5 border-t border-skin-border/15 bg-skin-bg-secondary/25">
+                <div className="px-6 py-5 bg-gradient-to-t from-white via-white to-transparent z-20">
                   {/* 附件预览 / 解析进度 */}
                   {(attachments.length > 0 || parseProgress.length > 0) && (
-                    <div className="flex flex-wrap gap-2.5 mb-4">
+                    <div className="flex flex-wrap gap-2 mb-3 max-w-3xl mx-auto">
                       {parsingFiles ? parseProgress.map((p, idx) => (
                         <div
                           key={`parse-${idx}`}
-                          className={`flex items-center gap-2 px-3.5 py-2 border rounded-xl text-sm font-mono
-                            ${p.status === 'done' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
-                              p.status === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
-                              'bg-skin-bg-secondary/40 border-skin-accent-amber/30 text-skin-text-secondary'}`}
+                          className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-xs font-mono
+                            ${p.status === 'done' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' :
+                              p.status === 'error' ? 'bg-red-50 border-red-200 text-red-500' :
+                              'bg-white border-stone-200 text-stone-600'}`}
                         >
-                          {p.status === 'uploading' && <Loader2 className="w-4 h-4 animate-spin text-skin-accent-amber" />}
-                          {p.status === 'done' && <CheckCircle className="w-4 h-4" />}
-                          {p.status === 'error' && <AlertCircle className="w-4 h-4" />}
-                          <span className="max-w-[160px] truncate">{p.name}</span>
-                          <span className="text-[10px] opacity-60">
-                            {p.status === 'uploading' ? '解析中...' : p.status === 'done' ? '完成' : '失败'}
-                          </span>
+                          {p.status === 'uploading' && <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" />}
+                          {p.status === 'done' && <CheckCircle className="w-3.5 h-3.5" />}
+                          {p.status === 'error' && <AlertCircle className="w-3.5 h-3.5" />}
+                          <span className="max-w-[140px] truncate">{p.name}</span>
                         </div>
                       )) : attachments.map((att, idx) => (
                         <div
                           key={idx}
-                          className="flex items-center gap-2 px-3.5 py-2 bg-skin-bg-secondary/40 border border-skin-border/15 
-                                     rounded-xl text-sm font-mono text-skin-text-secondary"
+                          className="flex items-center gap-2 px-3 py-1.5 bg-white border border-stone-200 
+                                     rounded-lg text-xs font-mono text-stone-600"
                         >
-                          {att.type === 'image' && <Image className="w-4 h-4 text-skin-accent-emerald" />}
-                          {att.type === 'file' && <Paperclip className="w-4 h-4 text-skin-accent-cyan" />}
-                          {att.type === 'skill' && <Puzzle className="w-4 h-4 text-skin-accent-amber" />}
-                          {att.type === 'mcp' && <Server className="w-4 h-4 text-skin-accent-purple" />}
-                          <span className="max-w-[140px] truncate">{att.name}</span>
+                          {att.type === 'image' && <Image className="w-3.5 h-3.5 text-emerald-500" />}
+                          {att.type === 'file' && <Paperclip className="w-3.5 h-3.5 text-stone-500" />}
+                          {att.type === 'skill' && <Puzzle className="w-3.5 h-3.5 text-amber-500" />}
+                          {att.type === 'mcp' && <Server className="w-3.5 h-3.5 text-violet-500" />}
+                          <span className="max-w-[120px] truncate">{att.name}</span>
                           <button
                             onClick={() => removeAttachment(idx)}
-                            className="text-skin-text-tertiary hover:text-red-400 ml-1"
+                            className="text-stone-400 hover:text-red-400 ml-0.5"
                           >
-                            <X className="w-4 h-4" />
+                            <X className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       ))}
                     </div>
                   )}
                   
-                  {/* 输入框 + 按钮 */}
-                  <div className="flex gap-4 items-end">
+                  {/* 浮岛输入框 */}
+                  <div className="max-w-3xl mx-auto relative flex items-end gap-2 bg-white border-2 border-stone-200 rounded-2xl p-2 focus-within:border-amber-400 focus-within:shadow-[0_0_15px_rgba(251,191,36,0.15)] transition-all shadow-sm">
                     {/* 工具按钮 */}
-                    <div className="flex gap-1.5 pb-2.5">
-                      <input
-                        ref={imageInputRef}
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onChange={handleImageUpload}
-                        className="hidden"
-                      />
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".pdf,.docx,.pptx,.txt,.md,.csv"
-                        multiple
-                        onChange={handleFileUpload}
-                        className="hidden"
-                      />
+                    <div className="flex gap-1 p-1">
+                      <input ref={imageInputRef} type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
+                      <input ref={fileInputRef} type="file" accept=".pdf,.docx,.pptx,.txt,.md,.csv" multiple onChange={handleFileUpload} className="hidden" />
                       <button
                         onClick={() => imageInputRef.current?.click()}
                         disabled={chatStreaming}
-                        className="p-2.5 text-skin-text-tertiary hover:text-skin-accent-emerald hover:bg-skin-bg-secondary/40 
-                                   rounded-xl transition-colors disabled:opacity-50"
+                        className="p-1.5 text-stone-400 hover:text-stone-600 bg-stone-50 hover:bg-stone-100 
+                                   rounded-lg transition-colors disabled:opacity-50"
                         title="Image"
                       >
-                        <Image className="w-5 h-5" />
+                        <Image className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={chatStreaming}
-                        className="p-2.5 text-skin-text-tertiary hover:text-skin-accent-cyan hover:bg-skin-bg-secondary/40 
-                                   rounded-xl transition-colors disabled:opacity-50"
+                        className="p-1.5 text-stone-400 hover:text-stone-600 bg-stone-50 hover:bg-stone-100 
+                                   rounded-lg transition-colors disabled:opacity-50"
                         title="File"
                       >
-                        <Paperclip className="w-5 h-5" />
+                        <Paperclip className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => setShowSkillModal(true)}
                         disabled={chatStreaming}
-                        className="p-2.5 text-skin-text-tertiary hover:text-skin-accent-amber hover:bg-skin-bg-secondary/40 
-                                   rounded-xl transition-colors disabled:opacity-50"
+                        className="p-1.5 text-stone-400 hover:text-stone-600 bg-stone-50 hover:bg-stone-100 
+                                   rounded-lg transition-colors disabled:opacity-50"
                         title="SKILL"
                       >
-                        <Puzzle className="w-5 h-5" />
+                        <Puzzle className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => setShowMCPModal(true)}
                         disabled={chatStreaming}
-                        className="p-2.5 text-skin-text-tertiary hover:text-skin-accent-purple hover:bg-skin-bg-secondary/40 
-                                   rounded-xl transition-colors disabled:opacity-50"
+                        className="p-1.5 text-stone-400 hover:text-stone-600 bg-stone-50 hover:bg-stone-100 
+                                   rounded-lg transition-colors disabled:opacity-50"
                         title="MCP"
                       >
-                        <Server className="w-5 h-5" />
+                        <Server className="w-4 h-4" />
                       </button>
                     </div>
                     
                     {/* 输入框 */}
-                    <div className="flex-1">
-                      <textarea
-                        ref={textareaRef}
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder={t('chat.input_placeholder')}
-                        disabled={chatStreaming}
-                        rows={1}
-                        className="w-full px-5 py-4 bg-skin-bg-secondary/40 border border-skin-border/15 rounded-xl 
-                                   text-base font-mono text-skin-text-secondary placeholder-skin-text-tertiary
-                                   focus:border-skin-accent-amber/50 focus:outline-none focus:ring-2 focus:ring-skin-accent-amber/10
-                                   disabled:opacity-50 resize-none min-h-[56px] max-h-[140px]"
-                      />
-                    </div>
+                    <textarea
+                      ref={textareaRef}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder={t('chat.input_placeholder')}
+                      disabled={chatStreaming}
+                      rows={1}
+                      className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-3.5 px-2 
+                                 text-stone-700 text-sm font-medium placeholder:text-stone-300
+                                 focus:outline-none disabled:opacity-50 min-h-[44px] max-h-[120px]"
+                    />
                     
                     {/* 发送/停止按钮 */}
                     {parsingFiles ? (
                       <button
                         onClick={handleCancelUpload}
-                        className="p-4 flex flex-col items-center gap-1 bg-skin-bg-secondary/40 border border-skin-accent-amber/30 
-                                   rounded-xl hover:bg-red-500/20 hover:border-red-500/30 transition-colors group"
+                        className="m-1.5 w-10 h-10 flex items-center justify-center bg-stone-100 border border-amber-200 
+                                   rounded-xl hover:bg-red-50 hover:border-red-200 transition-colors group"
                         title="取消上传"
                       >
-                        <Loader2 className="w-6 h-6 text-skin-accent-amber animate-spin group-hover:hidden" />
-                        <X className="w-6 h-6 text-red-400 hidden group-hover:block" />
-                        <span className="text-[10px] text-skin-text-tertiary group-hover:text-red-400">解析中</span>
+                        <Loader2 className="w-4 h-4 text-amber-500 animate-spin group-hover:hidden" />
+                        <X className="w-4 h-4 text-red-400 hidden group-hover:block" />
                       </button>
                     ) : chatStreaming ? (
                       <button
                         onClick={abortChat}
-                        className="p-4 bg-red-500/20 border border-red-500/30 rounded-xl 
-                                   text-red-400 hover:bg-red-500/30 transition-colors"
+                        className="m-1.5 w-10 h-10 flex items-center justify-center bg-red-50 border border-red-200 rounded-xl 
+                                   text-red-500 hover:bg-red-100 transition-colors"
                       >
-                        <Square className="w-6 h-6" />
+                        <Square className="w-4 h-4" />
                       </button>
                     ) : (
                       <button
                         onClick={handleSend}
                         disabled={(!input.trim() && attachments.length === 0) || parsingFiles}
-                        className="p-4 bg-skin-accent-amber/20 border border-skin-accent-amber/30 rounded-xl 
-                                   text-skin-accent-amber hover:bg-skin-accent-amber/30 transition-colors
+                        className="m-1.5 w-10 h-10 flex items-center justify-center bg-amber-100 hover:bg-amber-200 
+                                   text-amber-600 rounded-xl shadow-sm transition-colors
                                    disabled:opacity-30 disabled:cursor-not-allowed"
                       >
-                        <Send className="w-6 h-6" />
+                        <Send className="w-4 h-4" />
                       </button>
                     )}
                   </div>
                   
-                  <p className="text-sm font-mono text-skin-text-tertiary/50 mt-3 text-center">
-                    Enter 发送 | Shift+Enter 换行 | Ctrl+K 关闭 | 拖动标题栏移动窗口
-                  </p>
+                  <div className="text-center mt-3 flex items-center justify-center gap-4 text-[10px] text-stone-400 font-bold uppercase tracking-widest">
+                    <span><kbd className="font-sans px-1 py-0.5 rounded border border-stone-200 bg-stone-50">Enter</kbd> 发送</span>
+                    <span><kbd className="font-sans px-1 py-0.5 rounded border border-stone-200 bg-stone-50">Shift+Enter</kbd> 换行</span>
+                    <span><kbd className="font-sans px-1 py-0.5 rounded border border-stone-200 bg-stone-50">Ctrl+K</kbd> 关闭</span>
+                  </div>
                 </div>
               )}
                 </div>
@@ -853,9 +830,3 @@ export function AIChatPanel() {
     </>
   )
 }
-
-/**
- * Quest 阶段渲染器 - 已禁用
- * Quest 模式已禁用，所有任务走传统 ReAct 直接执行
- */
-// function QuestPhaseRenderer() { ... }

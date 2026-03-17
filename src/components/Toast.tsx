@@ -85,7 +85,7 @@ function ToastItem({ id, type, title, message, duration = 4000, onClose, onClick
     >
       <button
         onClick={() => onClose(id)}
-        className="absolute top-2 right-2 p-1 rounded-lg hover:bg-white/10 transition-colors text-white/40 hover:text-white/70"
+        className="absolute top-2 right-2 p-1 rounded-lg hover:bg-stone-100 transition-colors text-stone-400 hover:text-stone-600"
       >
         <X className="w-3.5 h-3.5" />
       </button>
@@ -97,12 +97,12 @@ function ToastItem({ id, type, title, message, duration = 4000, onClose, onClick
             {title}
           </h4>
           {message && (
-            <p className="mt-1 text-xs text-white/50 leading-relaxed">
+            <p className="mt-1 text-xs text-stone-400 leading-relaxed">
               {message}
             </p>
           )}
           {isClickable && (
-            <p className="mt-1 text-xs text-white/30 italic">
+            <p className="mt-1 text-xs text-stone-300 italic">
               点击查看详情
             </p>
           )}

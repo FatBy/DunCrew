@@ -147,8 +147,8 @@ type StoreActions = {
   appendExecutionStep: (taskId: string, step: ExecutionStep) => void
   updateExecutionStep: (taskId: string, stepId: string, updates: Partial<ExecutionStep>) => void
   
-  // Nexus XP (方案A: OpenClaw 模式也同步经验值)
-  updateNexusXP?: (id: string, xp: number) => void
+  // Nexus Scoring (V2: OpenClaw 模式也同步评分)
+  updateNexusScoring?: (id: string, scoring: import('@/types').NexusScoring) => void
   setActiveNexus?: (id: string | null) => void
   bindSkillToNexus?: (nexusId: string, skillName: string) => void
   getNexuses?: () => Map<string, any>
@@ -1078,25 +1078,18 @@ class OpenClawService {
         break
       }
 
-      // DD-OS Extension: Nexus XP 更新广播
+      // DD-OS Extension: Nexus Scoring 更新广播
       case 'ddos.nexus.xpUpdate': {
-        const xpPayload = event.payload as {
+        // V2: 兼容旧 xpUpdate 事件，转换为 scoring 更新
+        const payload = event.payload as {
           nexusId?: string
+          scoring?: import('@/types').NexusScoring
           xpDelta?: number
-          newXP?: number
-          newLevel?: number
           reason?: string
         }
-        if (xpPayload?.nexusId && typeof xpPayload.xpDelta === 'number') {
-          this.storeActions?.updateNexusXP?.(xpPayload.nexusId, xpPayload.xpDelta)
-          console.log(`[OpenClawService] Nexus XP updated via Extension broadcast: ${xpPayload.nexusId} ${xpPayload.xpDelta > 0 ? '+' : ''}${xpPayload.xpDelta} → XP ${xpPayload.newXP ?? '?'} (Lv${xpPayload.newLevel ?? '?'})`)
-          if (xpPayload.xpDelta > 0) {
-            this.storeActions?.addToast({
-              type: 'success',
-              title: 'Nexus XP',
-              message: `+${xpPayload.xpDelta} XP${xpPayload.reason ? ` (${xpPayload.reason})` : ''}`,
-            })
-          }
+        if (payload?.nexusId && payload.scoring) {
+          this.storeActions?.updateNexusScoring?.(payload.nexusId, payload.scoring)
+          console.log(`[OpenClawService] Nexus scoring updated via Extension: ${payload.nexusId} score=${payload.scoring.score}`)
         }
         break
       }
@@ -1276,7 +1269,7 @@ class OpenClawService {
       // 本地后端不在线时静默失败（OpenClaw 模式下正常）
     }
 
-    // XP 同步: Extension 已通过 ddos.nexus.xpUpdate 广播处理，无需 HTTP 拉取
+    // Scoring 同步: Extension 已通过 ddos.nexus.xpUpdate 广播处理
   }
 
   /**

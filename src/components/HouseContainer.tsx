@@ -7,11 +7,11 @@ import { houseVariants, springTransition } from '@/utils/animations'
 import type { HouseConfig } from '@/types'
 
 const themeTextMap: Record<string, string> = {
-  cyan: 'text-cyan-400',
-  emerald: 'text-emerald-400',
-  amber: 'text-amber-400',
-  purple: 'text-purple-400',
-  slate: 'text-slate-400',
+  cyan: 'text-cyan-600',
+  emerald: 'text-emerald-600',
+  amber: 'text-amber-600',
+  purple: 'text-purple-600',
+  slate: 'text-stone-600',
 }
 
 interface HouseContainerProps {
@@ -22,7 +22,7 @@ interface HouseContainerProps {
 export function HouseContainer({ house, children }: HouseContainerProps) {
   const setView = useStore((s) => s.setView)
   const Icon = house.icon
-  const textColor = themeTextMap[house.themeColor] ?? 'text-white'
+  const textColor = themeTextMap[house.themeColor] ?? 'text-stone-700'
 
   return (
     <motion.div
@@ -37,17 +37,17 @@ export function HouseContainer({ house, children }: HouseContainerProps) {
         themeColor={house.themeColor}
         className="w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden"
       >
-        {/* Title bar */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-skin-border/10 shrink-0">
+        {/* Title bar - Blueprint 亮色风格 */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-stone-200/60 bg-white/50 shrink-0">
           <div className="flex items-center gap-3">
             <Icon className={`w-5 h-5 ${textColor}`} />
-            <h2 className={`font-mono font-bold text-lg tracking-wider ${textColor}`}>
+            <h2 className="font-black text-lg tracking-wide text-stone-800">
               {house.name}
             </h2>
           </div>
           <button
             onClick={() => setView('world')}
-            className="p-2 rounded-lg hover:bg-skin-bg-elevated/50 transition-colors text-skin-text-muted hover:text-skin-text-primary"
+            className="w-8 h-8 flex items-center justify-center rounded-full text-stone-400 hover:text-rose-500 hover:bg-rose-50 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>

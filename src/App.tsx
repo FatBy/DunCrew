@@ -19,6 +19,7 @@ import { localClawService } from '@/services/LocalClawService'
 import { skillStatsService } from '@/services/skillStatsService'
 import { getLocalSoulData, getLocalSkills, getLocalMemories } from '@/utils/localDataProvider'
 import { simpleVisualDNA } from '@/store/slices/worldSlice'
+import { createInitialScoring } from '@/types'
 import { restoreLLMConfigFromServer } from '@/services/llmService'
 import { persistTaskHistory } from '@/store/slices/sessionsSlice'
 import { getCachedMBTIResult } from '@/services/mbtiAnalyzer'
@@ -145,7 +146,7 @@ function App() {
       // P4: Nexus 数据注入
       setNexusesFromServer: useStore.getState().setNexusesFromServer,
       setActiveNexus: useStore.getState().setActiveNexus,
-      updateNexusXP: useStore.getState().updateNexusXP,
+      updateNexusScoring: useStore.getState().updateNexusScoring,
       bindSkillToNexus: useStore.getState().bindSkillToNexus,
       getNexuses: () => useStore.getState().nexuses,
       syncAgentsAsNexuses: useStore.getState().syncAgentsAsNexuses,
@@ -199,8 +200,7 @@ function App() {
         useStore.getState().addNexus({
           id: seedNexusId,
           position: { gridX: 3, gridY: -2 },
-          level: 2,
-          xp: 80,
+          scoring: createInitialScoring(),
           visualDNA: simpleVisualDNA(seedNexusId),
           label: 'Skill Scout',
           constructionProgress: 1,
@@ -256,6 +256,10 @@ function App() {
           useStore.getState().loadConversationsFromServer().catch((e) => {
             console.warn('[App] Failed to load conversations for OpenClaw mode:', e)
           })
+          // 恢复 Nexus 持久化数据
+          useStore.getState().loadNexusesFromServer().catch((e) => {
+            console.warn('[App] Failed to load nexuses for OpenClaw mode:', e)
+          })
         }
       }
     } else {
@@ -275,9 +279,16 @@ function App() {
   // 刷新前持久化任务状态，防止数据丢失
   useEffect(() => {
     const handleBeforeUnload = () => {
-      const { activeExecutions } = useStore.getState()
+      const { activeExecutions, nexuses } = useStore.getState()
       if (activeExecutions.length > 0) {
         persistTaskHistory(activeExecutions)
+      }
+      // 安全网：确保 Nexus 数据写入 localStorage
+      if (nexuses.size > 0) {
+        try {
+          const arr = Array.from(nexuses.values())
+          localStorage.setItem('ddos_nexuses', JSON.stringify(arr))
+        } catch (_) { /* ignore */ }
       }
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
@@ -285,23 +296,11 @@ function App() {
   }, [])
 
   const initTheme = useStore((s) => s.initTheme)
-  const worldTheme = useStore((s) => s.worldTheme)
 
   // 初始化主题
   useEffect(() => {
     initTheme()
   }, [initTheme])
-
-  // 根据 worldTheme 切换 CSS 主题类
-  useEffect(() => {
-    const root = document.documentElement
-    root.classList.remove('theme-cityscape', 'theme-village')
-    if (worldTheme === 'cityscape') {
-      root.classList.add('theme-cityscape')
-    } else if (worldTheme === 'village') {
-      root.classList.add('theme-village')
-    }
-  }, [worldTheme])
 
   return (
     <div className="flex w-screen h-screen overflow-hidden bg-skin-bg-primary text-skin-text-primary">
@@ -328,7 +327,7 @@ function App() {
         <ConnectionPanel />
       </div>
 
-      {/* AI Chat panel - 居中弹出覆盖层 */}
+      {/* AI Chat panel - Blueprint AssistantModal */}
       <AIChatPanel />
 
       {/* Observer: Nexus build proposal modal */}

@@ -9,72 +9,36 @@
 :root {
   --font-scale: 1;
 
-  /* 背景系 (RGB 值，用于 Tailwind alpha 支持) */
-  --color-bg-primary: 2 6 23;        /* #020617 slate-950 */
-  --color-bg-secondary: 15 23 42;    /* #0f172a slate-900 */
-  --color-bg-panel: 0 0 0;           /* black */
-  --color-bg-elevated: 30 41 59;     /* #1e293b slate-800 */
+  /* 背景系 - 暖色 (RGB 值，用于 Tailwind alpha 支持) */
+  --color-bg-primary: 253 251 245;     /* #fdfbf5 暖白 */
+  --color-bg-secondary: 247 243 233;   /* #f7f3e9 米色 */
+  --color-bg-panel: 255 253 248;       /* #fffdf8 近白 */
+  --color-bg-elevated: 239 233 218;    /* #efe9da 浅卡其 */
 
-  /* 文本系 */
-  --color-text-primary: 255 255 255;   /* white */
-  --color-text-secondary: 148 163 184; /* slate-400 */
-  --color-text-muted: 100 116 139;     /* slate-500 */
+  /* 文本系 - 深暖色 */
+  --color-text-primary: 60 50 40;      /* #3c3228 深棕 */
+  --color-text-secondary: 120 105 85;  /* #786955 中棕 */
+  --color-text-muted: 170 155 135;     /* #aa9b87 浅棕 */
+  --color-text-tertiary: 150 135 115;  /* #968773 第三级棕 */
 
-  /* 边框 */
-  --color-border-subtle: 255 255 255;  /* white (with opacity) */
-  --color-border-medium: 255 255 255;
+  /* 边框 - 暖灰 */
+  --color-border-subtle: 180 165 140;  /* 暖灰 */
+  --color-border-medium: 160 145 120;
 
-  /* 强调色 */
-  --color-accent-cyan: 34 211 238;     /* cyan-400 */
-  --color-accent-amber: 251 191 36;    /* amber-400 */
-  --color-accent-emerald: 52 211 153;  /* emerald-400 */
-  --color-accent-purple: 168 85 247;   /* purple-400 */
-  --color-accent-red: 248 113 113;     /* red-400 */
+  /* 强调色 - 暖色系 */
+  --color-accent-cyan: 94 186 174;     /* #5ebab0 薄荷青绿 */
+  --color-accent-amber: 232 168 56;    /* #e8a838 暖金 */
+  --color-accent-emerald: 108 180 120; /* #6cb478 草绿 */
+  --color-accent-purple: 178 132 190;  /* #b284be 薰衣草紫 */
+  --color-accent-red: 220 120 100;     /* #dc7864 珊瑚红 */
 
-  /* Canvas 专用 (HEX 格式) */
-  --canvas-space-1: #020617;
-  --canvas-space-2: #0a0f1e;
-  --canvas-space-3: #060b18;
-  --canvas-grid: 80 160 255;
-  --canvas-grid-opacity: 0.04;
-  --canvas-star: #ffffff;
-}
-
-/* ============================================
-   城市主题 (Cityscape Theme)
-   明亮自然的白天城市风格
-   ============================================ */
-
-.theme-cityscape {
-  /* 背景系 - 明亮的浅色调 */
-  --color-bg-primary: 241 245 249;      /* #f1f5f9 slate-100 */
-  --color-bg-secondary: 226 232 240;    /* #e2e8f0 slate-200 */
-  --color-bg-panel: 255 255 255;        /* white */
-  --color-bg-elevated: 248 250 252;     /* #f8fafc slate-50 */
-
-  /* 文本系 - 深色文字 */
-  --color-text-primary: 15 23 42;       /* #0f172a slate-900 */
-  --color-text-secondary: 71 85 105;    /* #475569 slate-600 */
-  --color-text-muted: 100 116 139;      /* #64748b slate-500 */
-
-  /* 边框 - 深色边框 */
-  --color-border-subtle: 71 85 105;     /* slate-600 (with opacity) */
-  --color-border-medium: 51 65 85;      /* slate-700 */
-
-  /* 强调色 - 城市/自然风格 */
-  --color-accent-cyan: 14 165 233;      /* sky-500 - 天空蓝 */
-  --color-accent-amber: 245 158 11;     /* amber-500 - 阳光橙 */
-  --color-accent-emerald: 34 197 94;    /* green-500 - 草地绿 */
-  --color-accent-purple: 139 92 246;    /* violet-500 - 建筑紫 */
-  --color-accent-red: 239 68 68;        /* red-500 */
-
-  /* Canvas 专用 - 城市天空 */
-  --canvas-space-1: #87ceeb;            /* 天空蓝 */
-  --canvas-space-2: #b0e0e6;            /* 淡蓝 */
-  --canvas-space-3: #f0f8ff;            /* 爱丽丝蓝 */
-  --canvas-grid: 34 139 34;             /* 草地绿 */
-  --canvas-grid-opacity: 0.15;
-  --canvas-star: #ffffff;               /* 云朵白 */
+  /* Canvas 专用 (HEX 格式) - 暖色画布 */
+  --canvas-space-1: #fdfbf5;
+  --canvas-space-2: #f7f3e9;
+  --canvas-space-3: #faf6ee;
+  --canvas-grid: 180 165 140;
+  --canvas-grid-opacity: 0.06;
+  --canvas-star: #c8b898;
 }
 
 /* ============================================
@@ -150,4 +114,19 @@ body,
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
   }
+}
+
+/* ============================================
+   萌宠节点动画关键帧
+   ============================================ */
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-3deg); }
+  75% { transform: rotate(3deg); }
+}
+
+@keyframes gentleBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
 }

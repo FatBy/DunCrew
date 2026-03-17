@@ -124,7 +124,7 @@ class SessionPersistenceService {
   async updateSessionMeta(sessionId: string, updates: Partial<Pick<SessionMeta, 'title' | 'lastMessagePreview'>>): Promise<boolean> {
     try {
       const res = await fetch(`${this.serverUrl}/api/sessions/${encodeURIComponent(sessionId)}/meta`, {
-        method: 'PATCH',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...updates,
@@ -200,7 +200,7 @@ class SessionPersistenceService {
   async saveCheckpoint(sessionId: string, checkpoint: TaskCheckpoint): Promise<boolean> {
     try {
       const res = await fetch(`${this.serverUrl}/api/sessions/${encodeURIComponent(sessionId)}/checkpoint`, {
-        method: 'PUT',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(checkpoint),
       })

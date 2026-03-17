@@ -28,8 +28,11 @@ import type {
   ChildSpawnPreparation,
   OnChildEndedParams,
   ChatMessage,
+  L1ActionSnapshot,
 } from '@/types'
+import { L1_MEMORY_CONFIG } from '@/types'
 import { chat } from './llmService'
+import { memoryStore } from './memoryStore'
 
 // ============================================
 // Token 估算工具
@@ -83,6 +86,8 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
   private config: ContextEngineConfig
   private ingestedMessages: ChatMessage[] = []
   private compactionHistory: Array<{ before: number; after: number; ts: number }> = []
+  /** V3: L1-Hot 记忆快照 (最近 N 轮的结构化操作摘要) */
+  private l1HotSnapshots: L1ActionSnapshot[] = []
 
   constructor(config: ContextEngineConfig) {
     this.config = config
@@ -148,6 +153,21 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
     }
 
     assembledMessages.push(...keptMessages)
+
+    // 2.5 V3: 注入 L1-Hot 快照 (最近操作回顾)
+    if (this.l1HotSnapshots.length > 0) {
+      const l1HotContent = this.buildL1HotSection()
+      const l1HotTokens = estimateTokens(l1HotContent) + 4
+      if (usedTokens + l1HotTokens < budget * 0.97) {
+        assembledMessages.push({
+          id: `l1-hot-${Date.now()}`,
+          role: 'system',
+          content: l1HotContent,
+          timestamp: Date.now(),
+        })
+        usedTokens += l1HotTokens
+      }
+    }
 
     // 3. 注入 ingested 的新消息（如果有的话）
     for (const ingested of this.ingestedMessages) {
@@ -266,6 +286,28 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
       console.log(`[ContextEngine/${sessionId}] afterTurn: ${successTools.length} success, ${errorTools.length} errors in this turn`)
     }
 
+    // 2.5 V3: 收集 L1-Hot 快照
+    const newSnapshots = this.collectL1Snapshots(toolResults, runState.seq)
+    if (newSnapshots.length > 0) {
+      this.l1HotSnapshots.push(...newSnapshots)
+      // 保持固定大小窗口
+      while (this.l1HotSnapshots.length > L1_MEMORY_CONFIG.HOT_MAX_SNAPSHOTS) {
+        this.l1HotSnapshots.shift()
+      }
+      console.log(`[ContextEngine] L1-Hot: ${this.l1HotSnapshots.length} snapshots (added ${newSnapshots.length})`)
+
+      // V3: L1-Cold 异步持久化到 memoryStore
+      for (const snap of newSnapshots) {
+        memoryStore.write({
+          source: 'l1_memory',
+          content: `[Turn ${snap.turn}] ${snap.action} → ${snap.target} (${snap.status}, ${snap.resultSize}B)${snap.resultPreview ? ' "' + snap.resultPreview.slice(0, 80) + '..."' : ''}`,
+          nexusId: this.config.nexusId,
+          tags: [snap.action, snap.status],
+          metadata: { turn: snap.turn, resultSize: snap.resultSize },
+        }).catch(() => {}) // 不阻塞
+      }
+    }
+
     // 3. 清理过期的 ingested 消息
     const MAX_INGESTED_AGE = 30 * 60 * 1000 // 30 分钟
     const now = Date.now()
@@ -285,6 +327,7 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
     // 清理旧状态
     this.ingestedMessages = []
     this.compactionHistory = []
+    this.l1HotSnapshots = []
 
     // 尝试从历史对话加载上下文
     const history = this.config.getConversationHistory?.() ?? []
@@ -380,6 +423,63 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
     console.log(`[ContextEngine] Disposing engine for Nexus: ${this.config.nexusId}`)
     this.ingestedMessages = []
     this.compactionHistory = []
+    this.l1HotSnapshots = []
+  }
+
+  // ═══════════════════════════════════════════
+  // V3: L1 记忆辅助方法
+  // ═══════════════════════════════════════════
+
+  /** 从 ToolCallSummary 构建 L1ActionSnapshot 列表 */
+  private collectL1Snapshots(
+    toolResults: import('@/types').ToolCallSummary[],
+    currentSeq: number,
+  ): L1ActionSnapshot[] {
+    const snapshots: L1ActionSnapshot[] = []
+
+    for (const tr of toolResults) {
+      // 提取操作目标：优先取 path 参数，fallback 到 args 摘要
+      let target = ''
+      if (tr.args.path) {
+        target = String(tr.args.path)
+      } else if (tr.args.query) {
+        target = String(tr.args.query)
+      } else if (tr.args.command) {
+        target = String(tr.args.command)
+      } else {
+        target = JSON.stringify(tr.args).slice(0, L1_MEMORY_CONFIG.SNAPSHOT_TARGET_CHARS)
+      }
+      if (target.length > L1_MEMORY_CONFIG.SNAPSHOT_TARGET_CHARS) {
+        target = target.slice(0, L1_MEMORY_CONFIG.SNAPSHOT_TARGET_CHARS - 3) + '...'
+      }
+
+      const resultText = tr.result || tr.error || ''
+      snapshots.push({
+        turn: currentSeq,
+        action: tr.toolName,
+        target,
+        status: tr.status,
+        resultSize: resultText.length,
+        resultPreview: resultText.slice(0, L1_MEMORY_CONFIG.SNAPSHOT_PREVIEW_CHARS),
+        nexusId: this.config.nexusId,
+        timestamp: tr.timestamp,
+      })
+    }
+
+    return snapshots
+  }
+
+  /** 构建 L1-Hot 上下文注入段落 */
+  private buildL1HotSection(): string {
+    const lines = this.l1HotSnapshots.map(snap => {
+      const statusIcon = snap.status === 'success' ? '✓' : '✗'
+      const preview = snap.resultPreview
+        ? ` "${snap.resultPreview.slice(0, 60).replace(/\n/g, ' ')}${snap.resultPreview.length > 60 ? '...' : ''}"`
+        : ''
+      return `- [Turn ${snap.turn}] ${snap.action} → ${snap.target} ${statusIcon} (${snap.resultSize}B)${preview}`
+    })
+
+    return `## 最近操作回顾 (L1-Hot)\n以下是本次会话中最近的操作记录，可用于追踪执行进度：\n${lines.join('\n')}`
   }
 }
 

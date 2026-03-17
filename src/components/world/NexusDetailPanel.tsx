@@ -14,9 +14,30 @@ import { searchOnlineSkills } from '@/services/onlineSearchService'
 import { installSkill, triggerHotReload } from '@/services/installService'
 import { nexusRuleEngine, RULE_LABELS, type NexusRule } from '@/services/nexusRuleEngine'
 import { nexusScoringService } from '@/services/nexusScoringService'
+import { agentEventBus } from '@/services/agentEventBus'
 import type { NexusEntity, NexusExperience, NexusScoring } from '@/types'
 import { getScoreTier, SCORE_TIER_COLORS } from '@/types'
 import { formatTime } from '@/utils/formatTime'
+import {
+  getGrowthStage,
+  getDefaultSpecies,
+  getNexusEmoji,
+  STAGE_LABELS,
+  getEmotionState,
+  EMOTION_LABELS,
+  type GrowthStage,
+} from '@/components/dashboard/nexusGrowth'
+import { AchievementBadges } from '@/components/dashboard/AchievementBadges'
+
+// Tab 类型
+type DetailTab = 'ability' | 'sop' | 'skills' | 'records'
+
+const TAB_CONFIG: { id: DetailTab; label: string; icon: string }[] = [
+  { id: 'ability', label: '能力', icon: '\u26A1' },
+  { id: 'sop', label: 'SOP', icon: '\uD83D\uDCCB' },
+  { id: 'skills', label: '技能', icon: '\uD83E\uDDE9' },
+  { id: 'records', label: '记录', icon: '\uD83D\uDCCA' },
+]
 
 // 建造总时长（与 worldSlice tickConstructionAnimations 中的 3000ms 一致）
 const CONSTRUCTION_DURATION_MS = 3000
@@ -30,9 +51,9 @@ function getDynamicConfig(nexus: NexusEntity | undefined) {
       label: 'Nexus',
       typeLabel: 'Nexus',
       typeLabelCity: 'Building',
-      bgClass: 'bg-slate-500/20',
-      borderClass: 'border-slate-500/30',
-      textClass: 'text-slate-300',
+      bgClass: 'bg-stone-100',
+      borderClass: 'border-stone-200',
+      textClass: 'text-stone-400',
       hue: 180,
     }
   }
@@ -67,51 +88,6 @@ function formatDuration(ms: number): string {
   return `${(ms / 60000).toFixed(1)}m`
 }
 
-// Planet SVG preview
-function PlanetPreview({ hue, accentHue, level }: { hue: number; accentHue: number; level: number }) {
-  const r = 28
-  const cx = 50, cy = 50
-  const ringR = r * 1.5
-  return (
-    <div className="relative w-24 h-24">
-      <svg viewBox="0 0 100 100" className="w-full h-full">
-        <defs>
-          <radialGradient id="ndp-atmo" cx="50%" cy="50%" r="50%">
-            <stop offset="40%" stopColor={`hsl(${hue}, 80%, 60%)`} stopOpacity="0.15" />
-            <stop offset="100%" stopColor={`hsl(${hue}, 80%, 60%)`} stopOpacity="0" />
-          </radialGradient>
-          <radialGradient id="ndp-body" cx="35%" cy="35%" r="65%">
-            <stop offset="0%" stopColor={`hsl(${hue}, 70%, 75%)`} />
-            <stop offset="50%" stopColor={`hsl(${hue}, 65%, 55%)`} />
-            <stop offset="100%" stopColor={`hsl(${hue}, 60%, 25%)`} />
-          </radialGradient>
-        </defs>
-        <circle cx={cx} cy={cy} r={r * 1.6} fill="url(#ndp-atmo)" />
-        <ellipse cx={cx} cy={cy} rx={ringR} ry={ringR * 0.22} 
-          fill="none" stroke={`hsl(${accentHue}, 70%, 65%)`} strokeWidth="1.5" strokeOpacity="0.25"
-          strokeDasharray="2 4"
-        />
-        <circle cx={cx} cy={cy} r={r} fill="url(#ndp-body)" />
-        <ellipse cx={cx} cy={cy} rx={ringR} ry={ringR * 0.22} 
-          fill="none" stroke={`hsl(${accentHue}, 75%, 70%)`} strokeWidth="2" strokeOpacity="0.5"
-        />
-        <ellipse cx={cx - 6} cy={cy - 8} rx={10} ry={3.5} 
-          fill="white" opacity="0.12" transform="rotate(-15 44 42)" 
-        />
-        {level >= 3 && (
-          <circle cx={cx} cy={cy} r={r * 0.25} 
-            fill={`hsl(${accentHue}, 90%, 85%)`} opacity="0.3" 
-          />
-        )}
-      </svg>
-      <div 
-        className="absolute inset-0 rounded-full blur-xl opacity-15"
-        style={{ backgroundColor: `hsl(${hue}, 70%, 55%)` }}
-      />
-    </div>
-  )
-}
-
 export function NexusDetailPanel() {
   const t = useT()
   const nexusPanelOpen = useStore((s) => s.nexusPanelOpen)
@@ -127,7 +103,6 @@ export function NexusDetailPanel() {
   const activeNexusId = useStore((s) => s.activeNexusId)
   const tasks = useStore((s) => s.tasks)
   const activeExecutions = useStore((s) => s.activeExecutions)
-  const worldTheme = useStore((s) => s.worldTheme)
 
   const addToast = useStore((s) => s.addToast)
 
@@ -155,6 +130,9 @@ export function NexusDetailPanel() {
   const [scoring, setScoring] = useState<NexusScoring | null>(null)
   const [showToolDimensions, setShowToolDimensions] = useState(false)
   const [showRecentRuns, setShowRecentRuns] = useState(false)
+  
+  // Tab 状态
+  const [activeTab, setActiveTab] = useState<DetailTab>('ability')
   
   // 名称编辑状态
   const [isEditingName, setIsEditingName] = useState(false)
@@ -253,8 +231,7 @@ export function NexusDetailPanel() {
       exportVersion: 1,
       id: nexus.id,
       label: nexus.label,
-      level: nexus.level,
-      xp: nexus.xp,
+      scoring: nexus.scoring,
       visualDNA: nexus.visualDNA,
       position: nexus.position,
       boundSkillIds: nexus.boundSkillIds,
@@ -439,7 +416,21 @@ export function NexusDetailPanel() {
       })
     }
   }, [nexus?.id, nexusPanelOpen])
-  
+
+  // V2: 订阅 run_end 事件，自动刷新 scoring
+  useEffect(() => {
+    if (!nexus?.id) return
+    const unsub = agentEventBus.subscribe((event) => {
+      if (event.type === 'run_end') {
+        const updated = nexusScoringService.getScoring(nexus.id)
+        if (updated) {
+          setScoring({ ...updated })
+        }
+      }
+    })
+    return unsub
+  }, [nexus?.id])
+
   // 面板打开/关闭时处理状态
   useEffect(() => {
     if (!nexusPanelOpen) {
@@ -541,9 +532,7 @@ export function NexusDetailPanel() {
   }
   
   const handleDelete = () => {
-    const confirmMsg = (worldTheme === 'cityscape' || worldTheme === 'village')
-      ? '确定要拆除这座建筑吗？此操作不可撤销。'
-      : '确定要停用这颗星球节点吗？此操作不可撤销。'
+    const confirmMsg = '确定要删除此节点吗？此操作不可撤销。'
     if (confirm(confirmMsg)) {
       removeNexus(nexus.id)
       closeNexusPanel()
@@ -570,7 +559,7 @@ export function NexusDetailPanel() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={closeNexusPanel}
-            className="fixed inset-0 bg-black/15 z-40"
+            className="fixed inset-0 bg-stone-900/10 z-40"
           />
           
           {/* 拖动约束区域 */}
@@ -588,7 +577,7 @@ export function NexusDetailPanel() {
             dragElastic={0.05}
             dragMomentum={false}
             className="fixed right-4 top-4 bottom-4 w-[480px] z-50
-                       bg-slate-950/95 backdrop-blur-xl border border-white/10
+                       bg-white/95 backdrop-blur-xl border border-stone-200
                        rounded-2xl
                        flex flex-col overflow-hidden
                        shadow-[-20px_0_60px_rgba(0,0,0,0.6)]
@@ -596,11 +585,11 @@ export function NexusDetailPanel() {
           >
             {/* Header - 可拖动区域 */}
             <div 
-              className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-white/[0.02] cursor-grab active:cursor-grabbing"
+              className="flex items-center justify-between px-6 py-4 border-b border-stone-200 bg-stone-50 cursor-grab active:cursor-grabbing"
               onPointerDown={(e) => dragControls.start(e)}
             >
               <div className="flex items-center gap-3">
-                <GripVertical className="w-4 h-4 text-white/20" />
+                <GripVertical className="w-4 h-4 text-stone-300" />
                 <Globe2 className="w-5 h-5" style={dynamicText} />
                 <div>
                   {/* 名称编辑 */}
@@ -608,7 +597,7 @@ export function NexusDetailPanel() {
                     {isEditingName ? (
                       <input 
                         autoFocus
-                        className="bg-black/40 text-white/90 px-2 py-1 rounded border border-white/20 outline-none font-mono text-base font-semibold w-48 uppercase tracking-wide"
+                        className="bg-stone-900/10 text-stone-800 px-2 py-1 rounded border border-stone-200 outline-none font-mono text-base font-semibold w-48 uppercase tracking-wide"
                         value={editNameValue}
                         onChange={e => setEditNameValue(e.target.value)}
                         onKeyDown={e => e.key === 'Enter' && handleSaveName()}
@@ -616,12 +605,12 @@ export function NexusDetailPanel() {
                       />
                     ) : (
                       <>
-                        <h2 className="font-mono text-base font-semibold text-white/90 tracking-wide uppercase">
+                        <h2 className="font-mono text-base font-semibold text-stone-800 tracking-wide uppercase">
                           {nexus.label || `Node-${nexus.id.slice(-6)}`}
                         </h2>
                         <button 
                           onClick={() => { setIsEditingName(true); setEditNameValue(nexus.label || nexus.id) }}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-white/40 hover:text-white/80 transition-opacity rounded hover:bg-white/10"
+                          className="opacity-0 group-hover:opacity-100 p-1 text-stone-400 hover:text-stone-700 transition-opacity rounded hover:bg-stone-100"
                           title="编辑名称"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
@@ -629,8 +618,8 @@ export function NexusDetailPanel() {
                       </>
                     )}
                   </div>
-                  <p className="text-xs font-mono text-white/40 mt-0.5">
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ color: tierColor, backgroundColor: `${tierColor}20` }}>
+                  <p className="text-sm font-mono text-stone-400 mt-0.5">
+                    <span className="px-1.5 py-0.5 rounded text-xs font-semibold" style={{ color: tierColor, backgroundColor: `${tierColor}20` }}>
                       {TIER_LABELS[scoreTier] || scoreTier}
                     </span>
                     {' '}{nexus.label || 'Nexus'}
@@ -638,7 +627,7 @@ export function NexusDetailPanel() {
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                <button onClick={closeNexusPanel} className="p-1.5 text-white/30 hover:text-white/60 transition-colors">
+                <button onClick={closeNexusPanel} className="p-1.5 text-stone-300 hover:text-stone-500 transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -681,18 +670,18 @@ export function NexusDetailPanel() {
                     <p className="text-lg font-mono font-semibold" style={dynamicText}>
                       {t('nexus.constructing')}
                     </p>
-                    <p className="text-sm font-mono text-white/40">
+                    <p className="text-sm font-mono text-stone-400">
                       {t('nexus.constructing_matter')}
                     </p>
                   </div>
                   
                   {/* 进度条 */}
                   <div className="w-48">
-                    <div className="flex justify-between text-xs font-mono text-white/40 mb-1">
+                    <div className="flex justify-between text-xs font-mono text-stone-400 mb-1">
                       <span>{t('nexus.constructing_progress')}</span>
                       <span>{Math.round(nexus.constructionProgress * 100)}%</span>
                     </div>
-                    <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                    <div className="h-2 bg-stone-100/80 rounded-full overflow-hidden">
                       <motion.div
                         initial={{ width: 0 }}
                         animate={{ width: `${nexus.constructionProgress * 100}%` }}
@@ -703,8 +692,8 @@ export function NexusDetailPanel() {
                     </div>
                     {/* 预估剩余时间 */}
                     <div className="flex items-center justify-center gap-1.5 mt-2">
-                      <Timer className="w-3 h-3 text-white/30" />
-                      <span className="text-xs font-mono text-white/40">
+                      <Timer className="w-3 h-3 text-stone-300" />
+                      <span className="text-xs font-mono text-stone-400">
                         {t('nexus.constructing_eta')}{' '}
                         <span style={dynamicText}>
                           {Math.max(0, Math.ceil((1 - nexus.constructionProgress) * CONSTRUCTION_DURATION_MS / 1000))}
@@ -714,7 +703,7 @@ export function NexusDetailPanel() {
                     </div>
                   </div>
                   
-                  <p className="text-xs font-mono text-white/30 text-center max-w-xs">
+                  <p className="text-xs font-mono text-stone-300 text-center max-w-xs">
                     {t('nexus.constructing_hint')}
                     <br />{t('nexus.constructing_done_hint')}
                   </p>
@@ -724,58 +713,100 @@ export function NexusDetailPanel() {
               {/* === 正常内容（仅在建造完成后显示） === */}
               {nexus.constructionProgress >= 1 && (
                 <>
-              {/* Planet preview + Score (V2) */}
-              <div className="flex items-center gap-4">
-                <PlanetPreview 
-                  hue={nexus.visualDNA?.primaryHue ?? 180}
-                  accentHue={nexus.visualDNA?.accentHue ?? 240}
-                  level={nexus.level}
-                />
-                <div className="flex-1 space-y-2">
-                  {/* 分数 + Tier */}
-                  <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4" style={{ color: tierColor }} />
-                    <span className="text-xs font-mono text-white/50 uppercase">Score</span>
-                    <span className="text-3xl font-bold font-mono" style={{ color: tierColor }}>
-                      {scoring?.score ?? 50}
-                    </span>
-                    <span
-                      className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-full border"
-                      style={{ color: tierColor, borderColor: `${tierColor}40`, backgroundColor: `${tierColor}15` }}
-                    >
-                      {TIER_LABELS[scoreTier] || scoreTier}
-                    </span>
-                  </div>
-                  {/* 分数进度条 */}
-                  <div>
-                    <div className="flex justify-between text-xs font-mono text-white/40 mb-1">
-                      <span>
-                        {scoring && scoring.streak !== 0 && (
-                          <span style={{ color: scoring.streak > 0 ? '#22c55e' : '#ef4444' }}>
-                            {scoring.streak > 0 ? `+${scoring.streak}` : scoring.streak} streak
-                          </span>
-                        )}
-                      </span>
-                      <span>
-                        {scoring ? `${(scoring.successRate * 100).toFixed(0)}% (${scoring.successCount}/${scoring.totalRuns})` : '—'}
-                      </span>
-                    </div>
-                    <div className="h-2 bg-white/5 rounded-full overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${scoring?.score ?? 50}%` }}
-                        transition={{ duration: 0.8, ease: 'easeOut' }}
-                        className="h-full rounded-full"
+              {/* Growth Stage Visual + Score (V2) */}
+              {(() => {
+                const species = (nexus as any).species || getDefaultSpecies(nexus.id)
+                const stage: GrowthStage = scoring ? getGrowthStage(scoring.score, scoring.totalRuns) : 'egg'
+                const emoji = getNexusEmoji(species, scoring ?? undefined)
+                const emotion = scoring ? getEmotionState(scoring.streak) : 'neutral'
+                return (
+                  <div className="flex items-center gap-4">
+                    <div className="relative w-24 h-24 flex items-center justify-center">
+                      <div
+                        className="absolute inset-0 rounded-2xl opacity-20 blur-lg"
                         style={{ backgroundColor: tierColor }}
                       />
+                      <div
+                        className="relative w-20 h-20 rounded-2xl flex items-center justify-center border"
+                        style={{
+                          background: `linear-gradient(135deg, ${tierColor}10, ${tierColor}05)`,
+                          borderColor: `${tierColor}25`,
+                        }}
+                      >
+                        <span className="text-4xl">{emoji}</span>
+                      </div>
+                      <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[9px] font-mono whitespace-nowrap bg-skin-bg-panel/80 border border-stone-200/60 text-skin-text-muted">
+                        {STAGE_LABELS[stage]} | {EMOTION_LABELS[emotion]}
+                      </div>
+                    </div>
+                    <div className="flex-1 space-y-2">
+                      {/* 分数 + Tier */}
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4" style={{ color: tierColor }} />
+                        <span className="text-xs font-mono text-stone-400 uppercase">Score</span>
+                        <span className="text-3xl font-bold font-mono" style={{ color: tierColor }}>
+                          {scoring?.score ?? 0}
+                        </span>
+                        <span
+                          className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-full border"
+                          style={{ color: tierColor, borderColor: `${tierColor}40`, backgroundColor: `${tierColor}15` }}
+                        >
+                          {TIER_LABELS[scoreTier] || scoreTier}
+                        </span>
+                      </div>
+                      {/* 分数进度条 */}
+                      <div>
+                        <div className="flex justify-between text-xs font-mono text-stone-400 mb-1">
+                          <span>
+                            {scoring && scoring.streak !== 0 && (
+                              <span style={{ color: scoring.streak > 0 ? '#22c55e' : '#ef4444' }}>
+                                {scoring.streak > 0 ? `+${scoring.streak}` : scoring.streak} streak
+                              </span>
+                            )}
+                          </span>
+                          <span>
+                            {scoring ? `${(scoring.successRate * 100).toFixed(0)}% (${scoring.successCount}/${scoring.totalRuns})` : '\u2014'}
+                          </span>
+                        </div>
+                        <div className="h-2 bg-stone-100/80 rounded-full overflow-hidden">
+                          <motion.div
+                            initial={{ width: 0 }}
+                            animate={{ width: `${scoring?.score ?? 0}%` }}
+                            transition={{ duration: 0.8, ease: 'easeOut' }}
+                            className="h-full rounded-full"
+                            style={{ backgroundColor: tierColor }}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-xs font-mono text-stone-300">
+                        {nexus.flavorText?.slice(0, 30) || 'Nexus'}
+                      </div>
                     </div>
                   </div>
-                  <div className="text-xs font-mono text-white/30">
-                    {nexus.flavorText?.slice(0, 30) || 'Nexus'}
-                  </div>
-                </div>
+                )
+              })()}
+
+              {/* ==================== Tab Bar ==================== */}
+              <div className="flex border-b border-stone-200 -mx-6 px-6">
+                {TAB_CONFIG.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={cn(
+                      'flex items-center gap-1.5 px-3 py-2 text-xs font-mono transition-all border-b-2 -mb-px',
+                      activeTab === tab.id
+                        ? 'border-current text-skin-accent-cyan'
+                        : 'border-transparent text-stone-400 hover:text-stone-500'
+                    )}
+                  >
+                    <span>{tab.icon}</span>
+                    <span>{tab.label}</span>
+                  </button>
+                ))}
               </div>
 
+              {/* ==================== TAB: ABILITY ==================== */}
+              {activeTab === 'ability' && (<>
               {/* ==================== Execute Button ==================== */}
               <button
                 onClick={handleExecute}
@@ -786,7 +817,7 @@ export function NexusDetailPanel() {
                   'group relative overflow-hidden',
                   canExecute
                     ? 'border hover:brightness-125 active:scale-[0.98]'
-                    : 'bg-white/5 border border-white/10 text-white/20 cursor-not-allowed'
+                    : 'bg-stone-100/80 border border-stone-200 text-stone-300 cursor-not-allowed'
                 )}
                 style={canExecute ? { ...dynamicBg, ...dynamicBorder, ...dynamicText } : undefined}
               >
@@ -805,19 +836,22 @@ export function NexusDetailPanel() {
 
               {/* 一句话介绍 */}
               {nexus.flavorText && (
-                <p className="text-sm font-mono text-white/40 text-center leading-relaxed -mt-2">
+                <p className="text-sm font-mono text-stone-400 text-center leading-relaxed -mt-2">
                   {nexus.flavorText}
                 </p>
               )}
               
+              {/* ==================== TAB: ABILITY - end / TAB: SKILLS - start ==================== */}
+              </>)}
+              {activeTab === 'skills' && (<>
               {/* ==================== Bound Skills ==================== */}
               <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                 <div className="flex items-center gap-2 mb-3">
                   <Puzzle className="w-4 h-4" style={dynamicText} />
-                  <span className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                  <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                     Bound Skills
                   </span>
-                  <span className="ml-auto text-xs font-mono text-white/25">
+                  <span className="ml-auto text-xs font-mono text-stone-300">
                     {boundSkills.length}
                   </span>
                   <button
@@ -825,8 +859,8 @@ export function NexusDetailPanel() {
                     className={cn(
                       "w-6 h-6 rounded flex items-center justify-center transition-colors",
                       showSkillPicker
-                        ? "bg-white/10 text-white/60"
-                        : "bg-white/5 text-white/30 hover:bg-white/10 hover:text-white/50"
+                        ? "bg-stone-100 text-stone-500"
+                        : "bg-stone-100/80 text-stone-300 hover:bg-stone-100 hover:text-stone-400"
                     )}
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -843,15 +877,15 @@ export function NexusDetailPanel() {
                       transition={{ duration: 0.2 }}
                       className="overflow-hidden mb-3"
                     >
-                      <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.08]">
+                      <div className="p-3 rounded-lg bg-stone-50 border border-white/[0.08]">
                         <div className="relative mb-2">
-                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-stone-300" />
                           <input
                             type="text"
                             value={skillSearchQuery}
                             onChange={(e) => setSkillSearchQuery(e.target.value)}
                             placeholder="搜索可用技能..."
-                            className="w-full pl-8 pr-3 py-1.5 bg-black/30 border border-white/10 rounded text-xs font-mono text-white/70 placeholder-white/25 focus:border-white/20 focus:outline-none"
+                            className="w-full pl-8 pr-3 py-1.5 bg-stone-100/80 border border-stone-200 rounded text-xs font-mono text-stone-600 placeholder-stone-300 focus:border-stone-200 focus:outline-none"
                             autoFocus
                           />
                         </div>
@@ -864,20 +898,20 @@ export function NexusDetailPanel() {
                                 className="w-full text-left p-2 rounded hover:bg-white/[0.05] transition-colors group/skill"
                               >
                                 <div className="flex items-center gap-2">
-                                  <span className="text-xs font-mono text-white/70 group-hover/skill:text-white/90">{skill.name}</span>
+                                  <span className="text-sm font-mono text-stone-600 group-hover/skill:text-stone-800">{skill.name}</span>
                                   {skill.status === 'active' && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400/70 border border-emerald-500/15">
+                                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400/70 border border-emerald-500/15">
                                       ACTIVE
                                     </span>
                                   )}
                                 </div>
                                 {skill.description && (
-                                  <p className="text-[11px] font-mono text-white/25 mt-0.5 line-clamp-1">{skill.description}</p>
+                                  <p className="text-[13px] font-mono text-stone-300 mt-0.5 line-clamp-1">{skill.description}</p>
                                 )}
                               </button>
                             ))
                           ) : (
-                            <p className="text-[11px] font-mono text-white/20 py-2 text-center">
+                            <p className="text-[11px] font-mono text-stone-300 py-2 text-center">
                               {skillSearchQuery ? '无匹配技能' : '所有技能已绑定'}
                             </p>
                           )}
@@ -895,7 +929,7 @@ export function NexusDetailPanel() {
                         className="p-3 rounded-lg bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.05] transition-colors"
                       >
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-mono text-white/80 font-medium">{skill.name}</span>
+                          <span className="text-sm font-mono text-stone-700 font-medium">{skill.name}</span>
                           <div className="flex items-center gap-2">
                             <span className={cn(
                               'text-[13px] font-mono px-2 py-0.5 rounded-full',
@@ -946,7 +980,7 @@ export function NexusDetailPanel() {
                           </div>
                         </div>
                         {skill.status === 'active' && skill.description && (
-                          <p className="text-xs font-mono text-white/30 leading-relaxed line-clamp-2">
+                          <p className="text-xs font-mono text-stone-300 leading-relaxed line-clamp-2">
                             {skill.description}
                           </p>
                         )}
@@ -983,46 +1017,49 @@ export function NexusDetailPanel() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm font-mono text-white/20 italic">No skills bound to this Nexus</p>
+                  <p className="text-sm font-mono text-stone-300 italic">No skills bound to this Nexus</p>
                 )}
               </div>
 
+              {/* ==================== TAB: SKILLS - end / TAB: SOP - start ==================== */}
+              </>)}
+              {activeTab === 'sop' && (<>
               {/* ==================== Objective Function (目标函数) ==================== */}
               {(nexus.objective || nexus.metrics || nexus.strategy) && (
                 <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                   <div className="flex items-center gap-2 mb-3">
                     <Target className="w-4 h-4" style={dynamicText} />
-                    <span className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                    <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                       Objective Function
                     </span>
                   </div>
                   
                   {nexus.objective && (
                     <div className="mb-4">
-                      <p className="text-sm text-white/80 leading-relaxed">{nexus.objective}</p>
+                      <p className="text-sm text-stone-700 leading-relaxed">{nexus.objective}</p>
                     </div>
                   )}
                   
                   {nexus.strategy && (
-                    <div className="mb-3 p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+                    <div className="mb-3 p-3 rounded-lg bg-stone-50 border border-white/[0.04]">
                       <div className="flex items-center gap-1.5 mb-2">
-                        <TrendingUp className="w-3 h-3 text-white/40" />
-                        <span className="text-xs font-mono text-white/40 uppercase">Strategy</span>
+                        <TrendingUp className="w-3 h-3 text-stone-400" />
+                        <span className="text-xs font-mono text-stone-400 uppercase">Strategy</span>
                       </div>
-                      <p className="text-xs text-white/60 leading-relaxed whitespace-pre-wrap">{nexus.strategy}</p>
+                      <p className="text-xs text-stone-500 leading-relaxed whitespace-pre-wrap">{nexus.strategy}</p>
                     </div>
                   )}
                   
                   {nexus.metrics && nexus.metrics.length > 0 && (
-                    <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+                    <div className="p-3 rounded-lg bg-stone-50 border border-white/[0.04]">
                       <div className="flex items-center gap-1.5 mb-2">
-                        <AlertCircle className="w-3 h-3 text-white/40" />
-                        <span className="text-xs font-mono text-white/40 uppercase">Success Metrics</span>
+                        <AlertCircle className="w-3 h-3 text-stone-400" />
+                        <span className="text-xs font-mono text-stone-400 uppercase">Success Metrics</span>
                       </div>
                       <ul className="space-y-1">
                         {nexus.metrics.map((metric, i) => (
-                          <li key={i} className="text-xs text-white/50 flex items-start gap-2">
-                            <span className="text-white/30">•</span>
+                          <li key={i} className="text-xs text-stone-400 flex items-start gap-2">
+                            <span className="text-stone-300">•</span>
                             <span>{metric}</span>
                           </li>
                         ))}
@@ -1031,6 +1068,9 @@ export function NexusDetailPanel() {
                   )}
                 </div>
               )}
+
+              {/* === SOP tab pause: always-visible operational status === */}
+              </>)}
 
               {/* ==================== Active Nexus Indicator ==================== */}
               {activeNexusId === nexus.id && (
@@ -1043,7 +1083,7 @@ export function NexusDetailPanel() {
                   </div>
                   <button
                     onClick={handleDeactivate}
-                    className="text-[13px] font-mono px-3 py-1 rounded bg-white/5 text-white/40 hover:text-white/60 border border-white/10 transition-colors"
+                    className="text-[13px] font-mono px-3 py-1 rounded bg-stone-100/80 text-stone-400 hover:text-stone-500 border border-stone-200 transition-colors"
                   >
                     Deactivate
                   </button>
@@ -1061,18 +1101,18 @@ export function NexusDetailPanel() {
                     <span className="text-xs font-mono text-cyan-400 uppercase tracking-wider">
                       Task Execution
                     </span>
-                    <span className="ml-auto text-xs font-mono text-white/30">
+                    <span className="ml-auto text-xs font-mono text-stone-300">
                       {(activeTask.taskPlan.subTasks || []).filter(t => t.status === 'done').length}/{(activeTask.taskPlan.subTasks || []).length}
                     </span>
                     {showTaskDetail 
-                      ? <ChevronDown className="w-3 h-3 text-white/30" />
-                      : <ChevronRight className="w-3 h-3 text-white/30" />
+                      ? <ChevronDown className="w-3 h-3 text-stone-300" />
+                      : <ChevronRight className="w-3 h-3 text-stone-300" />
                     }
                   </button>
                   
                   {/* 进度条（始终显示） */}
                   <div className="mt-3">
-                    <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                    <div className="h-2 bg-stone-100 rounded-full overflow-hidden">
                       <motion.div
                         initial={{ width: 0 }}
                         animate={{ 
@@ -1099,28 +1139,28 @@ export function NexusDetailPanel() {
                       >
                         <div className="mt-3 pt-3 border-t border-cyan-500/10">
                   {/* 子任务状态统计 */}
-                  <div className="flex flex-wrap gap-2 mb-3 text-[11px] font-mono">
+                  <div className="flex flex-wrap gap-2 mb-3 text-[13px] font-mono">
                     {activeTask.taskPlan.subTasks.filter(t => t.status === 'executing').length > 0 && (
                       <span className="flex items-center gap-1 text-cyan-400">
-                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         {activeTask.taskPlan.subTasks.filter(t => t.status === 'executing').length} 执行中
                       </span>
                     )}
                     {activeTask.taskPlan.subTasks.filter(t => t.status === 'blocked').length > 0 && (
                       <span className="flex items-center gap-1 text-amber-400">
-                        <Pause className="w-3 h-3" />
+                        <Pause className="w-3.5 h-3.5" />
                         {activeTask.taskPlan.subTasks.filter(t => t.status === 'blocked').length} 阻塞
                       </span>
                     )}
                     {activeTask.taskPlan.subTasks.filter(t => t.status === 'failed').length > 0 && (
                       <span className="flex items-center gap-1 text-red-400">
-                        <XCircle className="w-3 h-3" />
+                        <XCircle className="w-3.5 h-3.5" />
                         {activeTask.taskPlan.subTasks.filter(t => t.status === 'failed').length} 失败
                       </span>
                     )}
                     {activeTask.taskPlan.subTasks.filter(t => t.status === 'paused_for_approval').length > 0 && (
                       <span className="flex items-center gap-1 text-yellow-400">
-                        <AlertCircle className="w-3 h-3" />
+                        <AlertCircle className="w-3.5 h-3.5" />
                         {activeTask.taskPlan.subTasks.filter(t => t.status === 'paused_for_approval').length} 待确认
                       </span>
                     )}
@@ -1153,19 +1193,19 @@ export function NexusDetailPanel() {
                             subTask.status === 'executing' && 'bg-cyan-500/5 border-cyan-500/20',
                             subTask.status === 'blocked' && 'bg-amber-500/5 border-amber-500/15',
                             subTask.status === 'paused_for_approval' && 'bg-yellow-500/5 border-yellow-500/20',
-                            (subTask.status === 'pending' || subTask.status === 'ready' || subTask.status === 'skipped') && 'bg-white/[0.02] border-white/[0.05]'
+                            (subTask.status === 'pending' || subTask.status === 'ready' || subTask.status === 'skipped') && 'bg-stone-50 border-white/[0.05]'
                           )}
                         >
-                          <div className={cn('w-4 h-4 flex items-center justify-center flex-shrink-0', `text-${config.color}-400`)}>
-                            <StatusIcon className={cn('w-3 h-3', isExecuting && 'animate-spin')} />
+                          <div className={cn('w-5 h-5 flex items-center justify-center flex-shrink-0', `text-${config.color}-400`)}>
+                            <StatusIcon className={cn('w-3.5 h-3.5', isExecuting && 'animate-spin')} />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[11px] text-white/60 line-clamp-1">{subTask.description}</p>
+                            <p className="text-[13px] text-stone-500 line-clamp-1">{subTask.description}</p>
                             {subTask.error && (
-                              <p className="text-[10px] text-red-400/70 mt-0.5 line-clamp-1">✗ {subTask.error}</p>
+                              <p className="text-xs text-red-400/70 mt-0.5 line-clamp-1">✗ {subTask.error}</p>
                             )}
                             {subTask.status === 'blocked' && subTask.blockReason && (
-                              <p className="text-[10px] text-amber-400/70 mt-0.5 line-clamp-2">⚠ {subTask.blockReason}</p>
+                              <p className="text-xs text-amber-400/70 mt-0.5 line-clamp-2">⚠ {subTask.blockReason}</p>
                             )}
                           </div>
                         </div>
@@ -1179,6 +1219,8 @@ export function NexusDetailPanel() {
                 </div>
               )}
               
+              {/* ==================== TAB: SOP - resume ==================== */}
+              {activeTab === 'sop' && (<>
               {/* ==================== SOP Section ==================== */}
               {nexus.sopContent && (
                 <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
@@ -1187,15 +1229,15 @@ export function NexusDetailPanel() {
                     className="w-full flex items-center gap-2"
                   >
                     <BookOpen className="w-4 h-4" style={dynamicText} />
-                    <span className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                    <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                       Mission & SOP
                     </span>
-                    <span className="ml-auto text-xs font-mono text-white/25">
+                    <span className="ml-auto text-xs font-mono text-stone-300">
                       {nexus.version || '1.0.0'}
                     </span>
                     {showSOP 
-                      ? <ChevronDown className="w-3 h-3 text-white/30" />
-                      : <ChevronRight className="w-3 h-3 text-white/30" />
+                      ? <ChevronDown className="w-3 h-3 text-stone-300" />
+                      : <ChevronRight className="w-3 h-3 text-stone-300" />
                     }
                   </button>
                   
@@ -1208,8 +1250,8 @@ export function NexusDetailPanel() {
                         transition={{ duration: 0.2 }}
                         className="overflow-hidden"
                       >
-                        <div className="mt-3 pt-3 border-t border-white/5">
-                          <pre className="text-xs font-mono text-white/40 leading-relaxed whitespace-pre-wrap max-h-[400px] overflow-y-auto">
+                        <div className="mt-3 pt-3 border-t border-stone-100">
+                          <pre className="text-sm font-mono text-stone-500 leading-relaxed whitespace-pre-wrap max-h-[400px] overflow-y-auto">
                             {nexus.sopContent}
                           </pre>
                         </div>
@@ -1219,15 +1261,20 @@ export function NexusDetailPanel() {
                 </div>
               )}
 
+              {/* ==================== TAB: SOP - end ==================== */}
+              </>)}
+
+              {/* ==================== TAB: SKILLS - resume for Experience ==================== */}
+              {activeTab === 'skills' && (<>
               {/* ==================== Experience Section ==================== */}
               {experiences.length > 0 && (
                 <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                   <div className="flex items-center gap-2 mb-3">
                     <Star className="w-4 h-4" style={dynamicText} />
-                    <span className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                    <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                       Experience Log
                     </span>
-                    <span className="ml-auto text-xs font-mono text-white/25">
+                    <span className="ml-auto text-xs font-mono text-stone-300">
                       {experiences.length}
                     </span>
                   </div>
@@ -1235,13 +1282,13 @@ export function NexusDetailPanel() {
                     {experiences.map((exp, i) => (
                       <div 
                         key={i}
-                        className="p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.04] flex items-center gap-2"
+                        className="p-2.5 rounded-lg bg-stone-50 border border-white/[0.04] flex items-center gap-2"
                       >
                         {exp.outcome === 'success' 
                           ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                           : <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
                         }
-                        <p className="text-xs font-mono text-white/50 truncate">
+                        <p className="text-xs font-mono text-stone-400 truncate">
                           {exp.title}
                         </p>
                       </div>
@@ -1250,6 +1297,9 @@ export function NexusDetailPanel() {
                 </div>
               )}
 
+              {/* ==================== TAB: SKILLS(Experience) - end / TAB: ABILITY resume ==================== */}
+              </>)}
+              {activeTab === 'ability' && (<>
               {/* ==================== Tool Dimensions (V2) ==================== */}
               {toolDims.length > 0 && (
                 <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
@@ -1258,25 +1308,25 @@ export function NexusDetailPanel() {
                     className="w-full flex items-center gap-2"
                   >
                     <Puzzle className="w-4 h-4" style={{ color: tierColor }} />
-                    <span className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                    <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                       Tool Dimensions
                     </span>
-                    <span className="ml-auto text-xs font-mono text-white/25">
+                    <span className="ml-auto text-xs font-mono text-stone-300">
                       {toolDims.length}
                     </span>
                     {showToolDimensions
-                      ? <ChevronDown className="w-3 h-3 text-white/30" />
-                      : <ChevronRight className="w-3 h-3 text-white/30" />
+                      ? <ChevronDown className="w-3 h-3 text-stone-300" />
+                      : <ChevronRight className="w-3 h-3 text-stone-300" />
                     }
                   </button>
 
                   {/* 概览统计（始终显示） */}
-                  <div className="mt-2 flex gap-3 text-[11px] font-mono text-white/35">
+                  <div className="mt-2 flex gap-3 text-[13px] font-mono text-stone-300">
                     <span>
                       Avg Score: <span style={{ color: tierColor }}>{toolDims.length > 0 ? Math.round(toolDims.reduce((a, d) => a + d.score, 0) / toolDims.length) : '—'}</span>
                     </span>
                     <span>
-                      Total Calls: <span className="text-white/50">{toolDims.reduce((a, d) => a + d.calls, 0)}</span>
+                      Total Calls: <span className="text-stone-400">{toolDims.reduce((a, d) => a + d.calls, 0)}</span>
                     </span>
                   </div>
 
@@ -1289,7 +1339,7 @@ export function NexusDetailPanel() {
                         transition={{ duration: 0.2 }}
                         className="overflow-hidden"
                       >
-                        <div className="mt-3 pt-3 border-t border-white/5 space-y-2 max-h-[280px] overflow-y-auto">
+                        <div className="mt-3 pt-3 border-t border-stone-100 space-y-2 max-h-[280px] overflow-y-auto">
                           {toolDims
                             .sort((a, b) => b.calls - a.calls)
                             .map(dim => {
@@ -1301,27 +1351,27 @@ export function NexusDetailPanel() {
                               return (
                                 <div
                                   key={dim.toolName}
-                                  className="p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.04]"
+                                  className="p-2.5 rounded-lg bg-stone-50 border border-white/[0.04]"
                                 >
                                   <div className="flex items-center justify-between mb-1.5">
-                                    <span className="text-xs font-mono text-white/70 font-medium truncate max-w-[180px]">
+                                    <span className="text-xs font-mono text-stone-600 font-medium truncate max-w-[180px]">
                                       {dim.toolName}
                                     </span>
                                     <div className="flex items-center gap-2">
-                                      <span className="text-[10px] font-mono font-semibold" style={{ color: dimTierColor }}>
+                                      <span className="text-xs font-mono font-semibold" style={{ color: dimTierColor }}>
                                         {dim.score}
                                       </span>
                                     </div>
                                   </div>
                                   {/* 分数条 */}
-                                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden mb-1.5">
+                                  <div className="h-1.5 bg-stone-100/80 rounded-full overflow-hidden mb-1.5">
                                     <div
                                       className="h-full rounded-full transition-all duration-500"
                                       style={{ width: `${dim.score}%`, backgroundColor: dimTierColor }}
                                     />
                                   </div>
                                   {/* 指标 */}
-                                  <div className="flex gap-3 text-[10px] font-mono text-white/30">
+                                  <div className="flex gap-3 text-xs font-mono text-stone-300">
                                     <span>{dim.calls} calls</span>
                                     <span className="text-emerald-400/60">{dim.successes}ok</span>
                                     <span className="text-red-400/60">{dim.failures}err</span>
@@ -1338,6 +1388,12 @@ export function NexusDetailPanel() {
                 </div>
               )}
 
+              {/* Achievement Badges (ability tab 最后) */}
+              <AchievementBadges nexusId={nexus.id} />
+
+              {/* ==================== TAB: ABILITY - end / TAB: RECORDS - start ==================== */}
+              </>)}
+              {activeTab === 'records' && (<>
               {/* ==================== Recent Runs (V2) ==================== */}
               {recentRuns.length > 0 && (
                 <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
@@ -1346,15 +1402,15 @@ export function NexusDetailPanel() {
                     className="w-full flex items-center gap-2"
                   >
                     <Activity className="w-4 h-4" style={{ color: tierColor }} />
-                    <span className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                    <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                       Recent Runs
                     </span>
-                    <span className="ml-auto text-xs font-mono text-white/25">
+                    <span className="ml-auto text-xs font-mono text-stone-300">
                       {recentRuns.length}
                     </span>
                     {showRecentRuns
-                      ? <ChevronDown className="w-3 h-3 text-white/30" />
-                      : <ChevronRight className="w-3 h-3 text-white/30" />
+                      ? <ChevronDown className="w-3 h-3 text-stone-300" />
+                      : <ChevronRight className="w-3 h-3 text-stone-300" />
                     }
                   </button>
 
@@ -1367,7 +1423,7 @@ export function NexusDetailPanel() {
                         transition={{ duration: 0.2 }}
                         className="overflow-hidden"
                       >
-                        <div className="mt-3 pt-3 border-t border-white/5 space-y-1.5 max-h-[300px] overflow-y-auto">
+                        <div className="mt-3 pt-3 border-t border-stone-100 space-y-1.5 max-h-[300px] overflow-y-auto">
                           {[...recentRuns].reverse().map((run, i) => (
                             <div
                               key={`${run.runId}-${i}`}
@@ -1383,10 +1439,10 @@ export function NexusDetailPanel() {
                                 : <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
                               }
                               <div className="flex-1 min-w-0">
-                                <p className="text-xs font-mono text-white/60 truncate">
+                                <p className="text-xs font-mono text-stone-500 truncate">
                                   {run.task}
                                 </p>
-                                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-[10px] font-mono text-white/30">
+                                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs font-mono text-stone-300">
                                   <span style={{ color: run.scoreChange >= 0 ? '#22c55e' : '#ef4444' }}>
                                     {run.scoreChange > 0 ? '+' : ''}{run.scoreChange}
                                   </span>
@@ -1404,7 +1460,7 @@ export function NexusDetailPanel() {
                                   )}
                                 </div>
                               </div>
-                              <span className="text-[10px] font-mono text-white/20 shrink-0">
+                              <span className="text-xs font-mono text-stone-300 shrink-0">
                                 {formatTime(run.timestamp)}
                               </span>
                             </div>
@@ -1421,10 +1477,10 @@ export function NexusDetailPanel() {
                 <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                   <div className="flex items-center gap-2 mb-3">
                     <MessageSquare className="w-4 h-4" style={dynamicText} />
-                    <span className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                    <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                       对话记录
                     </span>
-                    <span className="ml-auto text-xs font-mono text-white/25">
+                    <span className="ml-auto text-xs font-mono text-stone-300">
                       {nexusConversations.length}
                     </span>
                   </div>
@@ -1433,22 +1489,25 @@ export function NexusDetailPanel() {
                       <button 
                         key={conv.id} 
                         onClick={() => handleOpenConversation(conv.id)}
-                        className="w-full p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.04] 
+                        className="w-full p-2.5 rounded-lg bg-stone-50 border border-white/[0.04] 
                                    hover:bg-white/[0.05] transition-colors text-left flex items-center gap-2"
                       >
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-mono text-white/60 truncate">{conv.title}</p>
-                          <p className="text-[10px] font-mono text-white/30">
+                          <p className="text-sm font-mono text-stone-500 truncate">{conv.title}</p>
+                          <p className="text-xs font-mono text-stone-300">
                             {conv.messages.length}条消息 · {formatTime(conv.updatedAt)}
                           </p>
                         </div>
-                        <ChevronRight className="w-3 h-3 text-white/20 flex-shrink-0" />
+                        <ChevronRight className="w-3 h-3 text-stone-300 flex-shrink-0" />
                       </button>
                     ))}
                   </div>
                 </div>
               )}
 
+              {/* ==================== TAB: RECORDS pause / TAB: SKILLS resume for Rules ==================== */}
+              </>)}
+              {activeTab === 'skills' && (<>
               {/* ==================== Active Rules Section ==================== */}
               {activeRules.length > 0 && (
                 <div className="p-5 rounded-xl bg-amber-500/5 border border-amber-500/15">
@@ -1473,11 +1532,11 @@ export function NexusDetailPanel() {
                             <span className="text-xs font-mono text-amber-400/80 font-medium">
                               {RULE_LABELS[rule.type] || rule.type}
                             </span>
-                            <span className="text-[10px] font-mono text-white/25">
+                            <span className="text-xs font-mono text-stone-300">
                               {daysLeft}d left
                             </span>
                           </div>
-                          <p className="text-[11px] font-mono text-white/45 leading-relaxed">
+                          <p className="text-[13px] font-mono text-stone-400 leading-relaxed">
                             {rule.injectedPrompt}
                           </p>
                         </div>
@@ -1487,31 +1546,34 @@ export function NexusDetailPanel() {
                 </div>
               )}
               
+              {/* ==================== TAB: SKILLS(Rules) - end / TAB: RECORDS resume ==================== */}
+              </>)}
+              {activeTab === 'records' && (<>
               {/* ==================== Model Config ==================== */}
               <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                 <button
                   onClick={handleToggleModelConfig}
                   className="w-full flex items-center gap-2"
                 >
-                  <Cpu className="w-4 h-4 text-white/40" />
-                  <span className="text-xs font-mono text-white/50 uppercase tracking-wider">
+                  <Cpu className="w-4 h-4 text-stone-400" />
+                  <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
                     Model
                   </span>
                   <span className={cn(
                     'ml-auto text-xs font-mono px-2 py-0.5 rounded',
                     activeModel.isCustom 
                       ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
-                      : 'text-white/30'
+                      : 'text-stone-300'
                   )}>
                     {activeModel.isCustom ? 'Custom' : 'Global'}
                   </span>
                   {showModelConfig 
-                    ? <ChevronDown className="w-3 h-3 text-white/30" />
-                    : <ChevronRight className="w-3 h-3 text-white/30" />
+                    ? <ChevronDown className="w-3 h-3 text-stone-300" />
+                    : <ChevronRight className="w-3 h-3 text-stone-300" />
                   }
                 </button>
                 
-                <p className="text-xs font-mono text-white/25 mt-1.5 truncate">
+                <p className="text-xs font-mono text-stone-300 mt-1.5 truncate">
                   {activeModel.label}
                 </p>
                 
@@ -1524,35 +1586,35 @@ export function NexusDetailPanel() {
                       transition={{ duration: 0.2 }}
                       className="overflow-hidden"
                     >
-                      <div className="mt-3 pt-3 border-t border-white/5 space-y-3">
+                      <div className="mt-3 pt-3 border-t border-stone-100 space-y-3">
                         <div>
-                          <label className="text-[13px] font-mono text-white/30 uppercase mb-1 block">Base URL</label>
+                          <label className="text-[13px] font-mono text-stone-300 uppercase mb-1 block">Base URL</label>
                           <input
                             type="text"
                             value={customBaseUrl}
                             onChange={e => setCustomBaseUrl(e.target.value)}
                             placeholder={llmConfig.baseUrl || 'https://api.openai.com/v1'}
-                            className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded text-sm font-mono text-white/70 placeholder:text-white/15 focus:outline-none focus:border-cyan-500/30"
+                            className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded text-sm font-mono text-stone-600 placeholder:text-stone-300 focus:outline-none focus:border-cyan-500/30"
                           />
                         </div>
                         <div>
-                          <label className="text-[13px] font-mono text-white/30 uppercase mb-1 block">Model</label>
+                          <label className="text-[13px] font-mono text-stone-300 uppercase mb-1 block">Model</label>
                           <input
                             type="text"
                             value={customModel}
                             onChange={e => setCustomModel(e.target.value)}
                             placeholder={llmConfig.model || 'gpt-4o'}
-                            className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded text-sm font-mono text-white/70 placeholder:text-white/15 focus:outline-none focus:border-cyan-500/30"
+                            className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded text-sm font-mono text-stone-600 placeholder:text-stone-300 focus:outline-none focus:border-cyan-500/30"
                           />
                         </div>
                         <div>
-                          <label className="text-[13px] font-mono text-white/30 uppercase mb-1 block">API Key (optional, uses global if empty)</label>
+                          <label className="text-[13px] font-mono text-stone-300 uppercase mb-1 block">API Key (optional, uses global if empty)</label>
                           <input
                             type="password"
                             value={customApiKey}
                             onChange={e => setCustomApiKey(e.target.value)}
                             placeholder="Leave empty for global key"
-                            className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded text-sm font-mono text-white/70 placeholder:text-white/15 focus:outline-none focus:border-cyan-500/30"
+                            className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded text-sm font-mono text-stone-600 placeholder:text-stone-300 focus:outline-none focus:border-cyan-500/30"
                           />
                         </div>
                         <div className="flex gap-2 pt-1">
@@ -1565,7 +1627,7 @@ export function NexusDetailPanel() {
                           {nexus.customModel && (
                             <button
                               onClick={handleClearModel}
-                              className="py-2 px-4 rounded text-xs font-mono bg-white/5 border border-white/10 text-white/40 hover:text-white/60 transition-colors"
+                              className="py-2 px-4 rounded text-xs font-mono bg-stone-100/80 border border-stone-200 text-stone-400 hover:text-stone-500 transition-colors"
                             >
                               Reset to Global
                             </button>
@@ -1578,29 +1640,30 @@ export function NexusDetailPanel() {
               </div>
               
               {/* Time info */}
-              <div className="flex items-center gap-2 text-xs font-mono text-white/25">
+              <div className="flex items-center gap-2 text-xs font-mono text-stone-300">
                 <Clock className="w-4 h-4" />
                 <span>Created {new Date(nexus.createdAt).toLocaleDateString()}</span>
                 {nexus.lastUsedAt && (
                   <>
-                    <span className="text-white/10">|</span>
+                    <span className="text-stone-200">|</span>
                     <span>Last used {new Date(nexus.lastUsedAt).toLocaleDateString()}</span>
                   </>
                 )}
               </div>
+              {/* ==================== TAB: RECORDS - end ==================== */}
+              </>)}
               </>
-              )}
-            </div>
+              )}            </div>
             
             {/* Footer */}
-            <div className="p-5 border-t border-white/10 bg-black/20 space-y-2">
+            <div className="p-5 border-t border-stone-200 bg-stone-100/60 space-y-2">
               {/* Export / Import */}
               <div className="flex gap-2">
                 <button
                   onClick={handleExportNexus}
                   className="flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-2
-                           text-xs font-mono text-white/40 hover:text-white/70
-                           border border-white/10 hover:bg-white/5 transition-colors"
+                           text-xs font-mono text-stone-400 hover:text-stone-600
+                           border border-stone-200 hover:bg-stone-100/80 transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />
                   导出配置
@@ -1608,8 +1671,8 @@ export function NexusDetailPanel() {
                 <button
                   onClick={() => importFileRef.current?.click()}
                   className="flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-2
-                           text-xs font-mono text-white/40 hover:text-white/70
-                           border border-white/10 hover:bg-white/5 transition-colors"
+                           text-xs font-mono text-stone-400 hover:text-stone-600
+                           border border-stone-200 hover:bg-stone-100/80 transition-colors"
                 >
                   <Upload className="w-3.5 h-3.5" />
                   导入配置

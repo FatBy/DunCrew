@@ -109,24 +109,24 @@ export function SkillPublishDialog({ skillName, onClose }: SkillPublishDialogPro
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/10 backdrop-blur-[4px] backdrop-blur-sm"
         onClick={onClose}
       >
         <motion.div
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.9, opacity: 0 }}
-          className="w-full max-w-lg mx-4 bg-slate-900 border border-white/10 rounded-xl overflow-hidden shadow-2xl"
+          className="w-full max-w-lg mx-4 bg-white border border-stone-200 border border-stone-200 rounded-xl overflow-hidden shadow-2xl"
           onClick={e => e.stopPropagation()}
         >
           {/* 头部 */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-stone-200">
             <div className="flex items-center gap-2">
               <Upload className="w-5 h-5 text-cyan-400" />
-              <h2 className="text-lg font-semibold text-white">发布到 ClawHub</h2>
+              <h2 className="text-lg font-semibold text-stone-800">发布到 ClawHub</h2>
             </div>
-            <button onClick={onClose} className="p-1 rounded hover:bg-white/10">
-              <X className="w-5 h-5 text-white/40" />
+            <button onClick={onClose} className="p-1 rounded hover:bg-stone-100">
+              <X className="w-5 h-5 text-stone-400" />
             </button>
           </div>
 
@@ -149,53 +149,53 @@ export function SkillPublishDialog({ skillName, onClose }: SkillPublishDialogPro
             {/* 基本信息 */}
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-white/50 uppercase mb-1 block">技能名称</label>
+                <label className="text-xs text-stone-400 uppercase mb-1 block">技能名称</label>
                 <input
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:border-cyan-500/50 focus:outline-none"
+                  className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded-lg text-sm text-stone-800 focus:border-cyan-500/50 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-xs text-white/50 uppercase mb-1 block">Slug (唯一标识)</label>
+                <label className="text-xs text-stone-400 uppercase mb-1 block">Slug (唯一标识)</label>
                 <input
                   value={slug}
                   onChange={e => setSlug(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white/70 focus:border-cyan-500/50 focus:outline-none"
+                  className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded-lg text-sm text-stone-600 focus:border-cyan-500/50 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-xs text-white/50 uppercase mb-1 block">描述</label>
+                <label className="text-xs text-stone-400 uppercase mb-1 block">描述</label>
                 <textarea
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                   rows={2}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white resize-none focus:border-cyan-500/50 focus:outline-none"
+                  className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded-lg text-sm text-stone-800 resize-none focus:border-cyan-500/50 focus:outline-none"
                 />
               </div>
 
               <div className="flex gap-3">
                 <div className="flex-1">
-                  <label className="text-xs text-white/50 uppercase mb-1 block">版本</label>
+                  <label className="text-xs text-stone-400 uppercase mb-1 block">版本</label>
                   <input
                     value={version}
                     onChange={e => setVersion(e.target.value)}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:border-cyan-500/50 focus:outline-none"
+                    className="w-full px-3 py-2 bg-stone-100/80 border border-stone-200 rounded-lg text-sm text-stone-800 focus:border-cyan-500/50 focus:outline-none"
                   />
                 </div>
               </div>
 
               {/* 标签 */}
               <div>
-                <label className="text-xs text-white/50 uppercase mb-1 block">标签</label>
+                <label className="text-xs text-stone-400 uppercase mb-1 block">标签</label>
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {tags.map(tag => (
                     <span key={tag} className="flex items-center gap-1 px-2 py-0.5 text-xs bg-cyan-500/10 text-cyan-400 rounded-full">
                       <Tag className="w-3 h-3" />
                       {tag}
-                      <button onClick={() => handleRemoveTag(tag)} className="hover:text-white">
+                      <button onClick={() => handleRemoveTag(tag)} className="hover:text-red-400">
                         <X className="w-3 h-3" />
                       </button>
                     </span>
@@ -207,7 +207,7 @@ export function SkillPublishDialog({ skillName, onClose }: SkillPublishDialogPro
                     onChange={e => setTagInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddTag())}
                     placeholder="输入标签后回车"
-                    className="flex-1 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:border-cyan-500/50 focus:outline-none"
+                    className="flex-1 px-3 py-1.5 bg-stone-100/80 border border-stone-200 rounded-lg text-xs text-stone-800 focus:border-cyan-500/50 focus:outline-none"
                   />
                 </div>
               </div>
@@ -216,10 +216,10 @@ export function SkillPublishDialog({ skillName, onClose }: SkillPublishDialogPro
             {/* 文件列表 */}
             {fileList.length > 0 && (
               <div>
-                <label className="text-xs text-white/50 uppercase mb-1 block">包含文件 ({fileList.length})</label>
-                <div className="max-h-32 overflow-y-auto bg-white/5 rounded-lg p-2 space-y-0.5">
+                <label className="text-xs text-stone-400 uppercase mb-1 block">包含文件 ({fileList.length})</label>
+                <div className="max-h-32 overflow-y-auto bg-stone-100/80 rounded-lg p-2 space-y-0.5">
                   {fileList.map(f => (
-                    <div key={f} className="flex items-center gap-1.5 text-xs text-white/60">
+                    <div key={f} className="flex items-center gap-1.5 text-xs text-stone-500">
                       <FileText className="w-3 h-3 shrink-0" />
                       <span className="truncate">{f}</span>
                     </div>
@@ -251,10 +251,10 @@ export function SkillPublishDialog({ skillName, onClose }: SkillPublishDialogPro
           </div>
 
           {/* 底部按钮 */}
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/10">
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-stone-200">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-sm text-white/60 hover:text-white/80 transition-colors"
+              className="px-4 py-2 text-sm text-stone-500 hover:text-stone-700 transition-colors"
             >
               {step === 'done' ? '关闭' : '取消'}
             </button>

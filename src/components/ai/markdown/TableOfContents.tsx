@@ -54,7 +54,7 @@ export function TableOfContents({ headings, scrollContainer }: TableOfContentsPr
 
   return (
     <nav className="space-y-0.5">
-      <div className="flex items-center gap-1.5 text-white/40 text-xs font-mono mb-2 px-2">
+      <div className="flex items-center gap-1.5 text-stone-400 text-xs font-mono mb-2 px-2">
         <List className="w-3.5 h-3.5" />
         <span>目录</span>
       </div>
@@ -69,7 +69,7 @@ export function TableOfContents({ headings, scrollContainer }: TableOfContentsPr
             heading.level === 3 && 'pl-8',
             activeId === heading.id
               ? 'text-cyan-400 bg-cyan-500/10 border-l-2 border-cyan-400'
-              : 'text-white/50 hover:text-white/70 hover:bg-white/5 border-l-2 border-transparent'
+              : 'text-stone-400 hover:text-stone-600 hover:bg-stone-100/80 border-l-2 border-transparent'
           )}
           title={heading.text}
         >

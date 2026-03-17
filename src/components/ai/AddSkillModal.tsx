@@ -136,7 +136,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4"
+        className="fixed inset-0 bg-stone-900/10 backdrop-blur-[4px] z-[200] flex items-center justify-center p-4"
         onClick={resetAndClose}
       >
         <motion.div
@@ -144,20 +144,20 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 10 }}
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-md bg-slate-900/95 backdrop-blur-xl border border-white/10 
+          className="w-full max-w-md bg-white/95 backdrop-blur-3xl backdrop-blur-xl border border-stone-200 
                      rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] overflow-hidden max-h-[85vh] flex flex-col"
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 flex-shrink-0">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-stone-200 flex-shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
                 <Puzzle className="w-4 h-4 text-amber-400" />
               </div>
-              <h2 className="text-sm font-mono font-semibold text-white/90">
+              <h2 className="text-sm font-mono font-semibold text-stone-800">
                 添加 SKILL
               </h2>
             </div>
-            <button onClick={resetAndClose} className="p-1 text-white/30 hover:text-white/60 transition-colors">
+            <button onClick={resetAndClose} className="p-1 text-stone-300 hover:text-stone-500 transition-colors">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -170,7 +170,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono transition-all',
                 activeTab === 'local'
                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                  : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10'
+                  : 'bg-stone-100/80 text-stone-400 border border-stone-200 hover:bg-stone-100'
               )}
             >
               <HardDrive className="w-3.5 h-3.5" />
@@ -182,7 +182,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono transition-all',
                 activeTab === 'online'
                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                  : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10'
+                  : 'bg-stone-100/80 text-stone-400 border border-stone-200 hover:bg-stone-100'
               )}
             >
               <Globe className="w-3.5 h-3.5" />
@@ -194,7 +194,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
           <div className="px-6 py-5 space-y-5 overflow-y-auto flex-1">
             {/* 概念说明 */}
             <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/10">
-              <p className="text-xs text-white/60 leading-relaxed">
+              <p className="text-xs text-stone-500 leading-relaxed">
                 <span className="text-amber-400 font-semibold">SKILL</span> 是 DD-OS 
                 的能力模块，每个 SKILL 定义了一套专业工作流程。
                 {activeTab === 'online' && ' 在线搜索无需 AI 调用，响应速度极快。'}
@@ -206,7 +206,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
               <>
                 {/* 搜索输入框 */}
                 <div>
-                  <label className="block text-xs font-mono text-white/40 mb-2">
+                  <label className="block text-xs font-mono text-stone-400 mb-2">
                     描述你想要的功能
                   </label>
                   <div className="flex gap-2">
@@ -217,8 +217,8 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                       placeholder="如：操作Word文档、深度调研、代码审查"
-                      className="flex-1 px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg
-                               text-sm font-mono text-white/80 placeholder-white/25
+                      className="flex-1 px-4 py-2.5 bg-stone-100/80 border border-stone-200 rounded-lg
+                               text-sm font-mono text-stone-700 placeholder-stone-300
                                focus:border-amber-500/40 focus:outline-none transition-colors"
                     />
                     <button
@@ -238,7 +238,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
 
                 {/* 搜索结果 */}
                 {isSearching && (
-                  <div className="flex items-center justify-center gap-2 py-4 text-white/30">
+                  <div className="flex items-center justify-center gap-2 py-4 text-stone-300">
                     <Loader2 className="w-4 h-4 animate-spin text-amber-400/60" />
                     <span className="text-xs font-mono">AI 正在匹配...</span>
                   </div>
@@ -246,7 +246,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
 
                 {!isSearching && hasSearched && searchResults.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-[11px] font-mono text-white/30">
+                    <p className="text-[11px] font-mono text-stone-300">
                       推荐结果 (点击选择)
                     </p>
                     {searchResults.map((result, i) => (
@@ -263,7 +263,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
 
                 {!isSearching && hasSearched && searchResults.length === 0 && (
                   <div className="text-center py-3">
-                    <p className="text-xs font-mono text-white/30">
+                    <p className="text-xs font-mono text-stone-300">
                       未找到匹配技能，可从下方列表选择
                     </p>
                   </div>
@@ -272,7 +272,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                 {/* 已加载的技能列表 */}
                 {activeSkills.length > 0 && (
                   <div>
-                    <p className="text-[11px] font-mono text-white/30 mb-2">
+                    <p className="text-[11px] font-mono text-stone-300 mb-2">
                       {hasSearched ? '全部已加载 SKILL' : '已加载的 SKILL (点击选择)'}
                     </p>
                     <div className="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto">
@@ -295,7 +295,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                 )}
 
                 {/* 帮助提示 */}
-                <p className="text-[10px] text-white/25 leading-relaxed">
+                <p className="text-[10px] text-stone-300 leading-relaxed">
                   SKILL 通过 <code className="text-amber-300/60">skills/*/SKILL.md</code> 文件定义。
                   可以在「技能屋」中浏览和管理已安装的 SKILL。
                 </p>
@@ -307,7 +307,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
               <>
                 {/* 在线搜索输入框 */}
                 <div>
-                  <label className="block text-xs font-mono text-white/40 mb-2">
+                  <label className="block text-xs font-mono text-stone-400 mb-2">
                     搜索在线 SKILL
                   </label>
                   <div className="flex gap-2">
@@ -318,8 +318,8 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleOnlineSearch()}
                       placeholder="如：代码审查、文档生成、调研"
-                      className="flex-1 px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg
-                               text-sm font-mono text-white/80 placeholder-white/25
+                      className="flex-1 px-4 py-2.5 bg-stone-100/80 border border-stone-200 rounded-lg
+                               text-sm font-mono text-stone-700 placeholder-stone-300
                                focus:border-cyan-500/40 focus:outline-none transition-colors"
                     />
                     <button
@@ -339,7 +339,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
 
                 {/* 在线搜索结果 */}
                 {isOnlineSearching && (
-                  <div className="flex items-center justify-center gap-2 py-4 text-white/30">
+                  <div className="flex items-center justify-center gap-2 py-4 text-stone-300">
                     <Loader2 className="w-4 h-4 animate-spin text-cyan-400/60" />
                     <span className="text-xs font-mono">搜索中...</span>
                   </div>
@@ -347,27 +347,27 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
 
                 {!isOnlineSearching && onlineResults.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-[11px] font-mono text-white/30">
+                    <p className="text-[11px] font-mono text-stone-300">
                       {hasOnlineSearched ? '搜索结果' : '推荐 SKILL'} (点击安装)
                     </p>
                     {onlineResults.map((skill) => (
                       <div
                         key={skill.id}
-                        className="p-3 rounded-lg bg-white/5 border border-white/10 hover:border-cyan-500/30 transition-all"
+                        className="p-3 rounded-lg bg-stone-100/80 border border-stone-200 hover:border-cyan-500/30 transition-all"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-mono text-cyan-300">{skill.name}</span>
                               {skill.category && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/40">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-stone-100 text-stone-400">
                                   {skill.category}
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-white/50 mt-1 line-clamp-2">{skill.description}</p>
+                            <p className="text-xs text-stone-400 mt-1 line-clamp-2">{skill.description}</p>
                             {skill.author && (
-                              <p className="text-[10px] text-white/30 mt-1">by {skill.author}</p>
+                              <p className="text-[10px] text-stone-300 mt-1">by {skill.author}</p>
                             )}
                           </div>
                           <button
@@ -405,13 +405,13 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
 
                 {!isOnlineSearching && hasOnlineSearched && onlineResults.length === 0 && (
                   <div className="text-center py-6">
-                    <p className="text-xs font-mono text-white/30">未找到匹配的在线 SKILL</p>
-                    <p className="text-[10px] text-white/20 mt-1">尝试换个关键词搜索</p>
+                    <p className="text-xs font-mono text-stone-300">未找到匹配的在线 SKILL</p>
+                    <p className="text-[10px] text-stone-300 mt-1">尝试换个关键词搜索</p>
                   </div>
                 )}
 
                 {/* 帮助提示 */}
-                <p className="text-[10px] text-white/25 leading-relaxed">
+                <p className="text-[10px] text-stone-300 leading-relaxed">
                   在线搜索使用关键词匹配（TF-IDF），无需 AI 调用，响应速度极快。
                   安装后的 SKILL 会自动加载到「已安装」列表中。
                 </p>
@@ -420,10 +420,10 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/10 bg-black/20 flex-shrink-0">
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-stone-200 bg-stone-100/60 flex-shrink-0">
             <button
               onClick={resetAndClose}
-              className="px-4 py-2 text-xs font-mono text-white/50 hover:text-white/70 transition-colors"
+              className="px-4 py-2 text-xs font-mono text-stone-400 hover:text-stone-600 transition-colors"
             >
               取消
             </button>

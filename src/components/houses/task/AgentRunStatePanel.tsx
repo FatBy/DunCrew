@@ -79,7 +79,7 @@ function ToolEventCard({ tool }: { tool: ToolEvent }) {
         <Shield className="w-3 h-3 text-amber-400" />
       )}
       {tool.latencyMs !== undefined && (
-        <span className="text-white/40">{tool.latencyMs}ms</span>
+        <span className="text-stone-400">{tool.latencyMs}ms</span>
       )}
     </motion.div>
   )
@@ -98,7 +98,7 @@ function TokenBar({ used, budget }: { used: number; budget: number }) {
 
   return (
     <div className="space-y-1">
-      <div className="flex items-center justify-between text-[10px] font-mono text-white/40">
+      <div className="flex items-center justify-between text-[10px] font-mono text-stone-400">
         <span className="flex items-center gap-1">
           <Gauge className="w-3 h-3" /> Token 使用率
         </span>
@@ -109,7 +109,7 @@ function TokenBar({ used, budget }: { used: number; budget: number }) {
           ~{(used / 1000).toFixed(1)}K / {(budget / 1000).toFixed(0)}K ({pct}%)
         </span>
       </div>
-      <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+      <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${pct}%` }}
@@ -189,10 +189,10 @@ export function AgentRunStatePanel() {
 
   if (isIdle) {
     return (
-      <div className="flex flex-col items-center justify-center h-full py-16 text-white/30">
+      <div className="flex flex-col items-center justify-center h-full py-16 text-stone-300">
         <Activity className="w-10 h-10 mb-3 opacity-50" />
         <p className="text-sm font-mono">等待 Agent 运行</p>
-        <p className="text-xs font-mono mt-1 text-white/20">
+        <p className="text-xs font-mono mt-1 text-stone-300">
           发送消息后，实时状态将显示在这里
         </p>
       </div>
@@ -204,6 +204,7 @@ export function AgentRunStatePanel() {
   const isActive = !['done', 'error', 'aborted'].includes(state.phase)
 
   // 计算统计
+  const completedTools = toolEvents.filter(t => t.status !== 'running').length
   const successTools = toolEvents.filter(t => t.status === 'success').length
   const errorTools = toolEvents.filter(t => t.status === 'error').length
   const runningTools = toolEvents.filter(t => t.status === 'running').length
@@ -231,17 +232,17 @@ export function AgentRunStatePanel() {
             )} />
           </motion.div>
           <div>
-            <div className="text-sm font-mono text-white/90">{phaseConf.label}</div>
-            <div className="text-[10px] font-mono text-white/40">
+            <div className="text-sm font-mono text-stone-800">{phaseConf.label}</div>
+            <div className="text-[10px] font-mono text-stone-400">
               Tools: {turnCount} | Run: {state.runId.slice(0, 12)}...
             </div>
           </div>
         </div>
 
         {/* 模型标签 */}
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-white/5 border border-white/10">
-          <Cpu className="w-3 h-3 text-white/40" />
-          <span className="text-[10px] font-mono text-white/50">{state.currentModel}</span>
+        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-stone-100/80 border border-stone-200">
+          <Cpu className="w-3 h-3 text-stone-400" />
+          <span className="text-[10px] font-mono text-stone-400">{state.currentModel}</span>
         </div>
       </div>
 
@@ -251,15 +252,15 @@ export function AgentRunStatePanel() {
       {/* 统计数字 */}
       <div className="grid grid-cols-4 gap-2">
         {[
-          { label: '完成', value: turnCount, icon: RefreshCw, color: 'cyan' },
+          { label: '完成', value: completedTools, icon: RefreshCw, color: 'cyan' },
           { label: '成功', value: successTools, icon: CheckCircle2, color: 'emerald' },
           { label: '错误', value: errorTools, icon: XCircle, color: 'red' },
           { label: '运行中', value: runningTools, icon: Zap, color: 'amber' },
         ].map(({ label, value, icon: Icon, color }) => (
-          <div key={label} className="text-center px-2 py-2 rounded-lg bg-white/5 border border-white/5">
+          <div key={label} className="text-center px-2 py-2 rounded-lg bg-stone-100/80 border border-stone-100">
             <Icon className={cn('w-3.5 h-3.5 mx-auto mb-1', `text-${color}-400`)} />
-            <div className="text-sm font-mono text-white/80">{value}</div>
-            <div className="text-[9px] font-mono text-white/30">{label}</div>
+            <div className="text-sm font-mono text-stone-700">{value}</div>
+            <div className="text-[9px] font-mono text-stone-300">{label}</div>
           </div>
         ))}
       </div>
@@ -267,7 +268,7 @@ export function AgentRunStatePanel() {
       {/* 工具执行时间轴 */}
       {toolEvents.length > 0 && (
         <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5 text-[10px] font-mono text-white/40">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-stone-400">
             <Wrench className="w-3 h-3" />
             <span>工具执行 ({toolEvents.length})</span>
           </div>
@@ -309,12 +310,12 @@ export function AgentRunStatePanel() {
       {/* 子智能体 */}
       {state.activeChildren.length > 0 && (
         <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5 text-[10px] font-mono text-white/40">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-stone-400">
             <GitBranch className="w-3 h-3" />
             <span>子智能体 ({state.activeChildren.length})</span>
           </div>
           {state.activeChildren.map((id: string) => (
-            <div key={id} className="flex items-center gap-2 px-3 py-1.5 rounded bg-white/5 border border-white/10 text-[10px] font-mono text-white/50">
+            <div key={id} className="flex items-center gap-2 px-3 py-1.5 rounded bg-stone-100/80 border border-stone-200 text-[10px] font-mono text-stone-400">
               <Cpu className="w-3 h-3" />
               <span className="truncate">{id}</span>
             </div>
@@ -325,7 +326,7 @@ export function AgentRunStatePanel() {
       {/* 最近事件流 */}
       {recentEvents.length > 0 && (
         <div className="space-y-1">
-          <div className="flex items-center gap-1.5 text-[10px] font-mono text-white/40">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-stone-400">
             <MessageSquare className="w-3 h-3" />
             <span>事件流 (最近)</span>
           </div>
@@ -333,9 +334,9 @@ export function AgentRunStatePanel() {
             {recentEvents.slice(-8).map(ev => (
               <div
                 key={`${ev.seq}-${ev.ts}`}
-                className="flex items-center gap-2 px-2 py-1 text-[9px] font-mono text-white/30 rounded bg-white/[0.02]"
+                className="flex items-center gap-2 px-2 py-1 text-[9px] font-mono text-stone-300 rounded bg-stone-50"
               >
-                <span className="text-white/15 w-5 text-right">#{ev.seq}</span>
+                <span className="text-stone-300 w-5 text-right">#{ev.seq}</span>
                 <span className={cn(
                   'px-1 rounded text-[8px]',
                   ev.stream === 'lifecycle' && 'bg-purple-500/20 text-purple-300',

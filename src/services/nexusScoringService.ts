@@ -138,6 +138,14 @@ class NexusScoringService {
     const tier = getScoreTier(scoring.score)
     console.log(`[NexusScoring] ${params.nexusId}: ${scoring.score - delta} → ${scoring.score} (${delta > 0 ? '+' : ''}${delta}), tier: ${tier}, streak: ${scoring.streak}`)
 
+    // 成就检测 (异步, 不阻塞评分返回)
+    import('./nexusAchievementService').then(({ nexusAchievementService }) => {
+      const newAchievements = nexusAchievementService.checkAndUpdate(params.nexusId, scoring)
+      if (newAchievements.length > 0) {
+        console.log(`[NexusScoring] New achievements for ${params.nexusId}:`, newAchievements)
+      }
+    }).catch(() => { /* 成就系统不影响核心评分 */ })
+
     return { scoring, scoreChange: delta }
   }
 

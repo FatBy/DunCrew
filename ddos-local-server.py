@@ -93,8 +93,9 @@ except ImportError:
 
 import base64
 import io
+import sqlite3
 
-VERSION = "4.0.0"
+VERSION = "4.1.0"
 
 # 🏠 应用根目录 (兼容 PyInstaller frozen 模式)
 # PyInstaller --onefile 模式下 __file__ 指向临时解压目录，需用 sys.executable 定位实际路径
@@ -102,6 +103,111 @@ if getattr(sys, 'frozen', False):
     APP_DIR = Path(sys.executable).parent.resolve()
 else:
     APP_DIR = Path(__file__).parent.resolve()
+
+
+# ============================================
+# V2: SQLite 数据库初始化
+# ============================================
+
+def init_sqlite_db(db_path: Path) -> sqlite3.Connection:
+    """初始化 SQLite 数据库，创建 V2 所需的表"""
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    conn.executescript("""
+        -- 会话表
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL DEFAULT '',
+            type TEXT NOT NULL DEFAULT 'general',
+            nexus_id TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            last_message_preview TEXT DEFAULT ''
+        );
+
+        -- 消息表
+        CREATE TABLE IF NOT EXISTS messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            metadata TEXT,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestamp);
+
+        -- 检查点表 (断点续作)
+        CREATE TABLE IF NOT EXISTS checkpoints (
+            session_id TEXT PRIMARY KEY,
+            data TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+
+        -- 记忆表 (FTS5 全文搜索)
+        CREATE TABLE IF NOT EXISTS memory (
+            id TEXT PRIMARY KEY,
+            source TEXT NOT NULL DEFAULT 'ephemeral',
+            content TEXT NOT NULL,
+            nexus_id TEXT,
+            tags TEXT DEFAULT '[]',
+            metadata TEXT DEFAULT '{}',
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_source ON memory(source);
+        CREATE INDEX IF NOT EXISTS idx_memory_nexus ON memory(nexus_id);
+
+        -- FTS5 虚拟表 (全文搜索)
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+            content,
+            tags,
+            content='memory',
+            content_rowid='rowid'
+        );
+
+        -- 自动同步 FTS 索引的触发器
+        CREATE TRIGGER IF NOT EXISTS memory_ai AFTER INSERT ON memory BEGIN
+            INSERT INTO memory_fts(rowid, content, tags)
+            VALUES (new.rowid, new.content, new.tags);
+        END;
+        CREATE TRIGGER IF NOT EXISTS memory_ad AFTER DELETE ON memory BEGIN
+            INSERT INTO memory_fts(memory_fts, rowid, content, tags)
+            VALUES ('delete', old.rowid, old.content, old.tags);
+        END;
+        CREATE TRIGGER IF NOT EXISTS memory_au AFTER UPDATE ON memory BEGIN
+            INSERT INTO memory_fts(memory_fts, rowid, content, tags)
+            VALUES ('delete', old.rowid, old.content, old.tags);
+            INSERT INTO memory_fts(rowid, content, tags)
+            VALUES (new.rowid, new.content, new.tags);
+        END;
+
+        -- 评分表
+        CREATE TABLE IF NOT EXISTS nexus_scoring (
+            nexus_id TEXT PRIMARY KEY,
+            scoring_data TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+    """)
+
+    # V3: 安全地添加 confidence 列 (如果不存在)
+    try:
+        cursor.execute("SELECT confidence FROM memory LIMIT 1")
+    except sqlite3.OperationalError:
+        cursor.execute("ALTER TABLE memory ADD COLUMN confidence REAL DEFAULT 0.5")
+        print("[SQLite] Added 'confidence' column to memory table")
+
+    conn.commit()
+    print(f"[SQLite] Database initialized at {db_path}")
+    return conn
+
+
+# 全局数据库连接 (线程安全 WAL 模式)
+_db_conn: sqlite3.Connection | None = None
+_db_lock = threading.Lock()
 
 # 🛡️ 安全配置
 DANGEROUS_COMMANDS = {'rm -rf /', 'format', 'mkfs', 'dd if=/dev/zero'}
@@ -621,6 +727,45 @@ class ToolRegistry:
                     'triggers': {'type': 'array', 'description': '触发关键词列表（可选）', 'required': False},
                 },
             },
+            'browser_navigate': {
+                'description': '使用浏览器导航到指定 URL，返回页面标题和文本内容。支持 JavaScript 渲染的动态页面',
+                'inputs': {
+                    'url': {'type': 'string', 'description': '要访问的网页 URL', 'required': True},
+                    'waitUntil': {'type': 'string', 'description': '等待条件: domcontentloaded(默认) / networkidle / load', 'required': False},
+                },
+            },
+            'browser_click': {
+                'description': '点击浏览器当前页面上的元素（需先用 browser_navigate 打开页面）',
+                'inputs': {
+                    'selector': {'type': 'string', 'description': 'CSS 选择器或文本选择器，如 "button.submit" 或 "text=登录"', 'required': True},
+                },
+            },
+            'browser_fill': {
+                'description': '在浏览器当前页面的输入框中填写内容',
+                'inputs': {
+                    'selector': {'type': 'string', 'description': 'CSS 选择器，如 "input[name=search]" 或 "#username"', 'required': True},
+                    'value': {'type': 'string', 'description': '要填写的文本内容', 'required': True},
+                },
+            },
+            'browser_extract': {
+                'description': '提取浏览器当前页面的文本内容（支持指定选择器提取局部内容）',
+                'inputs': {
+                    'selector': {'type': 'string', 'description': 'CSS 选择器（默认 body，提取主要内容区域）', 'required': False},
+                },
+            },
+            'browser_screenshot': {
+                'description': '对浏览器当前页面截图',
+                'inputs': {
+                    'selector': {'type': 'string', 'description': '指定截图区域的 CSS 选择器（可选，默认整个页面）', 'required': False},
+                    'fullPage': {'type': 'boolean', 'description': '是否截取完整页面（包括滚动区域）', 'required': False},
+                },
+            },
+            'browser_evaluate': {
+                'description': '在浏览器当前页面执行 JavaScript 代码并返回结果',
+                'inputs': {
+                    'expression': {'type': 'string', 'description': 'JavaScript 表达式（支持 async）', 'required': True},
+                },
+            },
         }
         tools = []
         for name in self.builtin_tools:
@@ -894,6 +1039,245 @@ class SubagentManager:
             print(f"[SubagentManager] Cleaned up {len(to_remove)} old agents")
 
 
+# ============================================
+# 🌐 浏览器自动化管理器 (Playwright)
+# ============================================
+
+class BrowserManager:
+    """
+    Playwright 浏览器管理器 - 懒启动 + 空闲自动回收
+    
+    提供持久化浏览器会话，支持跨工具调用复用同一个 page。
+    首次调用浏览器工具时启动 Chromium，空闲 5 分钟自动关闭。
+    """
+    IDLE_TIMEOUT = 300  # 空闲超时 (秒)
+    
+    def __init__(self):
+        self._playwright = None
+        self._browser = None
+        self._context = None
+        self._page = None
+        self._lock = threading.Lock()
+        self._last_used = 0.0
+        self._idle_timer = None
+        self._available = None  # None = 未检测, True/False
+    
+    def is_available(self) -> bool:
+        """检测 Playwright 是否可用"""
+        if self._available is not None:
+            return self._available
+        try:
+            from playwright.sync_api import sync_playwright
+            self._available = True
+        except ImportError:
+            self._available = False
+            print("[BrowserManager] playwright not installed. Run: pip install playwright && playwright install chromium")
+        return self._available
+    
+    def _ensure_browser(self):
+        """确保浏览器已启动 (线程安全)"""
+        if self._page and not self._page.is_closed():
+            self._last_used = time.time()
+            return
+        
+        with self._lock:
+            # double check
+            if self._page and not self._page.is_closed():
+                self._last_used = time.time()
+                return
+            
+            self._cleanup_internal()
+            
+            from playwright.sync_api import sync_playwright
+            
+            print("[BrowserManager] Launching Chromium...")
+            self._playwright = sync_playwright().start()
+            self._browser = self._playwright.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-blink-features=AutomationControlled',
+                ]
+            )
+            self._context = self._browser.new_context(
+                viewport={'width': 1280, 'height': 900},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                locale='zh-CN',
+            )
+            self._page = self._context.new_page()
+            self._last_used = time.time()
+            self._schedule_idle_check()
+            print("[BrowserManager] Browser ready")
+    
+    def _schedule_idle_check(self):
+        """定时检测空闲超时"""
+        if self._idle_timer:
+            self._idle_timer.cancel()
+        self._idle_timer = threading.Timer(60, self._check_idle)
+        self._idle_timer.daemon = True
+        self._idle_timer.start()
+    
+    def _check_idle(self):
+        """检查空闲超时，自动关闭浏览器"""
+        if self._page and (time.time() - self._last_used > self.IDLE_TIMEOUT):
+            print("[BrowserManager] Idle timeout, shutting down browser")
+            self.shutdown()
+        elif self._page:
+            self._schedule_idle_check()
+    
+    def _cleanup_internal(self):
+        """内部清理 (不加锁)"""
+        try:
+            if self._page and not self._page.is_closed():
+                self._page.close()
+        except Exception:
+            pass
+        try:
+            if self._context:
+                self._context.close()
+        except Exception:
+            pass
+        try:
+            if self._browser:
+                self._browser.close()
+        except Exception:
+            pass
+        try:
+            if self._playwright:
+                self._playwright.stop()
+        except Exception:
+            pass
+        self._page = None
+        self._context = None
+        self._browser = None
+        self._playwright = None
+    
+    def shutdown(self):
+        """关闭浏览器 (线程安全)"""
+        with self._lock:
+            if self._idle_timer:
+                self._idle_timer.cancel()
+                self._idle_timer = None
+            self._cleanup_internal()
+            print("[BrowserManager] Browser shut down")
+    
+    # ---- 工具方法 ----
+    
+    def navigate(self, url: str, wait_until: str = 'domcontentloaded') -> str:
+        """导航到 URL，返回页面标题和摘要"""
+        self._ensure_browser()
+        try:
+            self._page.goto(url, wait_until=wait_until, timeout=30000)
+            title = self._page.title()
+            # 提取可见文本摘要
+            text = self._page.evaluate('''() => {
+                const sel = document.querySelectorAll('article, main, [role="main"], .content, #content, body');
+                const el = sel[0] || document.body;
+                return el.innerText.slice(0, 6000);
+            }''')
+            return json.dumps({
+                'status': 'ok',
+                'url': self._page.url,
+                'title': title,
+                'text': text.strip()[:4000] if text else '',
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({'status': 'error', 'error': str(e)}, ensure_ascii=False)
+    
+    def click(self, selector: str) -> str:
+        """点击页面元素"""
+        self._ensure_browser()
+        try:
+            self._page.click(selector, timeout=10000)
+            self._page.wait_for_load_state('domcontentloaded', timeout=10000)
+            title = self._page.title()
+            return json.dumps({
+                'status': 'ok',
+                'url': self._page.url,
+                'title': title,
+                'message': f'Clicked "{selector}" successfully',
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({'status': 'error', 'error': str(e)}, ensure_ascii=False)
+    
+    def fill(self, selector: str, value: str) -> str:
+        """填写表单字段"""
+        self._ensure_browser()
+        try:
+            self._page.fill(selector, value, timeout=10000)
+            return json.dumps({
+                'status': 'ok',
+                'message': f'Filled "{selector}" with value',
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({'status': 'error', 'error': str(e)}, ensure_ascii=False)
+    
+    def extract(self, selector: str = 'body') -> str:
+        """提取页面元素文本内容"""
+        self._ensure_browser()
+        try:
+            if selector == 'body':
+                text = self._page.evaluate('''() => {
+                    const sel = document.querySelectorAll('article, main, [role="main"], .content, #content, body');
+                    const el = sel[0] || document.body;
+                    return el.innerText;
+                }''')
+            else:
+                el = self._page.query_selector(selector)
+                text = el.inner_text() if el else ''
+            
+            return json.dumps({
+                'status': 'ok',
+                'url': self._page.url,
+                'title': self._page.title(),
+                'text': (text or '').strip()[:6000],
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({'status': 'error', 'error': str(e)}, ensure_ascii=False)
+    
+    def screenshot(self, selector: str = None, full_page: bool = False) -> str:
+        """截图并返回 base64 编码"""
+        self._ensure_browser()
+        try:
+            import base64
+            if selector:
+                el = self._page.query_selector(selector)
+                if el:
+                    img_bytes = el.screenshot()
+                else:
+                    return json.dumps({'status': 'error', 'error': f'Selector "{selector}" not found'}, ensure_ascii=False)
+            else:
+                img_bytes = self._page.screenshot(full_page=full_page)
+            
+            b64 = base64.b64encode(img_bytes).decode('ascii')
+            return json.dumps({
+                'status': 'ok',
+                'url': self._page.url,
+                'title': self._page.title(),
+                'image_base64': b64[:200] + '...(truncated)',
+                'image_size': len(img_bytes),
+                'message': f'Screenshot taken ({len(img_bytes)} bytes)',
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({'status': 'error', 'error': str(e)}, ensure_ascii=False)
+    
+    def evaluate(self, expression: str) -> str:
+        """在页面上执行 JavaScript 表达式"""
+        self._ensure_browser()
+        try:
+            result = self._page.evaluate(expression)
+            return json.dumps({
+                'status': 'ok',
+                'result': result if isinstance(result, (str, int, float, bool, list, dict, type(None))) else str(result),
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({'status': 'error', 'error': str(e)}, ensure_ascii=False)
+
+
+# 全局浏览器管理器单例
+_browser_manager = BrowserManager()
+
+
 class ClawdDataHandler(BaseHTTPRequestHandler):
     clawd_path = None
     project_path = None  # 项目目录，用于加载内置技能
@@ -901,6 +1285,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
     subagent_manager = None  # type: SubagentManager
     tasks = {}
     tasks_lock = threading.Lock()
+    _gene_file_lock = threading.Lock()  # 基因文件读写锁，防止并发写入损坏
     
     def log_message(self, format, *args):
         timestamp = datetime.now().strftime('%H:%M:%S')
@@ -908,7 +1293,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
     
     def send_cors_headers(self):
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
     
     def send_json(self, data, status=200):
@@ -916,7 +1301,10 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.send_cors_headers()
         self.end_headers()
-        self.wfile.write(json.dumps(data, ensure_ascii=False, indent=2).encode('utf-8'))
+        try:
+            self.wfile.write(json.dumps(data, ensure_ascii=False, indent=2).encode('utf-8'))
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass  # 客户端已断开，静默忽略
     
     def send_text(self, text, status=200):
         self.send_response(status)
@@ -987,6 +1375,31 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             self.handle_skill_raw(skill_name)
         elif path == '/mcp/servers':
             self.handle_mcp_servers_list()
+        # V2: Session API
+        elif path == '/api/sessions':
+            self.handle_sessions_list(query)
+        elif path.startswith('/api/sessions/') and path.endswith('/messages'):
+            session_id = path[14:-9]  # strip '/api/sessions/' and '/messages'
+            self.handle_session_messages_get(session_id, query)
+        elif path.startswith('/api/sessions/') and path.endswith('/checkpoint'):
+            session_id = path[14:-11]  # strip '/api/sessions/' and '/checkpoint'
+            self.handle_session_checkpoint_get(session_id)
+        elif path.startswith('/api/sessions/') and not path.endswith('/messages') and not path.endswith('/checkpoint'):
+            session_id = path[14:]
+            self.handle_session_get(session_id)
+        # V2: Memory API
+        elif path == '/api/memory/search':
+            self.handle_memory_search(query)
+        elif path == '/api/memory/stats':
+            self.handle_memory_stats()
+        elif path.startswith('/api/memory/nexus/'):
+            nexus_id = path[18:]
+            limit = int(query.get('limit', ['20'])[0])
+            self.handle_memory_by_nexus(nexus_id, limit)
+        # V2: Scoring API
+        elif path.startswith('/api/nexus/') and path.endswith('/scoring'):
+            nexus_id = path[11:-8]  # strip '/api/nexus/' and '/scoring'
+            self.handle_scoring_get(nexus_id)
         elif path.startswith('/data/'):
             # 前端数据读取 API
             key = path[6:]  # strip '/data/'
@@ -1065,6 +1478,27 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             self.handle_nexus_sop_history_save(nexus_name, data)
         elif path == '/task/execute':
             self.handle_task_execute(data)
+        # V2: Session API (POST)
+        elif path == '/api/sessions':
+            self.handle_session_create(data)
+        elif path.startswith('/api/sessions/') and path.endswith('/messages'):
+            session_id = path[14:-9]
+            self.handle_session_message_append(session_id, data)
+        elif path.startswith('/api/sessions/') and path.endswith('/checkpoint'):
+            session_id = path[14:-11]
+            self.handle_session_checkpoint_save(session_id, data)
+        elif path.startswith('/api/sessions/') and path.endswith('/meta'):
+            session_id = path[14:-5]
+            self.handle_session_meta_update(session_id, data)
+        # V2: Memory API (POST)
+        elif path == '/api/memory/write':
+            self.handle_memory_write(data)
+        elif path == '/api/memory/write-batch':
+            self.handle_memory_write_batch(data)
+        elif path == '/api/memory/prune':
+            self.handle_memory_prune(data)
+        elif path == '/api/memory/decay':
+            self.handle_memory_decay(data)
         elif path.startswith('/data/'):
             # 前端数据写入 API
             key = path[6:]  # strip '/data/'
@@ -1086,9 +1520,393 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         else:
             self.send_error_json(f'Unknown endpoint: {path}', 404)
     
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
+        try:
+            data = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            self.send_error_json('Invalid JSON', 400)
+            return
+        
+        if path.startswith('/api/nexus/') and path.endswith('/scoring'):
+            nexus_id = path[11:-8]
+            self.handle_scoring_put(nexus_id, data)
+        else:
+            self.send_error_json(f'Unknown PUT endpoint: {path}', 404)
+    
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+        
+        if path.startswith('/api/sessions/') and path.endswith('/checkpoint'):
+            session_id = path[14:-11]
+            self.handle_session_checkpoint_delete(session_id)
+        elif path.startswith('/api/sessions/'):
+            session_id = path[14:]
+            self.handle_session_delete(session_id)
+        else:
+            self.send_error_json(f'Unknown DELETE endpoint: {path}', 404)
+    
     # ============================================
-    # 🌐 静态文件服务 (托管前端 dist/)
+    # V2: SQLite API Handlers
     # ============================================
+
+    def _get_db(self) -> sqlite3.Connection:
+        global _db_conn
+        if _db_conn is None:
+            db_path = self.clawd_path / 'ddos_v2.db'
+            _db_conn = init_sqlite_db(db_path)
+        return _db_conn
+
+    # ---- Sessions ----
+
+    def handle_session_create(self, data: dict):
+        """POST /api/sessions - 创建新会话"""
+        db = self._get_db()
+        session_id = data.get('id') or f"sess-{uuid.uuid4().hex[:12]}"
+        title = data.get('title', '')
+        sess_type = data.get('type', 'general')
+        nexus_id = data.get('nexusId')
+        now = int(time.time() * 1000)
+        with _db_lock:
+            db.execute(
+                "INSERT OR IGNORE INTO sessions (id, title, type, nexus_id, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                (session_id, title, sess_type, nexus_id, now, now)
+            )
+            db.commit()
+        self.send_json({'id': session_id, 'title': title, 'type': sess_type, 'nexusId': nexus_id, 'createdAt': now, 'updatedAt': now})
+
+    def handle_sessions_list(self, query: dict):
+        """GET /api/sessions - 列出会话"""
+        db = self._get_db()
+        sess_type = query.get('type', [None])[0]
+        nexus_id = query.get('nexusId', [None])[0]
+        limit = int(query.get('limit', ['50'])[0])
+        offset = int(query.get('offset', ['0'])[0])
+        
+        sql = "SELECT * FROM sessions WHERE 1=1"
+        params = []
+        if sess_type:
+            sql += " AND type = ?"
+            params.append(sess_type)
+        if nexus_id:
+            sql += " AND nexus_id = ?"
+            params.append(nexus_id)
+        sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        rows = db.execute(sql, params).fetchall()
+        sessions = [{'id': r['id'], 'title': r['title'], 'type': r['type'], 'nexusId': r['nexus_id'],
+                      'createdAt': r['created_at'], 'updatedAt': r['updated_at'],
+                      'lastMessagePreview': r['last_message_preview']} for r in rows]
+        self.send_json(sessions)
+
+    def handle_session_get(self, session_id: str):
+        """GET /api/sessions/{id} - 获取会话详情"""
+        db = self._get_db()
+        row = db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row:
+            self.send_error_json('Session not found', 404)
+            return
+        messages = db.execute("SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp", (session_id,)).fetchall()
+        checkpoint_row = db.execute("SELECT data FROM checkpoints WHERE session_id = ?", (session_id,)).fetchone()
+        self.send_json({
+            'meta': {'id': row['id'], 'title': row['title'], 'type': row['type'], 'nexusId': row['nexus_id'],
+                     'createdAt': row['created_at'], 'updatedAt': row['updated_at']},
+            'messages': [{'id': m['id'], 'role': m['role'], 'content': m['content'], 'timestamp': m['timestamp']} for m in messages],
+            'checkpoint': json.loads(checkpoint_row['data']) if checkpoint_row else None,
+        })
+
+    def handle_session_delete(self, session_id: str):
+        """DELETE /api/sessions/{id}"""
+        db = self._get_db()
+        with _db_lock:
+            db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            db.commit()
+        self.send_json({'status': 'ok'})
+
+    def handle_session_messages_get(self, session_id: str, query: dict):
+        """GET /api/sessions/{id}/messages"""
+        db = self._get_db()
+        limit = int(query.get('limit', ['100'])[0])
+        offset = int(query.get('offset', ['0'])[0])
+        since = query.get('since', [None])[0]
+        
+        sql = "SELECT * FROM messages WHERE session_id = ?"
+        params: list = [session_id]
+        if since:
+            sql += " AND timestamp > ?"
+            params.append(int(since))
+        sql += " ORDER BY timestamp LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        rows = db.execute(sql, params).fetchall()
+        self.send_json([{'id': r['id'], 'role': r['role'], 'content': r['content'], 'timestamp': r['timestamp']} for r in rows])
+
+    def handle_session_message_append(self, session_id: str, data: dict):
+        """POST /api/sessions/{id}/messages"""
+        db = self._get_db()
+        msg = data.get('message', data)
+        msg_id = msg.get('id') or f"msg-{uuid.uuid4().hex[:12]}"
+        role = msg.get('role', 'user')
+        content = msg.get('content', '')
+        timestamp = msg.get('timestamp') or int(time.time() * 1000)
+        now = int(time.time() * 1000)
+        
+        with _db_lock:
+            db.execute("INSERT OR IGNORE INTO messages (id, session_id, role, content, timestamp) VALUES (?,?,?,?,?)",
+                       (msg_id, session_id, role, content, timestamp))
+            db.execute("UPDATE sessions SET updated_at = ?, last_message_preview = ? WHERE id = ?",
+                       (now, content[:100], session_id))
+            db.commit()
+        self.send_json({'status': 'ok', 'id': msg_id})
+
+    def handle_session_meta_update(self, session_id: str, data: dict):
+        """POST /api/sessions/{id}/meta"""
+        db = self._get_db()
+        updates = []
+        params = []
+        if 'title' in data:
+            updates.append("title = ?")
+            params.append(data['title'])
+        if 'lastMessagePreview' in data:
+            updates.append("last_message_preview = ?")
+            params.append(data['lastMessagePreview'])
+        if updates:
+            params.append(int(time.time() * 1000))
+            params.append(session_id)
+            with _db_lock:
+                db.execute(f"UPDATE sessions SET {', '.join(updates)}, updated_at = ? WHERE id = ?", params)
+                db.commit()
+        self.send_json({'status': 'ok'})
+
+    def handle_session_checkpoint_get(self, session_id: str):
+        """GET /api/sessions/{id}/checkpoint"""
+        db = self._get_db()
+        row = db.execute("SELECT data FROM checkpoints WHERE session_id = ?", (session_id,)).fetchone()
+        self.send_json(json.loads(row['data']) if row else None)
+
+    def handle_session_checkpoint_save(self, session_id: str, data: dict):
+        """POST /api/sessions/{id}/checkpoint"""
+        db = self._get_db()
+        now = int(time.time() * 1000)
+        with _db_lock:
+            db.execute("INSERT OR REPLACE INTO checkpoints (session_id, data, created_at) VALUES (?,?,?)",
+                       (session_id, json.dumps(data, ensure_ascii=False), now))
+            db.commit()
+        self.send_json({'status': 'ok'})
+
+    def handle_session_checkpoint_delete(self, session_id: str):
+        """DELETE /api/sessions/{id}/checkpoint"""
+        db = self._get_db()
+        with _db_lock:
+            db.execute("DELETE FROM checkpoints WHERE session_id = ?", (session_id,))
+            db.commit()
+        self.send_json({'status': 'ok'})
+
+    # ---- Memory ----
+
+    def handle_memory_write(self, data: dict):
+        """POST /api/memory/write - 写入单条记忆"""
+        db = self._get_db()
+        mem_id = f"mem-{uuid.uuid4().hex[:12]}"
+        source = data.get('source', 'ephemeral')
+        content = data.get('content', '')
+        nexus_id = data.get('nexusId')
+        tags = json.dumps(data.get('tags', []), ensure_ascii=False)
+        metadata = json.dumps(data.get('metadata', {}), ensure_ascii=False)
+        confidence = data.get('confidence', 0.5)
+        now = int(time.time() * 1000)
+        
+        with _db_lock:
+            db.execute("INSERT INTO memory (id, source, content, nexus_id, tags, metadata, created_at, confidence) VALUES (?,?,?,?,?,?,?,?)",
+                       (mem_id, source, content, nexus_id, tags, metadata, now, confidence))
+            db.commit()
+        self.send_json({'status': 'ok', 'id': mem_id})
+
+    def handle_memory_write_batch(self, data: dict):
+        """POST /api/memory/write-batch - 批量写入记忆"""
+        db = self._get_db()
+        entries = data.get('entries', [])
+        count = 0
+        now = int(time.time() * 1000)
+        with _db_lock:
+            for entry in entries:
+                mem_id = f"mem-{uuid.uuid4().hex[:12]}"
+                db.execute("INSERT INTO memory (id, source, content, nexus_id, tags, metadata, created_at) VALUES (?,?,?,?,?,?,?)",
+                           (mem_id, entry.get('source', 'ephemeral'), entry.get('content', ''),
+                            entry.get('nexusId'), json.dumps(entry.get('tags', []), ensure_ascii=False),
+                            json.dumps(entry.get('metadata', {}), ensure_ascii=False), now))
+                count += 1
+            db.commit()
+        self.send_json({'status': 'ok', 'count': count})
+
+    def handle_memory_search(self, query: dict):
+        """GET /api/memory/search?q=xxx&source=xxx&nexusId=xxx&limit=20"""
+        db = self._get_db()
+        q = query.get('q', [''])[0]
+        source = query.get('source', [None])[0]
+        nexus_id = query.get('nexusId', [None])[0]
+        limit = int(query.get('limit', ['20'])[0])
+        
+        if q:
+            # FTS5 搜索
+            fts_sql = """
+                SELECT m.*, rank
+                FROM memory_fts fts
+                JOIN memory m ON m.rowid = fts.rowid
+                WHERE memory_fts MATCH ?
+            """
+            params: list = [q]
+            if source:
+                fts_sql += " AND m.source = ?"
+                params.append(source)
+            if nexus_id:
+                fts_sql += " AND m.nexus_id = ?"
+                params.append(nexus_id)
+            fts_sql += " ORDER BY rank LIMIT ?"
+            params.append(limit)
+            
+            try:
+                rows = db.execute(fts_sql, params).fetchall()
+            except Exception:
+                # FTS 查询失败时降级到 LIKE 搜索
+                rows = db.execute(
+                    "SELECT * FROM memory WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
+                    (f"%{q}%", limit)
+                ).fetchall()
+        else:
+            sql = "SELECT * FROM memory WHERE 1=1"
+            params = []
+            if source:
+                sql += " AND source = ?"
+                params.append(source)
+            if nexus_id:
+                sql += " AND nexus_id = ?"
+                params.append(nexus_id)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+            rows = db.execute(sql, params).fetchall()
+        
+        results = [{
+            'id': r['id'], 'source': r['source'], 'content': r['content'],
+            'nexusId': r['nexus_id'], 'tags': json.loads(r['tags'] or '[]'),
+            'metadata': json.loads(r['metadata'] or '{}'), 'createdAt': r['created_at'],
+            'score': 1.0,
+        } for r in rows]
+        self.send_json(results)
+
+    def handle_memory_stats(self):
+        """GET /api/memory/stats"""
+        db = self._get_db()
+        total = db.execute("SELECT COUNT(*) as cnt FROM memory").fetchone()['cnt']
+        by_source = {}
+        for row in db.execute("SELECT source, COUNT(*) as cnt FROM memory GROUP BY source").fetchall():
+            by_source[row['source']] = row['cnt']
+        oldest = db.execute("SELECT MIN(created_at) as ts FROM memory").fetchone()['ts']
+        newest = db.execute("SELECT MAX(created_at) as ts FROM memory").fetchone()['ts']
+        self.send_json({'totalEntries': total, 'bySource': by_source, 'oldestEntry': oldest, 'newestEntry': newest})
+
+    def handle_memory_by_nexus(self, nexus_id: str, limit: int):
+        """GET /api/memory/nexus/{nexusId}?limit=20"""
+        db = self._get_db()
+        rows = db.execute("SELECT * FROM memory WHERE nexus_id = ? ORDER BY created_at DESC LIMIT ?",
+                          (nexus_id, limit)).fetchall()
+        results = [{
+            'id': r['id'], 'source': r['source'], 'content': r['content'],
+            'nexusId': r['nexus_id'], 'tags': json.loads(r['tags'] or '[]'),
+            'createdAt': r['created_at'], 'score': 1.0,
+        } for r in rows]
+        self.send_json(results)
+
+    def handle_memory_prune(self, data: dict):
+        """POST /api/memory/prune - 清理过期记忆"""
+        db = self._get_db()
+        older_than_days = data.get('olderThanDays', 30)
+        cutoff = int((time.time() - older_than_days * 86400) * 1000)
+        with _db_lock:
+            cursor = db.execute("DELETE FROM memory WHERE created_at < ?", (cutoff,))
+            db.commit()
+        self.send_json({'status': 'ok', 'deleted': cursor.rowcount})
+
+    def handle_memory_decay(self, data: dict):
+        """POST /api/memory/decay - 批量衰减 L0 记忆置信度"""
+        import math
+        db = self._get_db()
+        half_life_days = data.get('halfLifeDays', 30)
+        min_confidence = data.get('minConfidence', 0.05)
+        now_ms = int(time.time() * 1000)
+        half_life_ms = half_life_days * 86400 * 1000
+
+        with _db_lock:
+            rows = db.execute(
+                "SELECT id, confidence, created_at FROM memory WHERE source = 'memory' AND confidence > ?",
+                (min_confidence,)
+            ).fetchall()
+
+            updated = 0
+            cleaned = 0
+            for row in rows:
+                age_ms = now_ms - row['created_at']
+                if age_ms <= 0:
+                    continue
+                decay_factor = math.pow(0.5, age_ms / half_life_ms)
+                new_confidence = row['confidence'] * decay_factor
+
+                if new_confidence < min_confidence:
+                    db.execute("DELETE FROM memory WHERE id = ?", (row['id'],))
+                    cleaned += 1
+                else:
+                    db.execute("UPDATE memory SET confidence = ? WHERE id = ?",
+                               (round(new_confidence, 4), row['id']))
+                    updated += 1
+
+            db.commit()
+
+        self.send_json({'status': 'ok', 'updated': updated, 'cleaned': cleaned})
+
+    # ---- Scoring ----
+
+    def handle_scoring_get(self, nexus_id: str):
+        """GET /api/nexus/{nexusId}/scoring"""
+        db = self._get_db()
+        row = db.execute("SELECT scoring_data FROM nexus_scoring WHERE nexus_id = ?", (nexus_id,)).fetchone()
+        if row:
+            self.send_json(json.loads(row['scoring_data']))
+        else:
+            # 同时尝试从旧 fitness 文件迁移
+            nexus_dir = self._resolve_nexus_dir(nexus_id)
+            if nexus_dir:
+                fitness_file = nexus_dir / 'sop-fitness.json'
+                if fitness_file.exists():
+                    try:
+                        with fitness_file.open('r', encoding='utf-8') as f:
+                            legacy_data = json.load(f)
+                        # 迁移到 SQLite
+                        now = int(time.time() * 1000)
+                        with _db_lock:
+                            db.execute("INSERT OR REPLACE INTO nexus_scoring (nexus_id, scoring_data, updated_at) VALUES (?,?,?)",
+                                       (nexus_id, json.dumps(legacy_data, ensure_ascii=False), now))
+                            db.commit()
+                        self.send_json(legacy_data)
+                        return
+                    except Exception:
+                        pass
+            self.send_json(None)
+
+    def handle_scoring_put(self, nexus_id: str, data: dict):
+        """PUT /api/nexus/{nexusId}/scoring"""
+        db = self._get_db()
+        now = int(time.time() * 1000)
+        scoring_json = json.dumps(data, ensure_ascii=False)
+        with _db_lock:
+            db.execute("INSERT OR REPLACE INTO nexus_scoring (nexus_id, scoring_data, updated_at) VALUES (?,?,?)",
+                       (nexus_id, scoring_json, now))
+            db.commit()
+        self.send_json({'status': 'ok'})
     
     def serve_static_file(self, path: str):
         """托管 dist/ 目录的前端构建产物，支持 SPA 路由"""
@@ -1170,8 +1988,8 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         data_dir = self.clawd_path / 'data'
         data_dir.mkdir(exist_ok=True)
         
-        # 安全检查：key 只能是字母数字下划线
-        if not re.match(r'^[a-zA-Z0-9_-]+$', key):
+        # 安全检查：允许字母数字下划线中文等 Unicode 字符，禁止路径穿越
+        if not key or '..' in key or '/' in key or '\\' in key or len(key) > 200:
             self.send_error_json('Invalid key format', 400)
             return
         
@@ -1192,8 +2010,8 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         data_dir = self.clawd_path / 'data'
         data_dir.mkdir(exist_ok=True)
         
-        # 安全检查：key 只能是字母数字下划线
-        if not re.match(r'^[a-zA-Z0-9_-]+$', key):
+        # 安全检查：允许字母数字下划线中文等 Unicode 字符，禁止路径穿越
+        if not key or '..' in key or '/' in key or '\\' in key or len(key) > 200:
             self.send_error_json('Invalid key format', 400)
             return
         
@@ -1484,6 +2302,12 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
                     'openInExplorer': self._tool_open_in_explorer,
                     'parseFile': self._tool_parse_file,
                     'generateSkill': self._tool_generate_skill,
+                    'browser_navigate': self._tool_browser_navigate,
+                    'browser_click': self._tool_browser_click,
+                    'browser_fill': self._tool_browser_fill,
+                    'browser_extract': self._tool_browser_extract,
+                    'browser_screenshot': self._tool_browser_screenshot,
+                    'browser_evaluate': self._tool_browser_evaluate,
                 }
                 handler = builtin_handlers.get(tool_name)
                 if handler:
@@ -2232,7 +3056,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
                 return f"无法查询 {location} 的天气: {str(e)}"
     
     def _tool_web_search(self, args: dict) -> str:
-        """网页搜索 (使用 DuckDuckGo HTML)"""
+        """网页搜索 (多源: Bing CN → DuckDuckGo，自动切换)"""
         import urllib.request
         import urllib.parse
         import re
@@ -2242,38 +3066,77 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             raise ValueError("Search query is required")
         
         encoded_query = urllib.parse.quote(query)
+        ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
         
+        # ---- 搜索源1: Bing CN (国内直连稳定) ----
         try:
-            # 使用 DuckDuckGo HTML 版本
-            url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            bing_url = f"https://cn.bing.com/search?q={encoded_query}&ensearch=0"
+            req = urllib.request.Request(bing_url, headers={
+                'User-Agent': ua,
+                'Accept-Language': 'zh-CN,zh;q=0.9',
             })
+            with urllib.request.urlopen(req, timeout=12) as response:
+                html = response.read().decode('utf-8', errors='ignore')
             
-            with urllib.request.urlopen(req, timeout=15) as response:
-                html = response.read().decode('utf-8')
-            
-            # 提取搜索结果
             results = []
-            # 匹配结果链接和标题
-            pattern = r'<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>'
-            matches = re.findall(pattern, html)
-            
-            for i, (link, title) in enumerate(matches[:5]):  # 取前5个结果
-                # 清理 DuckDuckGo 重定向链接
-                if 'uddg=' in link:
-                    actual_link = urllib.parse.unquote(link.split('uddg=')[-1].split('&')[0])
-                else:
-                    actual_link = link
-                results.append(f"{i+1}. {title.strip()}\n   {actual_link}")
+            # Bing 搜索结果: <li class="b_algo"><h2><a href="URL">TITLE</a></h2>
+            blocks = re.findall(r'<li class="b_algo">([\s\S]*?)</li>', html)
+            for block in blocks[:8]:
+                link_match = re.search(r'<a[^>]+href="(https?://[^"]+)"[^>]*>([\s\S]*?)</a>', block)
+                if not link_match:
+                    continue
+                link = link_match.group(1)
+                title = re.sub(r'<[^>]+>', '', link_match.group(2)).strip()
+                if not title:
+                    continue
+                # 提取摘要
+                snippet = ''
+                snippet_match = re.search(r'<p[^>]*>([\s\S]*?)</p>', block)
+                if snippet_match:
+                    snippet = re.sub(r'<[^>]+>', '', snippet_match.group(1)).strip()[:200]
+                results.append(f"{len(results)+1}. {title}\n   {link}" + (f"\n   {snippet}" if snippet else ''))
             
             if results:
-                return f"搜索 '{query}' 的结果:\n\n" + "\n\n".join(results)
-            else:
-                return f"未找到 '{query}' 的相关结果"
-                
+                return f"搜索 '{query}' 的结果 (Bing):\n\n" + "\n\n".join(results[:6])
         except Exception as e:
-            return f"搜索失败: {str(e)}"
+            print(f"[webSearch] Bing failed: {e}", file=sys.stderr)
+        
+        # ---- 搜索源2: DuckDuckGo (备用) ----
+        try:
+            ddg_url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+            req = urllib.request.Request(ddg_url, headers={'User-Agent': ua})
+            with urllib.request.urlopen(req, timeout=12) as response:
+                html = response.read().decode('utf-8', errors='ignore')
+            
+            results = []
+            pattern = r'<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)</a>'
+            matches = re.findall(pattern, html)
+            
+            for link, title_raw in matches[:6]:
+                title = re.sub(r'<[^>]+>', '', title_raw).strip()
+                if 'uddg=' in link:
+                    link = urllib.parse.unquote(link.split('uddg=')[-1].split('&')[0])
+                if title:
+                    results.append(f"{len(results)+1}. {title}\n   {link}")
+            
+            if results:
+                return f"搜索 '{query}' 的结果 (DuckDuckGo):\n\n" + "\n\n".join(results)
+        except Exception as e:
+            print(f"[webSearch] DuckDuckGo failed: {e}", file=sys.stderr)
+        
+        # ---- 搜索源3: 使用浏览器搜索 (最终兜底) ----
+        if _browser_manager.is_available():
+            try:
+                bing_url = f"https://cn.bing.com/search?q={encoded_query}&ensearch=0"
+                result_json = _browser_manager.navigate(bing_url, wait_until='networkidle')
+                parsed = json.loads(result_json)
+                if parsed.get('status') == 'ok' and parsed.get('text'):
+                    text = parsed['text'][:3000]
+                    return f"搜索 '{query}' 的结果 (浏览器 Bing):\n\n{text}"
+            except Exception as e:
+                print(f"[webSearch] Browser fallback failed: {e}", file=sys.stderr)
+        
+        return f"搜索 '{query}' 失败: 所有搜索源均不可用（Bing/DuckDuckGo/Browser）"
     
     def _tool_web_fetch(self, args: dict) -> str:
         """获取网页内容 (简化版，提取主要文本)"""
@@ -2551,6 +3414,65 @@ python {safe_name}.py
             'files': [str(skill_md_path), str(python_file_path)],
             'nexusId': nexus_id or None,
         }, ensure_ascii=False)
+
+    # ============================================
+    # 🌐 浏览器自动化工具 (Playwright)
+    # ============================================
+
+    def _tool_browser_navigate(self, args: dict) -> str:
+        """浏览器导航到指定 URL"""
+        if not _browser_manager.is_available():
+            raise RuntimeError("Playwright 未安装。请运行: pip install playwright && playwright install chromium")
+        url = args.get('url', '')
+        if not url:
+            raise ValueError("url is required")
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+        wait_until = args.get('waitUntil', 'domcontentloaded')
+        return _browser_manager.navigate(url, wait_until=wait_until)
+
+    def _tool_browser_click(self, args: dict) -> str:
+        """点击页面元素"""
+        if not _browser_manager.is_available():
+            raise RuntimeError("Playwright 未安装")
+        selector = args.get('selector', '')
+        if not selector:
+            raise ValueError("selector is required")
+        return _browser_manager.click(selector)
+
+    def _tool_browser_fill(self, args: dict) -> str:
+        """填写表单字段"""
+        if not _browser_manager.is_available():
+            raise RuntimeError("Playwright 未安装")
+        selector = args.get('selector', '')
+        value = args.get('value', '')
+        if not selector:
+            raise ValueError("selector is required")
+        return _browser_manager.fill(selector, value)
+
+    def _tool_browser_extract(self, args: dict) -> str:
+        """提取页面文本内容"""
+        if not _browser_manager.is_available():
+            raise RuntimeError("Playwright 未安装")
+        selector = args.get('selector', 'body')
+        return _browser_manager.extract(selector)
+
+    def _tool_browser_screenshot(self, args: dict) -> str:
+        """页面截图"""
+        if not _browser_manager.is_available():
+            raise RuntimeError("Playwright 未安装")
+        selector = args.get('selector')
+        full_page = args.get('fullPage', False)
+        return _browser_manager.screenshot(selector=selector, full_page=full_page)
+
+    def _tool_browser_evaluate(self, args: dict) -> str:
+        """执行 JavaScript"""
+        if not _browser_manager.is_available():
+            raise RuntimeError("Playwright 未安装")
+        expression = args.get('expression', '')
+        if not expression:
+            raise ValueError("expression is required")
+        return _browser_manager.evaluate(expression)
 
     # ============================================
     # 原有处理器 (保持兼容)
@@ -3966,6 +4888,8 @@ curl -X POST http://localhost:3001/api/tools/execute \\
 
         except Exception as e:
             self.send_error_json(f'Failed to read skill: {str(e)}', 500)
+
+    def handle_trace_save(self, data):
         """POST /api/traces/save - 保存执行追踪 (P2: 执行流记忆)"""
         if not data:
             self.send_error_json('Missing trace data', 400)
@@ -4015,34 +4939,36 @@ curl -X POST http://localhost:3001/api/tools/execute \\
         gene_id = data.get('id', '')
 
         try:
-            # 如果基因已存在 (同 ID)，先读取并替换
-            existing_lines = []
-            replaced = False
-            if gene_file.exists():
-                with open(gene_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            existing = json.loads(line)
-                            if existing.get('id') == gene_id:
-                                existing_lines.append(json.dumps(data, ensure_ascii=False))
-                                replaced = True
-                            else:
-                                existing_lines.append(line)
-                        except json.JSONDecodeError:
-                            existing_lines.append(line)
+            with ClawdDataHandler._gene_file_lock:
+                # 如果基因已存在 (同 ID)，先读取并替换
+                existing_lines = []
+                replaced = False
+                if gene_file.exists():
+                    with open(gene_file, 'r', encoding='utf-8', errors='replace') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                existing = json.loads(line)
+                                if existing.get('id') == gene_id:
+                                    existing_lines.append(json.dumps(data, ensure_ascii=False))
+                                    replaced = True
+                                else:
+                                    existing_lines.append(line)
+                            except (json.JSONDecodeError, UnicodeDecodeError):
+                                # 跳过损坏的行，不再保留
+                                continue
 
-            if replaced:
-                # 覆写整个文件 (替换已有基因)
-                with open(gene_file, 'w', encoding='utf-8') as f:
-                    for line in existing_lines:
-                        f.write(line + '\n')
-            else:
-                # 追写新基因
-                with open(gene_file, 'a', encoding='utf-8') as f:
-                    f.write(json.dumps(data, ensure_ascii=False) + '\n')
+                if replaced:
+                    # 覆写整个文件 (替换已有基因)
+                    with open(gene_file, 'w', encoding='utf-8') as f:
+                        for line in existing_lines:
+                            f.write(line + '\n')
+                else:
+                    # 追写新基因
+                    with open(gene_file, 'a', encoding='utf-8') as f:
+                        f.write(json.dumps(data, ensure_ascii=False) + '\n')
 
             self.send_json({
                 'status': 'ok',
@@ -4056,20 +4982,24 @@ curl -X POST http://localhost:3001/api/tools/execute \\
         gene_file = self.clawd_path / 'memory' / 'gene_pool.jsonl'
 
         genes = []
-        if gene_file.exists():
-            try:
-                with open(gene_file, 'r', encoding='utf-8') as f:
+        if not gene_file.exists():
+            self.send_json(genes)
+            return
+
+        try:
+            with ClawdDataHandler._gene_file_lock:
+                with open(gene_file, 'r', encoding='utf-8', errors='replace') as f:
                     for line in f:
                         line = line.strip()
                         if not line:
                             continue
                         try:
                             genes.append(json.loads(line))
-                        except json.JSONDecodeError:
+                        except (json.JSONDecodeError, UnicodeDecodeError):
                             continue
-            except Exception as e:
-                self.send_error_json(f'Failed to load genes: {e}', 500)
-                return
+        except Exception as e:
+            self.send_error_json(f'Failed to load genes: {e}', 500)
+            return
 
         self.send_json(genes)
 
@@ -4392,9 +5322,15 @@ curl -X POST http://localhost:3001/api/tools/execute \\
         api_key = data.get('apiKey')
         request_body = data.get('body')
         is_stream = data.get('stream', False)
+        custom_headers = data.get('headers')  # 前端可传入完整 headers（Anthropic 等非 Bearer 认证）
         
-        if not target_url or not api_key or not request_body:
-            self.send_error_json('Missing url, apiKey, or body', 400)
+        if not target_url or not request_body:
+            self.send_error_json('Missing url or body', 400)
+            return
+        
+        # 若前端未提供 apiKey 也未提供 headers，报错
+        if not api_key and not custom_headers:
+            self.send_error_json('Missing apiKey or headers', 400)
             return
         
         try:
@@ -4412,13 +5348,20 @@ curl -X POST http://localhost:3001/api/tools/execute \\
         session.trust_env = False
         
         try:
+            # 构建请求头: 优先使用前端传入的 custom_headers，否则回退到 Bearer token
+            if custom_headers and isinstance(custom_headers, dict):
+                req_headers = {'Content-Type': 'application/json'}
+                req_headers.update(custom_headers)
+            else:
+                req_headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {api_key}',
+                }
+            
             resp = session.post(
                 target_url,
                 json=request_body,
-                headers={
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {api_key}',
-                },
+                headers=req_headers,
                 stream=is_stream,
                 timeout=(10, 300),  # connect 10s, read 300s (长任务可能很久)
                 verify=False,
@@ -4430,7 +5373,7 @@ curl -X POST http://localhost:3001/api/tools/execute \\
                 self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
                 self.send_header('Cache-Control', 'no-cache')
                 self.send_header('Access-Control-Allow-Origin', '*')
-                self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
                 self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
                 self.send_header('Transfer-Encoding', 'chunked')
                 self.end_headers()
@@ -4845,6 +5788,11 @@ You are DD-OS, a local AI operating system running directly on the user's comput
     cleanup_old_traces(clawd_path)
     cleanup_temp_uploads(clawd_path)
 
+    # V2: 初始化 SQLite 数据库
+    global _db_conn
+    db_path = clawd_path / 'ddos_v2.db'
+    _db_conn = init_sqlite_db(db_path)
+
     # 项目目录 (脚本所在目录 / exe 所在目录)
     project_path = APP_DIR
     
@@ -4877,6 +5825,7 @@ You are DD-OS, a local AI operating system running directly on the user's comput
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down...")
+        _browser_manager.shutdown()
         server.shutdown()
 
 

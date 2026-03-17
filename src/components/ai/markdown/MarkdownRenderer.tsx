@@ -29,7 +29,7 @@ const components: Components = {
     <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
   ),
   pre: ({ children, ...props }) => (
-    <pre className="bg-gray-900/60 border border-white/10 rounded-lg p-4 overflow-x-auto" {...props}>
+    <pre className="bg-white/60 border border-stone-200 rounded-lg p-4 overflow-x-auto" {...props}>
       {children}
     </pre>
   ),
@@ -39,26 +39,26 @@ const components: Components = {
       return <code className={`${className || ''} text-sm`} {...props}>{children}</code>
     }
     return (
-      <code className="text-emerald-400 bg-gray-800/50 px-1.5 py-0.5 rounded text-sm" {...props}>
+      <code className="text-emerald-400 bg-stone-50/50 px-1.5 py-0.5 rounded text-sm" {...props}>
         {children}
       </code>
     )
   },
   table: ({ children, ...props }) => (
     <div className="overflow-x-auto my-4">
-      <table className="min-w-full border border-gray-700/50 text-sm" {...props}>{children}</table>
+      <table className="min-w-full border border-stone-200/50 text-sm" {...props}>{children}</table>
     </div>
   ),
   th: ({ children, ...props }) => (
-    <th className="bg-gray-800/60 border border-gray-700/50 px-3 py-2 text-left text-white/80 font-medium" {...props}>
+    <th className="bg-stone-50/60 border border-stone-200/50 px-3 py-2 text-left text-stone-700 font-medium" {...props}>
       {children}
     </th>
   ),
   td: ({ children, ...props }) => (
-    <td className="border border-gray-700/50 px-3 py-2 text-gray-300" {...props}>{children}</td>
+    <td className="border border-stone-200/50 px-3 py-2 text-stone-700" {...props}>{children}</td>
   ),
   blockquote: ({ children, ...props }) => (
-    <blockquote className="border-l-4 border-cyan-500/40 pl-4 italic text-gray-400 my-4" {...props}>
+    <blockquote className="border-l-4 border-cyan-500/40 pl-4 italic text-stone-500 my-4" {...props}>
       {children}
     </blockquote>
   ),
@@ -77,7 +77,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
   ), [content])
 
   return (
-    <div className={`prose prose-invert prose-sm max-w-none ${className || ''}`}>
+    <div className={`prose prose-stone prose-sm max-w-none ${className || ''}`}>
       {rendered}
     </div>
   )

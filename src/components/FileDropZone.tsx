@@ -138,7 +138,7 @@ export function FileDropZone({
       className={cn(
         'relative border-2 border-dashed rounded-lg p-6 transition-all cursor-pointer',
         'flex flex-col items-center justify-center gap-2',
-        status === 'idle' && 'border-white/20 hover:border-white/40 bg-white/5',
+        status === 'idle' && 'border-stone-200 hover:border-white/40 bg-stone-100/80',
         status === 'dragover' && 'border-cyan-400 bg-cyan-400/10 scale-[1.02]',
         status === 'success' && 'border-emerald-400 bg-emerald-400/10',
         status === 'error' && 'border-red-400 bg-red-400/10',
@@ -147,11 +147,11 @@ export function FileDropZone({
     >
       {status === 'idle' && (
         <>
-          <Upload className="w-8 h-8 text-white/40" />
-          <p className="text-sm font-mono text-white/60">
+          <Upload className="w-8 h-8 text-stone-400" />
+          <p className="text-sm font-mono text-stone-500">
             拖拽文件到此处，或点击上传
           </p>
-          <p className="text-[13px] font-mono text-white/30">
+          <p className="text-[13px] font-mono text-stone-300">
             支持: SOUL.md, IDENTITY.md, MEMORY.md, skills.json, ddos-config.json
           </p>
         </>
