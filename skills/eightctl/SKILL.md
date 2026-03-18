@@ -2,7 +2,7 @@
 name: eightctl
 description: "Control Eight Sleep pods (status, temperature, alarms, schedules)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://eightctl.sh
 metadata:
   openclaw:

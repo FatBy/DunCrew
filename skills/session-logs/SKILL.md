@@ -2,7 +2,7 @@
 name: session-logs
 description: "Search and analyze your own session logs (older/parent conversations) using jq."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "📜"

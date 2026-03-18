@@ -2,7 +2,7 @@
 name: nano-pdf
 description: "Edit PDFs with natural-language instructions using the nano-pdf CLI."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://pypi.org/project/nano-pdf/
 metadata:
   openclaw:

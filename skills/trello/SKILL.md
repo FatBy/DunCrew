@@ -2,7 +2,7 @@
 name: trello
 description: "Manage Trello boards, lists, and cards via the Trello REST API."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://developer.atlassian.com/cloud/trello/rest/
 metadata:
   openclaw:

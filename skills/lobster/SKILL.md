@@ -2,7 +2,7 @@
 name: lobster
 description: "Lobster executes multi-step workflows with approval checkpoints. Use it when:"
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🦞"

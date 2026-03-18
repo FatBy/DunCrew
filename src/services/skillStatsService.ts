@@ -90,7 +90,7 @@ const MILESTONES: Milestone[] = [
 // 技能统计服务类
 // ============================================
 
-const STORAGE_KEY = 'ddos-skill-stats'
+const STORAGE_KEY = 'duncrew-skill-stats'
 const BACKEND_DATA_KEY = 'skill_stats'
 const FLUSH_INTERVAL = 30000 // 30秒自动持久化
 

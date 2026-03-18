@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DD-OS Native Server v3.0
+DunCrew Native Server v3.0
 独立运行的本地 AI 操作系统后端
 
 功能:
@@ -10,7 +10,7 @@ DD-OS Native Server v3.0
     - 记忆持久化
 
 用法:
-    python ddos-local-server.py [--port 3001] [--path ~/clawd]
+    python duncrew-server.py [--port 3001] [--path ~/clawd]
 
 API:
     GET  /status              - 服务状态
@@ -42,13 +42,54 @@ from urllib.parse import unquote, urlparse, parse_qs
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, Future
 
-# 🌐 全局绕过系统代理: Windows 注册表可能配有本地代理 (如 Clash/V2Ray 的 127.0.0.1:13658)
-# Python 的 urllib/requests 默认读取系统代理，如果代理未运行则所有外发 HTTP 请求超时
-# 在服务启动时全局安装无代理的 opener，确保 urllib.request.urlopen() 直连
+# 🌐 智能代理策略: 优先使用系统/环境变量代理，探测失败时才回退直连
+# OpenClaw 做法: 读取 HTTP_PROXY/HTTPS_PROXY 环境变量，按需走代理
+# 旧做法(已废弃): 全局禁用代理(ProxyHandler({}))导致需要翻墙的请求全部失败
 import urllib.request as _urllib_req
-_no_proxy_handler = _urllib_req.ProxyHandler({})
-_opener = _urllib_req.build_opener(_no_proxy_handler)
-_urllib_req.install_opener(_opener)
+import os as _os
+
+def _setup_proxy():
+    """检测系统代理配置，有就用，没有就直连"""
+    proxy_url = (
+        _os.environ.get('HTTPS_PROXY')
+        or _os.environ.get('HTTP_PROXY')
+        or _os.environ.get('https_proxy')
+        or _os.environ.get('http_proxy')
+        or _os.environ.get('ALL_PROXY')
+        or _os.environ.get('all_proxy')
+    )
+    if proxy_url:
+        print(f'[Proxy] Using env proxy: {proxy_url}', file=__import__("sys").stderr)
+        handler = _urllib_req.ProxyHandler({
+            'http': proxy_url,
+            'https': proxy_url,
+        })
+        opener = _urllib_req.build_opener(handler)
+    else:
+        # 无环境变量代理 → 尝试读取系统代理（Windows 注册表）
+        # 如果系统代理也没有，urllib 默认直连
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r'Software\Microsoft\Windows\CurrentVersion\Internet Settings') as key:
+                enabled, _ = winreg.QueryValueEx(key, 'ProxyEnable')
+                if enabled:
+                    server, _ = winreg.QueryValueEx(key, 'ProxyServer')
+                    if server:
+                        proxy = server if '://' in server else f'http://{server}'
+                        print(f'[Proxy] Using Windows system proxy: {proxy}', file=__import__("sys").stderr)
+                        handler = _urllib_req.ProxyHandler({'http': proxy, 'https': proxy})
+                        opener = _urllib_req.build_opener(handler)
+                        _urllib_req.install_opener(opener)
+                        return
+        except Exception:
+            pass
+        # 真的无代理 → 直连
+        print('[Proxy] No proxy detected, using direct connection', file=__import__("sys").stderr)
+        opener = _urllib_req.build_opener()
+    _urllib_req.install_opener(opener)
+
+_setup_proxy()
 
 # PyYAML (skill-executor/parser.py 已依赖)
 try:
@@ -697,6 +738,76 @@ class ToolRegistry:
         """返回所有已注册工具（内置+插件+指令型+MCP）"""
         # 内置工具元数据 (为有特殊参数的工具提供描述)
         BUILTIN_META = {
+            'readFile': {
+                'description': '读取指定路径的文件内容',
+                'inputs': {
+                    'path': {'type': 'string', 'description': '文件路径（绝对或相对路径）', 'required': True},
+                },
+            },
+            'writeFile': {
+                'description': '将内容写入指定文件（覆盖已有内容）',
+                'inputs': {
+                    'path': {'type': 'string', 'description': '文件路径', 'required': True},
+                    'content': {'type': 'string', 'description': '要写入的文本内容', 'required': True},
+                },
+            },
+            'appendFile': {
+                'description': '在指定文件末尾追加内容',
+                'inputs': {
+                    'path': {'type': 'string', 'description': '文件路径', 'required': True},
+                    'content': {'type': 'string', 'description': '要追加的文本内容', 'required': True},
+                },
+            },
+            'listDir': {
+                'description': '列出目录下的文件和子目录',
+                'inputs': {
+                    'path': {'type': 'string', 'description': '目录路径（默认为项目根目录）', 'required': False},
+                },
+            },
+            'runCmd': {
+                'description': '在系统 Shell 中执行命令（谨慎使用，高风险操作需用户确认）',
+                'inputs': {
+                    'command': {'type': 'string', 'description': '要执行的 Shell 命令', 'required': True},
+                },
+            },
+            'weather': {
+                'description': '查询指定城市的天气信息',
+                'inputs': {
+                    'city': {'type': 'string', 'description': '城市名称（如"北京"、"Tokyo"）', 'required': True},
+                },
+            },
+            'webSearch': {
+                'description': '搜索网络信息，返回相关网页标题、链接和摘要',
+                'inputs': {
+                    'query': {'type': 'string', 'description': '搜索关键词', 'required': True},
+                },
+            },
+            'webFetch': {
+                'description': '获取指定 URL 的网页内容并提取主要文本',
+                'inputs': {
+                    'url': {'type': 'string', 'description': '要获取的网页 URL', 'required': True},
+                },
+            },
+            'saveMemory': {
+                'description': '保存一条记忆到持久化存储，用于跨会话记住重要信息',
+                'inputs': {
+                    'key': {'type': 'string', 'description': '记忆标题/关键词', 'required': True},
+                    'content': {'type': 'string', 'description': '记忆内容', 'required': True},
+                    'type': {'type': 'string', 'description': '记忆类型（general/decision/preference/fact）', 'required': False},
+                },
+            },
+            'searchMemory': {
+                'description': '检索历史记忆，查找之前保存的信息',
+                'inputs': {
+                    'query': {'type': 'string', 'description': '搜索关键词', 'required': True},
+                },
+            },
+            'openInExplorer': {
+                'description': '在系统文件管理器中打开指定路径',
+                'inputs': {
+                    'path': {'type': 'string', 'description': '要打开的文件或目录路径', 'required': True},
+                },
+            },
             'nexusBindSkill': {
                 'description': '为当前 Nexus 绑定新技能依赖',
                 'inputs': {
@@ -781,11 +892,18 @@ class ToolRegistry:
                 'version': spec.get('version', '1.0.0'),
             })
         for name, spec in self.instruction_tools.items():
+            desc = spec.get('description', '')
+            inputs = spec.get('inputs', {})
+            # 没有 inputs 的 instruction skill 自动补充 task 参数
+            if not inputs and desc:
+                inputs = {
+                    'task': {'type': 'string', 'description': '要执行的具体任务描述', 'required': True},
+                }
             tools.append({
                 'name': name,
                 'type': 'instruction',
-                'description': spec.get('description', ''),
-                'inputs': spec.get('inputs', {}),
+                'description': desc,
+                'inputs': inputs,
                 'dangerLevel': 'safe',
                 'version': spec.get('version', '1.0.0'),
             })
@@ -1366,6 +1484,8 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             self.handle_gene_load()
         elif path == '/api/capsules/load':
             self.handle_capsule_load()
+        elif path == '/api/amendments/load':
+            self.handle_amendment_load()
         elif path == '/api/registry/skills':
             self.handle_registry_skills_search(query)
         elif path == '/api/registry/mcp':
@@ -1443,6 +1563,8 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             self.handle_gene_save(data)
         elif path == '/api/capsules/save':
             self.handle_capsule_save(data)
+        elif path == '/api/amendments/save':
+            self.handle_amendment_save(data)
         elif path == '/mcp/reload':
             self.handle_mcp_reload(data)
         elif path.startswith('/mcp/servers/') and path.endswith('/reconnect'):
@@ -1511,9 +1633,6 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         elif path.startswith('/api/subagent/') and path.endswith('/status'):
             agent_id = path[14:-7]  # strip '/api/subagent/' and '/status'
             self.handle_subagent_status(agent_id)
-        # 🌐 EvoMap 代理 (解决 CORS 问题)
-        elif path.startswith('/api/evomap/'):
-            self.handle_evomap_proxy(path, data)
         # 🌐 LLM API 代理 (解决 CORS 问题: Moonshot 等 API 的 preflight 不返回 CORS 头)
         elif path == '/api/llm/proxy':
             self.handle_llm_proxy(data)
@@ -1793,9 +1912,10 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         
         results = [{
             'id': r['id'], 'source': r['source'], 'content': r['content'],
+            'snippet': r['content'],
             'nexusId': r['nexus_id'], 'tags': json.loads(r['tags'] or '[]'),
             'metadata': json.loads(r['metadata'] or '{}'), 'createdAt': r['created_at'],
-            'score': 1.0,
+            'score': abs(r['rank']) if 'rank' in r.keys() else 1.0,
         } for r in rows]
         self.send_json(results)
 
@@ -1817,6 +1937,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
                           (nexus_id, limit)).fetchall()
         results = [{
             'id': r['id'], 'source': r['source'], 'content': r['content'],
+            'snippet': r['content'],
             'nexusId': r['nexus_id'], 'tags': json.loads(r['tags'] or '[]'),
             'createdAt': r['created_at'], 'score': 1.0,
         } for r in rows]
@@ -1920,9 +2041,9 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'''<!DOCTYPE html>
 <html>
-<head><title>DD-OS Server</title></head>
+<head><title>DunCrew Server</title></head>
 <body style="font-family: system-ui; padding: 40px; background: #1a1a2e; color: #eee;">
-<h1>DD-OS Native Server</h1>
+<h1>DunCrew Native Server</h1>
 <p>Frontend not built. Run <code>npm run build</code> to generate dist/</p>
 <p>Or access dev server at <a href="http://localhost:5173">http://localhost:5173</a></p>
 <hr>
@@ -3199,66 +3320,118 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             return f"获取网页失败: {str(e)}"
     
     def _tool_save_memory(self, args: dict) -> str:
-        """保存记忆到文件"""
+        """保存记忆到文件 + SQLite 双写"""
         key = args.get('key', '')
         content = args.get('content', '')
         memory_type = args.get('type', 'general')
+        nexus_id = args.get('nexusId', None)
         
         if not key or not content:
             raise ValueError("key 和 content 参数必填")
         
-        # 记忆存储在 memory 目录下
+        # ---- 路径 1: MD 文件 (向后兼容) ----
         memory_dir = self.clawd_path / 'memory'
         memory_dir.mkdir(parents=True, exist_ok=True)
         
-        # 按日期组织记忆文件
         today = datetime.now().strftime('%Y-%m-%d')
         memory_file = memory_dir / f'{today}.md'
         
-        # 格式化记忆条目
         timestamp = datetime.now().strftime('%H:%M:%S')
         entry = f"\n## [{timestamp}] {key}\n- **类型**: {memory_type}\n- **内容**: {content}\n"
         
-        # 追加到记忆文件
         with open(memory_file, 'a', encoding='utf-8') as f:
             f.write(entry)
+        
+        # ---- 路径 2: SQLite memory 表 (支持 FTS5 搜索) ----
+        try:
+            db = self._get_db()
+            mem_id = f"mem-{uuid.uuid4().hex[:12]}"
+            now_ms = int(time.time() * 1000)
+            tags = json.dumps(['saveMemory', memory_type, key])
+            # content 存完整文本，便于 FTS5 全文搜索命中
+            full_content = f"[{key}] {content}"
+            with _db_lock:
+                db.execute(
+                    "INSERT INTO memory (id, source, content, nexus_id, tags, metadata, created_at) VALUES (?,?,?,?,?,?,?)",
+                    (mem_id, 'memory', full_content, nexus_id, tags,
+                     json.dumps({'key': key, 'type': memory_type}), now_ms)
+                )
+                db.commit()
+        except Exception as e:
+            # SQLite 写入失败不影响主流程，MD 已写入
+            print(f"[saveMemory] SQLite dual-write failed: {e}")
         
         return f"记忆已保存: {key} (类型: {memory_type})"
     
     def _tool_search_memory(self, args: dict) -> str:
-        """检索历史记忆"""
+        """检索历史记忆 - SQLite FTS5 优先，MD 文件兜底"""
         query = args.get('query', '')
+        nexus_id = args.get('nexusId', None)
+        limit = int(args.get('limit', 5))
         
         if not query:
             raise ValueError("query 参数必填")
         
-        memory_dir = self.clawd_path / 'memory'
-        if not memory_dir.exists():
-            return "记忆库为空，暂无历史记忆。"
-        
         results = []
-        query_lower = query.lower()
         
-        # 遍历所有记忆文件
-        for memory_file in sorted(memory_dir.glob('*.md'), reverse=True)[:7]:  # 最近7天
-            try:
-                content = memory_file.read_text(encoding='utf-8')
-                
-                # 按条目分割
-                entries = content.split('\n## ')
-                for entry in entries:
-                    if query_lower in entry.lower():
-                        # 提取日期和内容
-                        date = memory_file.stem
-                        results.append(f"[{date}] {entry.strip()[:200]}")
-                        
-                        if len(results) >= 5:  # 最多返回5条
-                            break
-            except Exception:
-                continue
+        # ---- 路径 1: SQLite FTS5 搜索 (高优先级) ----
+        try:
+            db = self._get_db()
+            fts_sql = """
+                SELECT m.*, rank
+                FROM memory_fts fts
+                JOIN memory m ON m.rowid = fts.rowid
+                WHERE memory_fts MATCH ?
+            """
+            params: list = [query]
+            if nexus_id:
+                fts_sql += " AND m.nexus_id = ?"
+                params.append(nexus_id)
+            fts_sql += " ORDER BY rank LIMIT ?"
+            params.append(limit)
             
-            if len(results) >= 5:
-                break
+            try:
+                rows = db.execute(fts_sql, params).fetchall()
+            except Exception:
+                # FTS 语法错误时降级 LIKE
+                like_sql = "SELECT * FROM memory WHERE content LIKE ?"
+                like_params: list = [f"%{query}%"]
+                if nexus_id:
+                    like_sql += " AND nexus_id = ?"
+                    like_params.append(nexus_id)
+                like_sql += " ORDER BY created_at DESC LIMIT ?"
+                like_params.append(limit)
+                rows = db.execute(like_sql, like_params).fetchall()
+            
+            for r in rows:
+                ts = datetime.fromtimestamp(r['created_at'] / 1000).strftime('%Y-%m-%d %H:%M')
+                results.append(f"[{ts}] {r['content'][:200]}")
+        except Exception as e:
+            print(f"[searchMemory] SQLite search failed: {e}")
+        
+        # ---- 路径 2: MD 文件搜索 (兜底 / 补充) ----
+        if len(results) < limit:
+            remaining = limit - len(results)
+            memory_dir = self.clawd_path / 'memory'
+            if memory_dir.exists():
+                query_lower = query.lower()
+                for memory_file in sorted(memory_dir.glob('*.md'), reverse=True)[:7]:
+                    try:
+                        content = memory_file.read_text(encoding='utf-8')
+                        entries = content.split('\n## ')
+                        for entry in entries:
+                            if query_lower in entry.lower():
+                                date = memory_file.stem
+                                item = f"[{date}] {entry.strip()[:200]}"
+                                if item not in results:  # 去重
+                                    results.append(item)
+                                    remaining -= 1
+                                    if remaining <= 0:
+                                        break
+                    except Exception:
+                        continue
+                    if remaining <= 0:
+                        break
         
         if results:
             return f"找到 {len(results)} 条相关记忆:\n\n" + "\n\n---\n\n".join(results)
@@ -3375,7 +3548,7 @@ triggers:
 
 ## 使用方法
 
-此技能由 DD-OS Agent 自动生成，用于解决特定任务。
+此技能由 DunCrew Agent 自动生成，用于解决特定任务。
 
 ### 执行
 
@@ -3488,9 +3661,9 @@ python {safe_name}.py
         # dist 不存在时显示 API 文档页
         html = f"""<!DOCTYPE html>
 <html>
-<head><title>DD-OS Native Server</title></head>
+<head><title>DunCrew Native Server</title></head>
 <body style="font-family: monospace; background: #0f172a; color: #e2e8f0; padding: 30px;">
-<h1>DD-OS Native Server v{VERSION}</h1>
+<h1>DunCrew Native Server v{VERSION}</h1>
 <p style="color: #94a3b8;">独立运行的本地 AI 操作系统后端</p>
 <p>Clawd Path: <code style="color: #22d3ee;">{self.clawd_path}</code></p>
 
@@ -3732,7 +3905,7 @@ curl -X POST http://localhost:3001/api/tools/execute \\
     # ============================================
 
     def handle_nexuses(self):
-        """GET /nexuses - 扫描 nexuses/ 目录，返回所有 Nexus 列表"""
+        """GET /nexuses - 扫描 nexuses/ 目录，返回所有 Nexus 列表（附带 SQLite scoring）"""
         nexuses = []
         nexuses_dir = self.clawd_path / 'nexuses'
 
@@ -3740,6 +3913,19 @@ curl -X POST http://localhost:3001/api/tools/execute \\
             nexuses_dir.mkdir(parents=True, exist_ok=True)
             self.send_json([])
             return
+
+        # 预加载所有 nexus_scoring 数据 (一次查询，避免 N+1)
+        scoring_map: dict[str, dict] = {}
+        try:
+            db = self._get_db()
+            rows = db.execute("SELECT nexus_id, scoring_data FROM nexus_scoring").fetchall()
+            for row in rows:
+                try:
+                    scoring_map[row['nexus_id']] = json.loads(row['scoring_data'])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        except Exception:
+            pass  # scoring 加载失败不影响元数据返回
 
         seen = set()
 
@@ -3759,10 +3945,11 @@ curl -X POST http://localhost:3001/api/tools/execute \\
             xp = count_experience_entries(exp_dir) if exp_dir.exists() else 0
 
             visual_dna = frontmatter.get('visual_dna', {})
+            nexus_id = frontmatter.get('name', nexus_dir.name)
 
             nexus_data = {
-                'id': frontmatter.get('name', nexus_dir.name),
-                'name': frontmatter.get('name', nexus_dir.name),
+                'id': nexus_id,
+                'name': nexus_id,
                 'description': frontmatter.get('description', ''),
                 'archetype': frontmatter.get('archetype', 'REACTOR'),
                 'version': frontmatter.get('version', '1.0.0'),
@@ -3780,6 +3967,11 @@ curl -X POST http://localhost:3001/api/tools/execute \\
                 'metrics': frontmatter.get('metrics', []),
                 'strategy': frontmatter.get('strategy', ''),
             }
+
+            # 附带 SQLite 中持久化的 scoring 数据
+            if nexus_id in scoring_map:
+                nexus_data['scoring'] = scoring_map[nexus_id]
+
             nexuses.append(nexus_data)
 
         self.send_json(nexuses)
@@ -4709,7 +4901,7 @@ curl -X POST http://localhost:3001/api/tools/execute \\
             (self.clawd_path / 'skills').mkdir(parents=True, exist_ok=True)
 
             # 下载归档
-            req = _urllib_req.Request(archive_url, headers={'User-Agent': 'DD-OS/3.0'})
+            req = _urllib_req.Request(archive_url, headers={'User-Agent': 'DunCrew/3.0'})
             with _urllib_req.urlopen(req, timeout=60) as resp:
                 archive_data = resp.read()
 
@@ -5038,6 +5230,39 @@ curl -X POST http://localhost:3001/api/tools/execute \\
         except Exception as e:
             self.send_error_json(f'Failed to save capsules: {e}', 500)
 
+    def handle_amendment_load(self):
+        """GET /api/amendments/load - 加载全部灵魂修正案"""
+        amendment_file = self.clawd_path / 'memory' / 'soul_amendments.json'
+
+        if not amendment_file.exists():
+            self.send_json([])
+            return
+
+        try:
+            content = amendment_file.read_text(encoding='utf-8')
+            amendments = json.loads(content) if content.strip() else []
+            self.send_json(amendments)
+        except Exception as e:
+            self.send_error_json(f'Failed to load amendments: {e}', 500)
+
+    def handle_amendment_save(self, data):
+        """POST /api/amendments/save - 批量保存灵魂修正案 (全量覆写)"""
+        if not isinstance(data, list):
+            self.send_error_json('Expected array of amendments', 400)
+            return
+
+        amendment_file = self.clawd_path / 'memory' / 'soul_amendments.json'
+        amendment_file.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            amendment_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+            self.send_json({
+                'status': 'ok',
+                'message': f'Saved {len(data)} amendments',
+            })
+        except Exception as e:
+            self.send_error_json(f'Failed to save amendments: {e}', 500)
+
     def handle_trace_search(self, query_params):
         """GET /api/traces/search?query=xxx&limit=5 - 检索执行追踪 (P2)"""
         query = query_params.get('query', [''])[0]
@@ -5343,9 +5568,9 @@ curl -X POST http://localhost:3001/api/tools/execute \\
         
         print(f'[LLM Proxy] -> {target_url} (stream={is_stream})', file=sys.stderr)
         
-        # 创建独立 Session，禁止读取系统代理 (Windows 注册表可能配有本地代理如 Clash/V2Ray)
+        # 创建独立 Session，尊重环境变量代理设置
         session = req_lib.Session()
-        session.trust_env = False
+        # trust_env=True (默认值) 让 requests 自动读取 HTTP_PROXY/HTTPS_PROXY
         
         try:
             # 构建请求头: 优先使用前端传入的 custom_headers，否则回退到 Bearer token
@@ -5422,70 +5647,6 @@ curl -X POST http://localhost:3001/api/tools/execute \\
         finally:
             session.close()
 
-    def handle_evomap_proxy(self, path: str, data: dict):
-        """代理转发 EvoMap API 请求（解决 CORS 问题）
-        
-        前端请求: /api/evomap/a2a/hello
-        转发到:   https://evomap.ai/a2a/hello
-        """
-        try:
-            import requests
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        except ImportError as e:
-            print(f'[EvoMap Proxy] Missing dependency: {e}', file=sys.stderr)
-            self.send_error_json(f'EvoMap proxy requires "requests" package: pip install requests', 500)
-            return
-        
-        # 提取目标路径: /api/evomap/a2a/hello -> /a2a/hello
-        target_path = path[11:]  # strip '/api/evomap' (keep leading /)
-        target_url = f'https://evomap.ai{target_path}'
-        
-        print(f'[EvoMap Proxy] {path} -> {target_url}', file=sys.stderr)
-        
-        try:
-            # evomap.ai 响应较慢 (实测需要 30+ 秒)，使用较长超时
-            session = requests.Session()
-            session.trust_env = False  # 绕过系统代理
-            response = session.post(
-                target_url,
-                json=data if data else {},
-                headers={
-                    'Content-Type': 'application/json',
-                    'User-Agent': 'DD-OS/1.0 EvoMap-Proxy',
-                },
-                timeout=(10, 90),  # connect 10s, read 90s (evomap.ai 响应慢)
-                verify=False,  # 跳过 SSL 验证 (企业安全工具可能替换证书)
-            )
-            
-            if response.ok:
-                result = response.json()
-                print(f'[EvoMap Proxy] Success: {response.status_code}', file=sys.stderr)
-                self.send_json(result)
-            else:
-                error_text = response.text[:500]
-                print(f'[EvoMap Proxy] HTTP error: {response.status_code} - {error_text}', file=sys.stderr)
-                # 尝试返回原始 JSON 错误（可能包含有用信息）
-                try:
-                    self.send_json(response.json(), response.status_code)
-                except Exception:
-                    self.send_error_json(f'EvoMap API error: {response.status_code}', response.status_code)
-                
-        except requests.exceptions.ConnectTimeout as e:
-            print(f'[EvoMap Proxy] Connect timeout: {e}', file=sys.stderr)
-            self.send_error_json('Failed to connect to EvoMap (connect timeout)', 504)
-        except requests.exceptions.ReadTimeout as e:
-            print(f'[EvoMap Proxy] Read timeout (evomap.ai unresponsive): {e}', file=sys.stderr)
-            self.send_error_json('EvoMap server unresponsive (read timeout)', 504)
-        except requests.exceptions.ConnectionError as e:
-            print(f'[EvoMap Proxy] Connection error: {e}', file=sys.stderr)
-            self.send_error_json(f'Failed to connect to EvoMap: {str(e)[:200]}', 502)
-        except Exception as e:
-            print(f'[EvoMap Proxy] Error: {type(e).__name__}: {e}', file=sys.stderr)
-            self.send_error_json(f'EvoMap proxy error: {type(e).__name__}: {str(e)[:200]}', 500)
-        finally:
-            session.close()
-    
     def handle_task_status(self, task_id, offset=0):
         with self.tasks_lock:
             task = self.tasks.get(task_id)
@@ -5642,7 +5803,7 @@ def run_task_in_background(task_id, prompt, clawd_path):
         except FileNotFoundError:
             # clawdbot 不存在，使用 Native 模式提示
             with open(log_file, 'a', encoding='utf-8') as f:
-                f.write("\n[DD-OS Native] clawdbot 未安装。\n")
+                f.write("\n[DunCrew Native] clawdbot 未安装。\n")
                 f.write("在 Native 模式下，请使用 /api/tools/execute 接口直接执行工具。\n")
                 f.write("\n任务已记录，等待 AI 引擎处理。\n")
             
@@ -5718,11 +5879,11 @@ def cleanup_temp_uploads(clawd_path, max_age_hours=1):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='DD-OS Native Server')
+    parser = argparse.ArgumentParser(description='DunCrew Native Server')
     parser.add_argument('--port', type=int, default=3001, help='Server port (default: 3001)')
     # 支持环境变量覆盖默认路径
-    default_path = os.getenv('DDOS_DATA_PATH', '~/.ddos')
-    parser.add_argument('--path', type=str, default=default_path, help='Data directory path (default: ~/.ddos)')
+    default_path = os.getenv('DUNCREW_DATA_PATH', os.getenv('DDOS_DATA_PATH', '~/.duncrew'))
+    parser.add_argument('--path', type=str, default=default_path, help='Data directory path (default: ~/.duncrew)')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='Server host (default: 0.0.0.0)')
     args = parser.parse_args()
     
@@ -5734,9 +5895,9 @@ def main():
         
         # 创建默认 SOUL.md
         soul_file = clawd_path / 'SOUL.md'
-        soul_file.write_text("""# DD-OS Native Soul
+        soul_file.write_text("""# DunCrew Native Soul
 
-You are DD-OS, a local AI operating system running directly on the user's computer.
+You are DunCrew, a local AI operating system running directly on the user's computer.
 
 ## Core Principles
 - Be helpful and efficient
@@ -5808,7 +5969,7 @@ You are DD-OS, a local AI operating system running directly on the user's comput
     mcp_count = len(registry.mcp_tools)
     print(f"""
 +==================================================================+
-|              DD-OS Native Server v{VERSION}                         |
+|              DunCrew Native Server v{VERSION}                         |
 +==================================================================+
 |  Mode:    NATIVE (standalone, no OpenClaw needed)                |
 |  Server:  http://{args.host}:{args.port}                                    |

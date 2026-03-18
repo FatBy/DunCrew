@@ -2,7 +2,7 @@
 name: notion
 description: "Notion API for creating and managing pages, databases, and blocks."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://developers.notion.com
 metadata:
   openclaw:

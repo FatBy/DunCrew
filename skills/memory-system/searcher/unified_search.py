@@ -19,7 +19,7 @@ class UnifiedSearch:
     def __init__(self, project_root: str):
         self.project_root = Path(project_root)
         self.memory_dir = self.project_root / 'memory'
-        self.db_path = self.project_root / '.ddos' / 'memory_index.db'
+        self.db_path = self.project_root / '.duncrew' / 'memory_index.db'
         self._ensure_dirs()
     
     def _ensure_dirs(self):

@@ -2,7 +2,7 @@
 name: camsnap
 description: "Capture frames or clips from RTSP/ONVIF cameras."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://camsnap.ai
 metadata:
   openclaw:

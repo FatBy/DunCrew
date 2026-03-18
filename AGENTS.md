@@ -1,10 +1,10 @@
-# DD-OS Repository Guidelines
+# DunCrew Repository Guidelines
 
 > 本文件为 AI Agent (Qoder, Claude, Cursor 等) 提供项目级开发指南。
 
 ## Project Overview
 
-DD-OS 是一个运行在用户本地电脑上的 AI 操作系统前端，具备：
+DunCrew 是一个运行在用户本地电脑上的 AI 操作系统前端，具备：
 - ReAct 循环执行引擎（支持 Function Calling 和 Legacy 两种模式）
 - 技能系统（SKILL.md 定义的可扩展能力）
 - 双层记忆系统（短暂层 + 持久层）
@@ -32,7 +32,7 @@ src/
 
 skills/               # 技能定义 (SKILL.md 文件)
 memory/               # 记忆存储 (日志文件)
-ddos-local-server.py  # Python 本地服务器 (工具执行后端)
+duncrew-server.py  # Python 本地服务器 (工具执行后端)
 ```
 
 ## Build, Test, and Development Commands
@@ -42,7 +42,7 @@ ddos-local-server.py  # Python 本地服务器 (工具执行后端)
 - **Build**: `npm run build`
 - **Type check**: `npx tsc --noEmit`
 - **Lint**: `npm run lint` (如果配置了)
-- **后端服务**: `python ddos-local-server.py` (端口 3001)
+- **后端服务**: `python duncrew-server.py` (端口 3001)
 
 **重要**: 修改代码后务必运行 `npx tsc --noEmit` 验证类型正确。
 
@@ -83,7 +83,7 @@ ddos-local-server.py  # Python 本地服务器 (工具执行后端)
 - `src/store/slices/skillSlice.ts` - 技能列表状态
 
 ### 后端服务
-- `ddos-local-server.py` - Python 工具执行服务器
+- `duncrew-server.py` - Python 工具执行服务器
   - ToolRegistry: 工具注册和管理
   - MCPClientManager: MCP 服务器集成
 
@@ -124,13 +124,13 @@ CONFIG = {
 ### 创建新技能
 1. 在 `skills/` 下创建目录
 2. 编写 `SKILL.md` 文件
-3. 如需工具，在 `ddos-local-server.py` 注册
+3. 如需工具，在 `duncrew-server.py` 注册
 4. 重启后端服务
 
 ## Common Patterns
 
 ### 添加新工具
-1. 在 `ddos-local-server.py` 的 `ToolRegistry` 中注册
+1. 在 `duncrew-server.py` 的 `ToolRegistry` 中注册
 2. 在 `builtin_handlers` 字典添加处理函数
 3. 更新 `builtin_names` 列表
 4. 重启后端服务
@@ -148,7 +148,7 @@ CONFIG = {
 ### 常见问题
 
 **后端连接失败**
-- 确认 `ddos-local-server.py` 已运行
+- 确认 `duncrew-server.py` 已运行
 - 检查端口 3001 是否被占用: `netstat -ano | findstr 3001`
 
 **工具执行超时**

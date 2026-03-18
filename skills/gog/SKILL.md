@@ -2,7 +2,7 @@
 name: gog
 description: "Google Workspace CLI for Gmail, Calendar, Drive, Contacts, Sheets, and Docs."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://gogcli.sh
 metadata:
   openclaw:

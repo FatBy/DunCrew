@@ -2,7 +2,7 @@
 name: openai-image-gen
 description: "Batch-generate images via OpenAI Images API. Random prompt sampler + `index.html` gallery."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://platform.openai.com/docs/api-reference/images
 metadata:
   openclaw:

@@ -1,5 +1,5 @@
 /**
- * Signal Matcher — EvoMap 兼容的信号提取与匹配引擎
+ * Signal Matcher — 信号提取与匹配引擎
  * 
  * 纯字符串匹配，无 ML 依赖。支持:
  * - 正则模式: /pattern/flags
@@ -19,6 +19,36 @@ const ERROR_KEYWORDS = [
 
 // 错误码正则: ENOENT, EPERM, HTTP_404, ERR_xxx 等
 const ERROR_CODE_REGEX = /\b(E[A-Z]{2,}|HTTP_\d{3}|ERR_[A-Z_]+|[A-Z_]{4,}_ERROR)\b/g
+
+/**
+ * 对错误消息进行分类，返回结构化的错误类型标签
+ * 用于生成泛化的错误签名，替代过于具体的原始错误消息
+ */
+export function classifyErrorType(errorMessage: string): string {
+  const lower = errorMessage.toLowerCase()
+  if (/timeout|etimedout|econnreset|econnrefused|fetch failed|aborted|network/i.test(lower)) {
+    return 'transient'
+  }
+  if (/enoent|not found|not exist|no such file|does not exist|找不到|不存在/i.test(lower)) {
+    return 'missing_resource'
+  }
+  if (/permission|eacces|access denied|forbidden|权限/i.test(lower)) {
+    return 'permission'
+  }
+  if (/invalid.*param|bad.*argument|type.*error|invalid.*type|参数错误|格式错误/i.test(lower)) {
+    return 'bad_input'
+  }
+  if (/syntax|unexpected token|json.*parse|unterminated/i.test(lower)) {
+    return 'parse_error'
+  }
+  if (/empty|cannot be empty|required|缺少/i.test(lower)) {
+    return 'missing_input'
+  }
+  if (/codec|encode|decode|utf-8|gbk/i.test(lower)) {
+    return 'encoding_error'
+  }
+  return 'unknown'
+}
 
 /**
  * 从工具名和错误消息中提取信号列表
@@ -47,10 +77,12 @@ export function extractSignals(toolName: string, errorMessage: string): string[]
     }
   }
 
-  // 4. 错误消息子串 (截取前 100 字符，用于精确匹配)
-  const snippet = errorMessage.slice(0, 100).trim()
-  if (snippet && !signals.includes(snippet.toLowerCase())) {
-    signals.push(snippet.toLowerCase())
+  // 4. 结构化错误签名 (toolName:errorType)
+  //    替代旧的原始消息子串，使同工具同类错误天然匹配
+  const errorType = classifyErrorType(errorMessage)
+  const structuredSig = `${toolName}:${errorType}`
+  if (!signals.includes(structuredSig)) {
+    signals.push(structuredSig)
   }
 
   return signals
@@ -58,7 +90,7 @@ export function extractSignals(toolName: string, errorMessage: string): string[]
 
 /**
  * 测试单个模式是否匹配任一信号
- * 支持 EvoMap 风格的 /regex/flags 和普通子串匹配
+ * 支持 /regex/flags 和普通子串匹配
  */
 function matchPattern(pattern: string, signals: string[]): boolean {
   // 正则模式: /pattern/flags

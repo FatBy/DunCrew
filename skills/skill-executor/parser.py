@@ -182,7 +182,7 @@ class SkillDiscovery:
         
         # Skill locations (in priority order)
         self.builtin_dir = Path(__file__).parent / 'presets'
-        self.custom_dir = self.project_root / '.ddos' / 'skills'
+        self.custom_dir = self.project_root / '.duncrew' / 'skills'
         self.project_skills_dir = self.project_root / 'skills'
     
     def discover_all(

@@ -2,7 +2,7 @@
 name: rlm-engine
 description: "Deep programmatic reasoning over complete conversation history using RLM. Activates only when explicitly requested."
 version: "4.2.1"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🧠"

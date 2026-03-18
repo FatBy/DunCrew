@@ -2,7 +2,7 @@
 name: strategic-planning
 description: "Long-term strategic thinking framework for vision, roadmap, and scenario planning. Use for business strategy, product roadmaps, career planning, and complex multi-phase initiatives."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🎯"

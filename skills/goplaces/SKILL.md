@@ -2,7 +2,7 @@
 name: goplaces
 description: "Query Google Places API (New) via the goplaces CLI for text search, place details, resolve, and reviews. Use for human-friendly place lookup or JSON output for scripts."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://github.com/steipete/goplaces
 metadata:
   openclaw:

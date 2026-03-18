@@ -2,7 +2,7 @@
 name: memory-system
 description: "Unified memory search and management system"
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 executable: execute.py
 runtime: python
 dangerLevel: safe

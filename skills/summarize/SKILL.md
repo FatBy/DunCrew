@@ -2,7 +2,7 @@
 name: summarize
 description: "Summarize or extract text/transcripts from URLs, podcasts, and local files (great fallback for “transcribe this YouTube/video”)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://summarize.sh
 metadata:
   openclaw:

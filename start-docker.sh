@@ -1,10 +1,10 @@
 #!/bin/bash
-# DD-OS macOS/Linux 一键启动脚本
+# DunCrew macOS/Linux Docker 一键启动脚本
 
 set -e
 
 echo "=========================================="
-echo "   DD-OS - AI Operating System"
+echo "   DunCrew - AI Operating System"
 echo "   Docker 一键启动脚本"
 echo "=========================================="
 echo ""
@@ -30,7 +30,7 @@ echo "[INFO] Docker 已就绪"
 echo ""
 
 # 检查是否需要构建镜像
-if ! docker images dd-os --format "{{.Repository}}" | grep -q "dd-os"; then
+if ! docker images duncrew --format "{{.Repository}}" | grep -q "duncrew"; then
     echo "[INFO] 首次运行，正在构建镜像（可能需要几分钟）..."
     echo ""
     docker-compose build
@@ -40,13 +40,13 @@ if ! docker images dd-os --format "{{.Repository}}" | grep -q "dd-os"; then
 fi
 
 # 启动服务
-echo "[INFO] 正在启动 DD-OS..."
+echo "[INFO] 正在启动 DunCrew..."
 echo ""
 docker-compose up -d
 
 echo ""
 echo "=========================================="
-echo "   DD-OS 已启动！"
+echo "   DunCrew 已启动！"
 echo ""
 echo "   前端界面: http://localhost:4173"
 echo "   后端 API: http://localhost:3001"
@@ -65,4 +65,4 @@ elif command -v xdg-open &> /dev/null; then
     xdg-open http://localhost:4173
 fi
 
-echo "DD-OS 正在后台运行。"
+echo "DunCrew 正在后台运行。"

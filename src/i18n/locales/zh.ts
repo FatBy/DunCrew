@@ -1,10 +1,10 @@
 // ============================================
-// DD-OS 中文语言包
+// DunCrew 中文语言包
 // ============================================
 
 const zh = {
   // ---- 导航 ----
-  'app.logo': 'DD-OS',
+  'app.logo': 'DunCrew',
   'app.menu.soul': '灵魂塔',
   'app.menu.skill': '技能树',
   'app.menu.memory': '记忆宫殿',
@@ -51,7 +51,7 @@ const zh = {
   'settings.version': '版本',
   'settings.run_mode': '运行模式',
   'settings.native_local': 'Native (本地)',
-  'settings.openclaw_network': 'DD-OS Cloud (网络)',
+  'settings.openclaw_network': 'DunCrew Cloud (网络)',
   'settings.agent_idle': '空闲',
   'settings.agent_thinking': '思考中',
   'settings.agent_executing': '执行中',
@@ -123,8 +123,8 @@ const zh = {
   'task.agent_executing': '执行中',
   'task.messages': '条消息',
   'task.native_setup': '启动 Native 服务器',
-  'task.native_cmd': 'python ddos-local-server.py --port 3001',
-  'task.native_connect': '连接 DD-OS Native',
+  'task.native_cmd': 'python duncrew-server.py --port 3001',
+  'task.native_connect': '连接 DunCrew Native',
   'task.native_connect_desc': '左下角选择 Native 模式并连接',
   'task.start_chat': '开始对话',
   'task.start_chat_desc': '通过 AI 聊天面板与 Agent 交流',
@@ -167,6 +167,27 @@ const zh = {
   'soul.boundaries': '行为边界',
   'soul.vibe': '氛围 & MBTI',
   'soul.soul_avatar': '灵魂形象',
+  // ---- Soul Evolution (Layer 2) ----
+  'soul.amendments': '行为修正案',
+  'soul.amendments_empty': '暂无修正案，使用更多 Nexus 后将自动检测',
+  'soul.amendment_draft': '待审批',
+  'soul.amendment_approved': '已生效',
+  'soul.amendment_archived': '已归档',
+  'soul.approve': '批准',
+  'soul.reject': '拒绝',
+  'soul.archive': '归档',
+  'soul.weight': '权重',
+  'soul.hit_count': '注入次数',
+  'soul.detected_from': '检测来源',
+  'soul.mbti_base': '基础型',
+  'soul.mbti_expressed': '表达型',
+  'soul.mbti_drift': '行为漂移',
+  'soul.axis_ei': 'E 外向 / I 内向',
+  'soul.axis_sn': 'S 实感 / N 直觉',
+  'soul.axis_tf': 'T 理性 / F 情感',
+  'soul.axis_jp': 'J 计划 / P 灵活',
+  'soul.layer1': '出厂宪法',
+  'soul.layer2': '用户灵魂',
 
   // ---- Observer 提案 ----
   'build.signal': 'Observer Signal',
@@ -192,9 +213,9 @@ const zh = {
   'conn.error': '连接失败',
   'conn.mode': '运行模式',
   'conn.native': 'Native',
-  'conn.openclaw': 'DD-OS Cloud',
+  'conn.openclaw': 'DunCrew Cloud',
   'conn.native_desc': 'Native: 本地运行，直接控制电脑，无需 Token',
-  'conn.openclaw_desc': 'DD-OS Cloud: 远程 Gateway，需要 Token 认证',
+  'conn.openclaw_desc': 'DunCrew Cloud: 远程 Gateway，需要 Token 认证',
   'conn.gateway': 'Gateway 地址 (可选)',
   'conn.gateway_placeholder': '留空使用代理，或填 IP:18789 直连',
   'conn.gateway_hint': '留空 = 通过 Vite/nginx 代理；填写 = 浏览器直连',

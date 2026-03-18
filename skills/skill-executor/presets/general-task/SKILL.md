@@ -2,7 +2,7 @@
 name: general-task
 description: "A flexible agent for executing arbitrary multi-step tasks. This agent analyzes the task, plans an execution strategy, and carries it out using available tools."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🔧"

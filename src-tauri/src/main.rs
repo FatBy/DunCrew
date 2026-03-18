@@ -1,4 +1,4 @@
-// DD-OS Tauri Application
+// DunCrew Tauri Application
 // 主入口：管理 Python 后端 Sidecar 进程 + OpenClaw 扩展自动部署
 
 #![cfg_attr(
@@ -24,7 +24,7 @@ struct ServerState {
 /// 获取 OpenClaw extensions 目标目录: ~/.openclaw/extensions/ddos/
 fn get_openclaw_extension_target() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
-    Some(home.join(".openclaw").join("extensions").join("ddos"))
+    Some(home.join(".openclaw").join("extensions").join("duncrew"))
 }
 
 /// 读取 package.json 中的 version 字段
@@ -66,13 +66,13 @@ fn install_openclaw_extension(app: &AppHandle) {
     let resource_dir = match app.path().resource_dir() {
         Ok(dir) => dir,
         Err(e) => {
-            eprintln!("[DD-OS] Cannot resolve resource dir: {}", e);
+            eprintln!("[DunCrew] Cannot resolve resource dir: {}", e);
             return;
         }
     };
     let bundled_ext = resource_dir.join("openclaw-extension");
     if !bundled_ext.exists() {
-        println!("[DD-OS] No bundled openclaw-extension found, skipping auto-deploy");
+        println!("[DunCrew] No bundled openclaw-extension found, skipping auto-deploy");
         return;
     }
 
@@ -80,7 +80,7 @@ fn install_openclaw_extension(app: &AppHandle) {
     let target_dir = match get_openclaw_extension_target() {
         Some(dir) => dir,
         None => {
-            eprintln!("[DD-OS] Cannot determine home directory, skipping extension deploy");
+            eprintln!("[DunCrew] Cannot determine home directory, skipping extension deploy");
             return;
         }
     };
@@ -91,7 +91,7 @@ fn install_openclaw_extension(app: &AppHandle) {
 
     if bundled_version.is_some() && bundled_version == installed_version {
         println!(
-            "[DD-OS] OpenClaw extension v{} already installed, skipping",
+            "[DunCrew] OpenClaw extension v{} already installed, skipping",
             bundled_version.unwrap()
         );
         return;
@@ -99,18 +99,18 @@ fn install_openclaw_extension(app: &AppHandle) {
 
     // 4. 执行复制
     println!(
-        "[DD-OS] Deploying OpenClaw extension: {:?} -> {:?}",
+        "[DunCrew] Deploying OpenClaw extension: {:?} -> {:?}",
         bundled_ext, target_dir
     );
     match copy_dir_recursive(&bundled_ext, &target_dir) {
         Ok(()) => {
-            println!("[DD-OS] OpenClaw extension deployed successfully");
+            println!("[DunCrew] OpenClaw extension deployed successfully");
             if let Some(v) = bundled_version {
-                println!("[DD-OS] Installed version: {}", v);
+                println!("[DunCrew] Installed version: {}", v);
             }
         }
         Err(e) => {
-            eprintln!("[DD-OS] Failed to deploy extension: {}", e);
+            eprintln!("[DunCrew] Failed to deploy extension: {}", e);
         }
     }
 }
@@ -133,12 +133,12 @@ fn start_backend(app: &AppHandle) -> Result<CommandChild, String> {
 
     let data_path = data_dir.to_string_lossy().to_string();
 
-    println!("[DD-OS] Starting backend server...");
-    println!("[DD-OS] Data directory: {}", data_path);
+    println!("[DunCrew] Starting backend server...");
+    println!("[DunCrew] Data directory: {}", data_path);
 
     // 启动 Sidecar 进程
     let (mut rx, child) = shell
-        .sidecar("ddos-server")
+        .sidecar("duncrew-server")
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?
         .args(["--path", &data_path, "--port", "3001"])
         .spawn()
@@ -169,7 +169,7 @@ fn start_backend(app: &AppHandle) -> Result<CommandChild, String> {
         }
     });
 
-    println!("[DD-OS] Backend server started on http://localhost:3001");
+    println!("[DunCrew] Backend server started on http://localhost:3001");
     Ok(child)
 }
 
@@ -177,9 +177,9 @@ fn start_backend(app: &AppHandle) -> Result<CommandChild, String> {
 fn stop_backend(state: &ServerState) {
     let mut child_guard = state.child.lock().unwrap();
     if let Some(child) = child_guard.take() {
-        println!("[DD-OS] Stopping backend server...");
+        println!("[DunCrew] Stopping backend server...");
         let _ = child.kill();
-        println!("[DD-OS] Backend server stopped");
+        println!("[DunCrew] Backend server stopped");
     }
 }
 
@@ -196,10 +196,10 @@ fn main() {
                     app.manage(ServerState {
                         child: Mutex::new(Some(child)),
                     });
-                    println!("[DD-OS] Application started successfully");
+                    println!("[DunCrew] Application started successfully");
                 }
                 Err(e) => {
-                    eprintln!("[DD-OS] Failed to start backend: {}", e);
+                    eprintln!("[DunCrew] Failed to start backend: {}", e);
                     // 继续运行，用户可以手动启动后端
                 }
             }

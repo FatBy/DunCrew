@@ -2,7 +2,7 @@
 name: bear-notes
 description: "Create, search, and manage Bear notes via grizzly CLI."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://bear.app
 metadata:
   openclaw:

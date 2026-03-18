@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 >nul
-title DD-OS Launcher
+title DunCrew Docker Launcher
 
 echo ==========================================
-echo    DD-OS - AI Operating System
+echo    DunCrew - AI Operating System
 echo    Docker 一键启动脚本
 echo ==========================================
 echo.
@@ -32,7 +32,7 @@ echo [INFO] Docker 已就绪
 echo.
 
 :: 检查是否需要构建镜像
-docker images dd-os --format "{{.Repository}}" | findstr /C:"dd-os" >nul 2>&1
+docker images duncrew --format "{{.Repository}}" | findstr /C:"duncrew" >nul 2>&1
 if %errorlevel% neq 0 (
     echo [INFO] 首次运行，正在构建镜像（可能需要几分钟）...
     echo.
@@ -48,7 +48,7 @@ if %errorlevel% neq 0 (
 )
 
 :: 启动服务
-echo [INFO] 正在启动 DD-OS...
+echo [INFO] 正在启动 DunCrew...
 echo.
 docker-compose up -d
 
@@ -60,7 +60,7 @@ if %errorlevel% neq 0 (
 
 echo.
 echo ==========================================
-echo    DD-OS 已启动！
+echo    DunCrew 已启动！
 echo.
 echo    前端界面: http://localhost:4173
 echo    后端 API: http://localhost:3001

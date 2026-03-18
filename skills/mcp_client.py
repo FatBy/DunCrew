@@ -124,7 +124,7 @@ class MCPClient:
                     "roots": {"listChanged": True},
                 },
                 "clientInfo": {
-                    "name": "DD-OS",
+                    "name": "DunCrew",
                     "version": "4.0.0"
                 }
             }, timeout=CONNECT_TIMEOUT)

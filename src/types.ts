@@ -255,6 +255,48 @@ export interface SoulConfig {
 }
 
 // ============================================
+// Soul Evolution (双轨制灵魂演化)
+// ============================================
+
+/** 用户偏好修正案 (Layer 2 灵魂) */
+export interface SoulAmendment {
+  id: string                          // amend-{timestamp}-{random}
+  content: string                     // 自然语言偏好 (如 "偏好简洁回答")
+  source: {
+    nexusIds: string[]                // 观测到此行为的 Nexus
+    evidence: string[]                // trace 摘要片段 (<=3条, 每条<=100字)
+    detectedAt: number
+  }
+  status: 'draft' | 'approved' | 'rejected' | 'archived'
+  weight: number                      // 0~1, 时间衰减
+  hitCount: number                    // 被注入上下文次数
+  createdAt: number
+  confirmedAt?: number                // 用户批准时间
+  lastHitAt?: number                  // 最后注入时间
+}
+
+/** MBTI 四轴原始分数 (-1~+1) */
+export interface MBTIAxisScores {
+  ei: number    // -1=I极端, +1=E极端
+  sn: number    // -1=N极端, +1=S极端
+  tf: number    // -1=F极端, +1=T极端
+  jp: number    // -1=P极端, +1=J极端
+}
+
+/** Soul Evolution 配置常量 */
+export const SOUL_EVOLUTION_CONFIG = {
+  DECAY_HALF_LIFE_DAYS: 30,
+  MIN_WEIGHT_THRESHOLD: 0.1,
+  INJECTION_MIN_WEIGHT: 0.3,
+  MAX_INJECTION_CHARS: 500,
+  CHECK_INTERVAL_TASKS: 5,
+  MIN_NEXUS_COUNT: 2,
+  INITIAL_DRAFT_WEIGHT: 0.6,
+  MBTI_MAX_MODIFIER: 0.4,
+  DECAY_INTERVAL_MS: 6 * 60 * 60 * 1000,
+} as const
+
+// ============================================
 // OpenClaw 原始 API 类型
 // ============================================
 
@@ -1541,6 +1583,7 @@ export interface BootstrapParams {
 export interface BootstrapResult {
   bootstrapped: boolean
   importedMessages?: number
+  memoriesLoaded?: number
   reason?: string
 }
 
@@ -1670,8 +1713,12 @@ export interface MemorySearchResult {
   endLine: number
   score: number                     // 0-1
   snippet: string
-  source: string                    // 'memory' | 'exec_trace' | 'gene' | 'nexus_xp' | 'session'
+  content?: string                  // 完整内容 (后端返回)
+  source: string                    // 'memory' | 'exec_trace' | 'gene' | 'nexus_xp' | 'session' | 'l1_memory'
   nexusId?: string
+  createdAt?: number                // Unix 毫秒时间戳
+  tags?: string[]
+  metadata?: Record<string, unknown>
 }
 
 // 搜索算法配置
@@ -1774,7 +1821,7 @@ export const FILE_REGISTRY_CONFIG = {
   MAX_ENTRIES: 500,
   STALE_THRESHOLD_MS: 7 * 24 * 60 * 60 * 1000, // 7 天未访问视为过期
   PERSIST_DEBOUNCE_MS: 5000,
-  LOCALSTORAGE_KEY: 'ddos_file_registry',
+  LOCALSTORAGE_KEY: 'duncrew_file_registry',
   FILE_OPS: ['readFile', 'writeFile', 'appendFile', 'listDir'] as const,
 } as const
 

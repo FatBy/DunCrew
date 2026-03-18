@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "updated": "2025-02-24",
-  "description": "DD-OS SKILL Registry - 可搜索和安装的技能索引",
+  "description": "DunCrew SKILL Registry - 可搜索和安装的技能索引",
   "skills": [
     {
       "id": "deep-research",

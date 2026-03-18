@@ -2,7 +2,7 @@
 name: feishu-doc
 description: "Feishu document read/write operations. Activate when user mentions Feishu docs, cloud docs, or docx links."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🔧"

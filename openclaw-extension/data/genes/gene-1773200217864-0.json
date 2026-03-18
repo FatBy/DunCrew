@@ -11,7 +11,7 @@
     "Error encountered: ENOENT: no such file or directory, access 'D:\\编程\\S级项目\\openclaw.json'",
     "Parameter changes: file_path: \"D:\\\\编程\\\\S级项目\\\\openclaw.json\" -> \"D:\\\\编程\\\\S级项目\\\\AGENTS.md\"",
     "Intermediate tools used: exec",
-    "Recovery result: {\"content\":[{\"type\":\"text\",\"text\":\"# DD-OS Repository Guidelines\\r\\n\\r\\n> 本文件为 AI Agent (Qoder, Claude, Cursor 等) 提供项目级开发指南。\\r\\n\\r\\n## Project Overview\\r\\n\\r\\nDD-OS 是一个运行在用户本地电脑上的 AI 操作系统前端，具备：\\r\\n- R"
+    "Recovery result: {\"content\":[{\"type\":\"text\",\"text\":\"# DunCrew Repository Guidelines\\r\\n\\r\\n> 本文件为 AI Agent (Qoder, Claude, Cursor 等) 提供项目级开发指南。\\r\\n\\r\\n## Project Overview\\r\\n\\r\\nDunCrew 是一个运行在用户本地电脑上的 AI 操作系统前端，具备：\\r\\n- R"
   ],
   "source": {
     "traceId": "trace-0",

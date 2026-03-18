@@ -3,9 +3,11 @@ import type { Channel, ChannelType, ChannelsSnapshot, SkillNode, OpenClawSkill, 
 import { channelsToSkills, openClawSkillsToNodes } from '@/utils/dataMapper'
 import { chat, isLLMConfigured } from '@/services/llmService'
 import { skillStatsService } from '@/services/skillStatsService'
+import { localServerService } from '@/services/localServerService'
 
 // LocalStorage 键名
-const SKILL_ANALYSIS_KEY = 'ddos_skill_analysis'
+const SKILL_ANALYSIS_KEY = 'duncrew_skill_analysis'
+const SKILL_ENV_DATA_KEY = 'skill_env_values'
 
 // 技能分析状态
 export interface SkillAnalysis {
@@ -63,6 +65,9 @@ export interface ChannelsSlice {
   skillStatsSnapshot: AbilitySnapshot | null
   skillStatsVersion: number
   
+  // 技能环境变量 (持久化到后端)
+  skillEnvValues: Record<string, Record<string, string>>
+  
   // Actions - Channels (兼容)
   setChannelsSnapshot: (snapshot: ChannelsSnapshot) => void
   updateChannel: (id: ChannelType, updates: Partial<Channel>) => void
@@ -80,6 +85,10 @@ export interface ChannelsSlice {
   
   // Actions - 技能统计刷新
   refreshSkillSnapshot: () => void
+  
+  // Actions - 技能环境变量
+  setSkillEnvValue: (skillName: string, key: string, value: string) => void
+  loadSkillEnvValues: () => Promise<void>
 }
 
 export const createChannelsSlice: StateCreator<ChannelsSlice> = (set, get) => ({
@@ -92,6 +101,7 @@ export const createChannelsSlice: StateCreator<ChannelsSlice> = (set, get) => ({
   skillAnalysis: initialSkillAnalysis,
   skillStatsSnapshot: null,
   skillStatsVersion: 0,
+  skillEnvValues: {},
 
   // 设置 Channels 数据 (兼容旧 API)
   setChannelsSnapshot: (snapshot) => {
@@ -227,7 +237,7 @@ export const createChannelsSlice: StateCreator<ChannelsSlice> = (set, get) => ({
       const messages = [
         {
           role: 'system' as const,
-          content: '你是 DD-OS 技能分析师。基于 Agent 当前的技能列表和任务执行历史，总结能力画像。输出纯 JSON（无 markdown）：{"summary":"...","weaknesses":"..."}。summary 用 2-3 句中文叙事描述 Agent 擅长什么；weaknesses 用 1 句描述缺失或薄弱的能力域（如无明显短板则返回空字符串）。',
+          content: '你是 DunCrew 技能分析师。基于 Agent 当前的技能列表和任务执行历史，总结能力画像。输出纯 JSON（无 markdown）：{"summary":"...","weaknesses":"..."}。summary 用 2-3 句中文叙事描述 Agent 擅长什么；weaknesses 用 1 句描述缺失或薄弱的能力域（如无明显短板则返回空字符串）。',
         },
         {
           role: 'user' as const,
@@ -281,5 +291,28 @@ export const createChannelsSlice: StateCreator<ChannelsSlice> = (set, get) => ({
       skillStatsSnapshot: snapshot,
       skillStatsVersion: state.skillStatsVersion + 1,
     }))
+  },
+
+  setSkillEnvValue: (skillName, key, value) => {
+    const current = get().skillEnvValues
+    const updated = {
+      ...current,
+      [skillName]: { ...current[skillName], [key]: value },
+    }
+    set({ skillEnvValues: updated })
+    localServerService.setData(SKILL_ENV_DATA_KEY, updated).catch(() => {
+      console.warn('[ChannelsSlice] Failed to persist skill env values')
+    })
+  },
+
+  loadSkillEnvValues: async () => {
+    try {
+      const data = await localServerService.getData<Record<string, Record<string, string>>>(SKILL_ENV_DATA_KEY)
+      if (data && typeof data === 'object') {
+        set({ skillEnvValues: data })
+      }
+    } catch {
+      console.warn('[ChannelsSlice] Failed to load skill env values')
+    }
   },
 })

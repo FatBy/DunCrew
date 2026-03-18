@@ -2,7 +2,7 @@
 chcp 65001 >nul
 echo.
 echo ╔══════════════════════════════════════════════════════════╗
-echo ║           DD-OS Tauri Desktop Build Script                ║
+echo ║         DunCrew Tauri Desktop Build Script                 ║
 echo ╚══════════════════════════════════════════════════════════╝
 echo.
 
@@ -35,7 +35,7 @@ echo [OK] Frontend built.
 
 :: 步骤 2: 打包 Python 后端
 echo [2/5] Packaging Python backend with PyInstaller...
-pyinstaller ddos-server.spec --clean --noconfirm
+pyinstaller duncrew-server.spec --clean --noconfirm
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] PyInstaller build failed!
     exit /b 1
@@ -48,7 +48,7 @@ if not exist "src-tauri\binaries" mkdir "src-tauri\binaries"
 
 :: 根据架构确定目标文件名
 set TARGET=x86_64-pc-windows-msvc
-copy /Y "dist\ddos-server.exe" "src-tauri\binaries\ddos-server-%TARGET%.exe"
+copy /Y "dist\duncrew-server.exe" "src-tauri\binaries\duncrew-server-%TARGET%.exe"
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to copy sidecar binary!
     exit /b 1
@@ -68,9 +68,9 @@ echo [OK] Tauri built.
 echo [5/5] Build complete!
 echo.
 echo ╔══════════════════════════════════════════════════════════╗
-echo ║                    Build Complete!                        ║
+echo ║                    Build Complete!                         ║
 echo ╠══════════════════════════════════════════════════════════╣
-echo ║  Installer: src-tauri\target\release\bundle\              ║
+echo ║  Installer: src-tauri\target\release\bundle\               ║
 echo ╚══════════════════════════════════════════════════════════╝
 echo.
 

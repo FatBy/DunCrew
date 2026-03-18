@@ -2,7 +2,7 @@
 name: merge-pr
 description: "Script-first deterministic squash merge with strict required-check gating, head-SHA pinning, and reliable attribution/commenting."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🔧"

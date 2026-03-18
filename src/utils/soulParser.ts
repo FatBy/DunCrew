@@ -274,7 +274,7 @@ export function parsedSoulToIdentity(
   agentEmoji?: string
 ): SoulIdentity {
   return {
-    name: agentName || 'DD-OS Agent',
+    name: agentName || 'DunCrew Agent',
     essence: parsed.subtitle || parsed.title || 'AI Assistant',
     vibe: extractVibeKeywords(parsed.vibeStatement),
     symbol: agentEmoji || '🤖',

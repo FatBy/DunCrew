@@ -2,7 +2,7 @@
 name: feishu-perm
 description: "Feishu permission management for documents and files. Activate when user mentions sharing, permissions, collaborators."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🔧"

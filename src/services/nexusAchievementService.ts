@@ -6,7 +6,7 @@
 import type { NexusScoring } from '@/types'
 import { checkAchievements, type AchievementId } from '@/components/dashboard/nexusGrowth'
 
-const STORAGE_KEY = 'ddos_nexus_achievements'
+const STORAGE_KEY = 'duncrew_nexus_achievements'
 
 class NexusAchievementService {
   private achievementsMap: Map<string, AchievementId[]> = new Map()

@@ -74,14 +74,14 @@ export type SimpleChatMessage = {
 
 // localStorage keys
 const STORAGE_KEYS = {
-  API_KEY: 'ddos_llm_api_key',
-  BASE_URL: 'ddos_llm_base_url',
-  MODEL: 'ddos_llm_model',
-  API_FORMAT: 'ddos_llm_api_format',
+  API_KEY: 'duncrew_llm_api_key',
+  BASE_URL: 'duncrew_llm_base_url',
+  MODEL: 'duncrew_llm_model',
+  API_FORMAT: 'duncrew_llm_api_format',
   // Embedding 专用配置
-  EMBED_API_KEY: 'ddos_embed_api_key',
-  EMBED_BASE_URL: 'ddos_embed_base_url',
-  EMBED_MODEL: 'ddos_embed_model',
+  EMBED_API_KEY: 'duncrew_embed_api_key',
+  EMBED_BASE_URL: 'duncrew_embed_base_url',
+  EMBED_MODEL: 'duncrew_embed_model',
 }
 
 // ============================================
@@ -149,7 +149,7 @@ export function isLLMConfigured(): boolean {
  */
 async function persistLLMConfigToServer(config: LLMConfig) {
   try {
-    const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+    const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
     await fetch(`${serverUrl}/data/llm_config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -167,7 +167,7 @@ async function persistLLMConfigToServer(config: LLMConfig) {
  */
 export async function restoreLLMConfigFromServer(): Promise<LLMConfig | null> {
   try {
-    const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+    const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
     const res = await fetch(`${serverUrl}/data/llm_config`)
     if (!res.ok) return null
     
@@ -1019,13 +1019,17 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 // ============================================
 
 /**
- * 将 DD-OS ToolInfo 转换为 OpenAI Function Calling 的 tools 参数格式
+ * 将 DunCrew ToolInfo 转换为 OpenAI Function Calling 的 tools 参数格式
  */
 export function convertToolInfoToFunctions(
   tools: ToolInfo[]
 ): Array<{ type: 'function'; function: FunctionDefinition }> {
   return tools
-    .filter(t => t.type !== 'instruction') // 指令型技能无需注册为 function
+    .filter(t => {
+      // 排除没有 description 的 instruction skill (无法被 LLM 正确使用)
+      if (t.type === 'instruction' && !t.description) return false
+      return true
+    })
     .map(t => ({
       type: 'function' as const,
       function: toolInfoToFunctionDef(t),

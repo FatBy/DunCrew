@@ -2,7 +2,7 @@
 name: code-runner
 description: "Execute shell commands and scripts on the user's local machine."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "⚡"

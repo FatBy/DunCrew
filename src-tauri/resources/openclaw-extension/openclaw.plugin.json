@@ -1,7 +1,7 @@
 {
-  "id": "ddos",
-  "name": "DD-OS Integration",
-  "description": "DD-OS Nexus system integration for OpenClaw — SOP-driven task execution, experience tracking, and adaptive rule injection.",
+  "id": "duncrew",
+  "name": "DunCrew Integration",
+  "description": "DunCrew Nexus system integration for OpenClaw — SOP-driven task execution, experience tracking, and adaptive rule injection.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

@@ -2,7 +2,7 @@
 name: voice-call
 description: "Start voice calls via the OpenClaw voice-call plugin."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "📞"

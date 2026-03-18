@@ -6,7 +6,7 @@ Using the `skill-scout` Nexus (or a coding-focused Nexus) to build a TypeScript 
 
 ## Setup
 
-1. DD-OS running with backend connected
+1. DunCrew running with backend connected
 2. API configured (any OpenAI-compatible model with function calling support)
 3. Enter a coding Nexus from the World View
 
@@ -54,7 +54,7 @@ Step 6/6: Run tests
 
 ### What If Tests Fail?
 
-This is where DD-OS differs from other agents. When `vitest run` returns failures:
+This is where DunCrew differs from other agents. When `vitest run` returns failures:
 
 1. **Reflexion triggers**: The AI doesn't blindly retry. It generates a structured self-reflection:
    ```

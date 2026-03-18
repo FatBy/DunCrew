@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { 
-  Monitor, Info, Check, Sparkles, Eye, EyeOff, Type, Wifi, WifiOff, Globe, Languages, Zap, ExternalLink, Copy, Store, LogOut, Loader2
+  Monitor, Info, Check, Sparkles, Eye, EyeOff, Type, Wifi, WifiOff, Globe, Languages, Store, LogOut, Loader2
 } from 'lucide-react'
 import { GlassCard } from '@/components/GlassCard'
 import { staggerContainer, staggerItem } from '@/utils/animations'
 import { useStore } from '@/store'
 import { testConnection, resolveApiFormat } from '@/services/llmService'
-import { evoMapService, type EvoMapState } from '@/services/evoMapService'
 import { cn } from '@/utils/cn'
 import { useT } from '@/i18n'
 import type { TranslationKey } from '@/i18n/locales/zh'
@@ -134,7 +133,7 @@ export function SettingsHouse() {
   
   // UI 设置
   const [fontScale, setFontScale] = useState(() => {
-    const saved = localStorage.getItem('ddos_font_scale')
+    const saved = localStorage.getItem('duncrew_font_scale')
     return saved ? parseFloat(saved) : 1
   })
   
@@ -146,19 +145,9 @@ export function SettingsHouse() {
   const locale = useStore((s) => s.locale)
   const setLocale = useStore((s) => s.setLocale)
   
-  // EvoMap 连接状态
-  const [evoMapState, setEvoMapState] = useState<EvoMapState>(evoMapService.getState())
-  const [evoMapConnecting, setEvoMapConnecting] = useState(false)
-  
-  // 订阅 EvoMap 状态变化
-  useEffect(() => {
-    const unsubscribe = evoMapService.subscribe(setEvoMapState)
-    return unsubscribe
-  }, [])
-  
   useEffect(() => {
     document.documentElement.style.setProperty('--font-scale', String(fontScale))
-    localStorage.setItem('ddos_font_scale', String(fontScale))
+    localStorage.setItem('duncrew_font_scale', String(fontScale))
   }, [fontScale])
 
   // 自动保存 LLM 配置
@@ -221,7 +210,7 @@ export function SettingsHouse() {
               <span className={cn(
                 isConnected ? 'text-emerald-400' : 'text-stone-300'
               )}>
-                {connectionMode === 'native' ? 'Native' : 'DD-OS Cloud'} · {isConnected ? t('settings.connected') : t('settings.disconnected')}
+                {connectionMode === 'native' ? 'Native' : 'DunCrew Cloud'} · {isConnected ? t('settings.connected') : t('settings.disconnected')}
               </span>
             </div>
             <div className="flex justify-between">
@@ -447,129 +436,6 @@ export function SettingsHouse() {
         </GlassCard>
       </div>
 
-      {/* EvoMap 云端协作 */}
-      <div>
-        <div className="flex items-center gap-2 mb-4">
-          <Zap className="w-4 h-4 text-purple-400" />
-          <h3 className="font-mono text-sm text-purple-300 tracking-wider">
-            EvoMap 云端协作
-          </h3>
-        </div>
-        
-        <GlassCard className="p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className={cn(
-                'w-2 h-2 rounded-full',
-                evoMapState.connected ? 'bg-emerald-400 animate-pulse' : 'bg-white/30'
-              )} />
-              <span className="text-xs font-mono text-stone-500">
-                {evoMapState.connected ? '已连接' : '未连接'}
-              </span>
-            </div>
-            
-            <button
-              onClick={async () => {
-                if (evoMapState.connected) {
-                  evoMapService.disconnect()
-                } else {
-                  setEvoMapConnecting(true)
-                  try {
-                    await evoMapService.hello()
-                  } catch (err) {
-                    console.error('[EvoMap] Connect failed:', err)
-                  } finally {
-                    setEvoMapConnecting(false)
-                  }
-                }
-              }}
-              disabled={evoMapConnecting}
-              className={cn(
-                'px-3 py-1.5 rounded-lg text-xs font-mono transition-colors',
-                evoMapConnecting
-                  ? 'bg-purple-500/20 border border-purple-500/30 text-purple-400 animate-pulse'
-                  : evoMapState.connected
-                  ? 'bg-red-500/20 border border-red-500/30 text-red-400 hover:bg-red-500/30'
-                  : 'bg-purple-500/20 border border-purple-500/30 text-purple-400 hover:bg-purple-500/30'
-              )}
-            >
-              {evoMapConnecting ? '连接中...' : evoMapState.connected ? '断开' : '连接 EvoMap'}
-            </button>
-          </div>
-          
-          {evoMapState.connected && (
-            <>
-              <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-                <div className="bg-stone-100/60 rounded-lg p-2">
-                  <span className="text-stone-400">积分</span>
-                  <div className="text-lg text-purple-400">{evoMapState.credits}</div>
-                </div>
-                <div className="bg-stone-100/60 rounded-lg p-2">
-                  <span className="text-stone-400">声誉</span>
-                  <div className="text-lg text-cyan-400">{evoMapState.reputation}</div>
-                </div>
-              </div>
-              
-              {evoMapState.nodeId && (
-                <div className="text-xs font-mono">
-                  <span className="text-stone-400">Node ID: </span>
-                  <span className="text-stone-500">{evoMapState.nodeId}</span>
-                </div>
-              )}
-              
-              {evoMapState.claimUrl && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-stone-400">认领链接:</span>
-                  <a
-                    href={evoMapState.claimUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs font-mono text-purple-400 hover:text-purple-300 flex items-center gap-1"
-                  >
-                    {evoMapState.claimCode} <ExternalLink className="w-3 h-3" />
-                  </a>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(evoMapState.claimUrl || '')
-                    }}
-                    className="text-stone-300 hover:text-stone-500"
-                    title="复制链接"
-                  >
-                    <Copy className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
-              
-              {evoMapState.survivalStatus && (
-                <div className="text-xs font-mono">
-                  <span className="text-stone-400">状态: </span>
-                  <span className={cn(
-                    evoMapState.survivalStatus === 'alive' ? 'text-emerald-400' :
-                    evoMapState.survivalStatus === 'dormant' ? 'text-amber-400' : 'text-red-400'
-                  )}>
-                    {evoMapState.survivalStatus === 'alive' ? '活跃' :
-                     evoMapState.survivalStatus === 'dormant' ? '休眠' : '失效'}
-                  </span>
-                </div>
-              )}
-              
-              {evoMapState.error && (
-                <div className="text-xs font-mono text-red-400 bg-red-500/10 rounded-lg p-2">
-                  {evoMapState.error}
-                </div>
-              )}
-            </>
-          )}
-          
-          <p className="text-[11px] text-stone-300 font-mono">
-            连接 EvoMap 协作市场，共享 AI 经验并赚取积分。
-            <a href="https://evomap.ai" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline ml-1">
-              了解更多
-            </a>
-          </p>
-        </GlassCard>
-      </div>
-
       {/* 视觉设置 */}
       <motion.div
         variants={staggerContainer}
@@ -762,7 +628,7 @@ export function SettingsHouse() {
           <div className="space-y-2 font-mono text-xs text-stone-400">
             <div className="flex justify-between">
               <span>{t('settings.version')}</span>
-              <span className="text-stone-600">DD-OS v1.0.0</span>
+              <span className="text-stone-600">DunCrew v1.0.0</span>
             </div>
             <div className="flex justify-between">
               <span>{t('settings.run_mode')}</span>

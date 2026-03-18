@@ -15,7 +15,7 @@ Long-term memory entries that should be retained.
 - get_skill_info无法找到docx技能，说明技能系统未加载custom技能
 
 后续建议：
-1. 重启DD-OS后端服务以加载新技能
+1. 重启DunCrew后端服务以加载新技能
 2. 或运行技能扫描/刷新命令重新注册技能
 3. 验证重启后技能是否在工具列表中可见
 - [8d07fb25a619] (2026-02-23 04:31) [重要] [skill-installation, office, docx, success] ## Office技能安装成功记录

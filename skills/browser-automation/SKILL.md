@@ -2,7 +2,7 @@
 name: browser-automation
 description: "Playwright-based browser automation for web interaction"
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 executable: execute.py
 runtime: python
 tools:

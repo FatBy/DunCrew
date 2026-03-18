@@ -6,8 +6,8 @@ import { executionLogger } from '@/services/executionLogger'
 
 // LocalStorage 键名
 const STORAGE_KEYS = {
-  TASK_HISTORY: 'ddos_task_history',
-  SILENT_ANALYSIS: 'ddos_silent_analysis',
+  TASK_HISTORY: 'duncrew_task_history',
+  SILENT_ANALYSIS: 'duncrew_silent_analysis',
 }
 
 // 批量持久化控制
@@ -446,7 +446,7 @@ export const createSessionsSlice: StateCreator<SessionsSlice> = (set, get) => ({
       const messages = [
         {
           role: 'system' as const,
-          content: `你是 DD-OS 任务分析师。分析历史任务，输出 JSON 格式：
+          content: `你是 DunCrew 任务分析师。分析历史任务，输出 JSON 格式：
 {
   "summary": "2-3句话的能力画像总结",
   "optimizations": [

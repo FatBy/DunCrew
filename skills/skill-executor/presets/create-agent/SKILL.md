@@ -2,7 +2,7 @@
 name: create-agent
 description: "Create a new specialized AI agent with custom prompts and tools"
 version: "1.0.0"
-author: "DD-OS Team"
+author: "DunCrew Team"
 metadata:
   openclaw:
     emoji: "🔧"
@@ -45,7 +45,7 @@ Create a new specialized AI agent with customized capabilities, prompts, and too
    - Select appropriate tools from the available tool registry
 
 3. **Create the Agent Definition File**
-   - Create a new directory: `.ddos/agents/{agent_name}/`
+   - Create a new directory: `.duncrew/agents/{agent_name}/`
    - Write `config.json` with:
      ```json
      {

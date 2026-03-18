@@ -2,7 +2,7 @@
 name: vercel-deploy
 description: "Deploy web projects to Vercel with automated CLI setup, authentication, and deployment configuration."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🔧"

@@ -1,17 +1,17 @@
 #!/bin/bash
-# DD-OS Docker 启动脚本
+# DunCrew Docker 启动脚本
 # 同时启动 Python 后端 + 前端预览服务
 
 set -e
 
 echo "=========================================="
-echo "   DD-OS - AI Operating System"
+echo "   DunCrew - AI Operating System"
 echo "=========================================="
 echo ""
 
 # 启动 Python 后端（后台运行）
 echo "[1/2] Starting Python backend on port 3001..."
-python3 ddos-local-server.py --port 3001 --path /root/.ddos &
+python3 duncrew-server.py --port 3001 --path /root/.duncrew &
 BACKEND_PID=$!
 
 # 等待后端启动
@@ -34,7 +34,7 @@ FRONTEND_PID=$!
 sleep 2
 
 echo "=========================================="
-echo "   DD-OS is running!"
+echo "   DunCrew is running!"
 echo ""
 echo "   Frontend:  http://localhost:4173"
 echo "   Backend:   http://localhost:3001"
@@ -45,7 +45,7 @@ echo "=========================================="
 # 捕获退出信号，清理进程
 cleanup() {
     echo ""
-    echo "Shutting down DD-OS..."
+    echo "Shutting down DunCrew..."
     kill $BACKEND_PID 2>/dev/null || true
     kill $FRONTEND_PID 2>/dev/null || true
     exit 0

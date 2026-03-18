@@ -8,7 +8,7 @@ import { localServerService } from '@/services/localServerService'
 const DATA_KEY_NEXUSES = 'nexuses_state'
 
 // localStorage key for Nexus persistence (备份/缓存)
-const NEXUS_STORAGE_KEY = 'ddos_nexuses'
+const NEXUS_STORAGE_KEY = 'duncrew_nexuses'
 
 // ---- 持久化函数 (后端 + localStorage 双写) ----
 
@@ -127,7 +127,7 @@ export interface WorldSlice {
   // 从后端加载数据 (应用启动后调用)
   loadNexusesFromServer: () => Promise<void>
   
-  // OpenClaw agents → DD-OS Nexuses 同步
+  // OpenClaw agents → DunCrew Nexuses 同步
   syncAgentsAsNexuses: (agents: Array<{ id: string; name?: string; identity?: { name?: string; emoji?: string } }>, skills: Array<{ name: string; description?: string; status?: string }>) => void
 }
 

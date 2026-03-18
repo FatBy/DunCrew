@@ -2,7 +2,7 @@
 name: canvas
 description: "Display HTML content on connected OpenClaw nodes (Mac app, iOS, Android)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🎨"

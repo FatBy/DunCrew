@@ -7,7 +7,7 @@
  * - 记忆写入（exec_trace, gene, nexus_xp, session, memory）
  * - 批量导入/导出
  *
- * 后端实现在 ddos-local-server.py，前端仅做 API 调用和结果处理。
+ * 后端实现在 duncrew-server.py，前端仅做 API 调用和结果处理。
  */
 
 import type { MemorySearchResult } from '@/types'

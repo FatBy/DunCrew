@@ -398,7 +398,7 @@ export function MemoryHouse() {
   // 组件挂载时从 localStorage 加载缓存日志
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('ddos_journal_entries')
+      const raw = localStorage.getItem('duncrew_journal_entries')
       if (raw) {
         const entries: JournalEntry[] = JSON.parse(raw)
         if (entries.length > 0 && journalEntries.length === 0) {
@@ -420,7 +420,7 @@ export function MemoryHouse() {
   // 手动全量重新生成
   const handleRefresh = () => {
     if (llmReady && storeMemories.length > 0 && !journalLoading) {
-      try { localStorage.removeItem('ddos_journal_entries') } catch {}
+      try { localStorage.removeItem('duncrew_journal_entries') } catch {}
       useStore.getState().setJournalEntries([])
       generateJournal(storeMemories)
     }

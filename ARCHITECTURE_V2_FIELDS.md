@@ -1,4 +1,4 @@
-# DD-OS V2 架构字段完全记录
+# DunCrew V2 架构字段完全记录
 
 > 本文件记录 Agent 架构升级涉及的所有新增/修改/废弃字段。
 > 用途：后续 World 和 Nexus 前端渲染大调整时的数据契约参考。
@@ -78,7 +78,7 @@ interface AgentRunState {
   modelChain: string[];             // fallback 模型链（按优先级）
   currentModel: string;             // 当前使用的模型名
 
-  // ═══ 1.7 Nexus 上下文（DD-OS 特有）═══
+  // ═══ 1.7 Nexus 上下文（DunCrew 特有）═══
   activeNexusId: string | null;     // 当前激活的 Nexus ID
   nexusSopInjected: boolean;        // SOP 是否已注入到上下文
   nexusScore: number;               // 当前 Nexus 的实时分数
@@ -88,7 +88,7 @@ interface AgentRunState {
     currentStep: string;            //   当前步骤描述
   } | null;
 
-  // ═══ 1.8 Critic/Reflexion（DD-OS 特有）═══
+  // ═══ 1.8 Critic/Reflexion（DunCrew 特有）═══
   reflexionCount: number;           // 本次 run 反思次数
   criticPending: boolean;           // 等待 Critic 验证
   approvalPending: boolean;         // 等待用户审批（危险操作）
@@ -694,7 +694,7 @@ interface OnChildEndedParams {
 ## 5. ChildAgent
 
 > 子智能体系统。对标 OpenClaw sessions_spawn + subagents 工具。
-> DD-OS 特有：子智能体绑定 Nexus 角色。
+> DunCrew 特有：子智能体绑定 Nexus 角色。
 
 ### 5.1 SpawnChildParams
 

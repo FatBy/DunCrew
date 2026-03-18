@@ -2,7 +2,7 @@
 name: openai-whisper-api
 description: "Transcribe audio via OpenAI Audio Transcriptions API (Whisper)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://platform.openai.com/docs/guides/speech-to-text
 metadata:
   openclaw:

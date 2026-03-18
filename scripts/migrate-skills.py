@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DD-OS 技能格式迁移脚本 - 全量升级 SKILL.md 到 OpenClaw 标准格式
+DunCrew 技能格式迁移脚本 - 全量升级 SKILL.md 到 OpenClaw 标准格式
 
 功能:
 1. 扫描 skills/ 下所有 SKILL.md
@@ -164,7 +164,7 @@ def build_frontmatter(fm: dict, skill_dir: Path) -> str:
         lines.append(f'description: "{desc_escaped}"')
     
     lines.append(f'version: "{fm.get("version", "1.0.0")}"')
-    lines.append(f'author: "{fm.get("author", "DD-OS")}"')
+    lines.append(f'author: "{fm.get("author", "DunCrew")}"')
     
     if fm.get('license'):
         lines.append(f'license: {fm["license"]}')
@@ -280,7 +280,7 @@ def migrate_skill(skill_md: Path, dry_run: bool = False) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Migrate DD-OS skills to OpenClaw format')
+    parser = argparse.ArgumentParser(description='Migrate DunCrew skills to OpenClaw format')
     parser.add_argument('--dry-run', action='store_true', help='Preview changes without writing')
     parser.add_argument('--skills-dir', default='skills', help='Skills directory path')
     args = parser.parse_args()

@@ -2,7 +2,7 @@
 name: blucli
 description: "BluOS CLI (blu) for discovery, playback, grouping, and volume."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://blucli.sh
 metadata:
   openclaw:

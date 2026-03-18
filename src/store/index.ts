@@ -10,6 +10,7 @@ import { createWorldSlice, type WorldSlice } from './slices/worldSlice'
 import { createObserverSlice, type ObserverSlice } from './slices/observerSlice'
 import { createThemeSlice, type ThemeSlice } from './slices/themeSlice'
 import { createClawHubSlice, type ClawHubSlice } from './slices/clawHubSlice'
+import { createSoulAmendmentSlice, type SoulAmendmentSlice } from './slices/soulAmendmentSlice'
 
 // ============================================
 // 视图状态
@@ -22,7 +23,7 @@ interface ViewSlice {
 // ============================================
 // 合并后的 Store 类型
 // ============================================
-export type AppStore = ViewSlice & ConnectionSlice & SessionsSlice & ChannelsSlice & AgentSlice & DevicesSlice & AiSlice & WorldSlice & ObserverSlice & ThemeSlice & ClawHubSlice
+export type AppStore = ViewSlice & ConnectionSlice & SessionsSlice & ChannelsSlice & AgentSlice & DevicesSlice & AiSlice & WorldSlice & ObserverSlice & ThemeSlice & ClawHubSlice & SoulAmendmentSlice
 
 // ============================================
 // 创建 Store
@@ -43,6 +44,7 @@ export const useStore = create<AppStore>()((...args) => ({
   ...createObserverSlice(...args),
   ...createThemeSlice(...args),
   ...createClawHubSlice(...args),
+  ...createSoulAmendmentSlice(...args),
 }))
 
 // ============================================
@@ -64,6 +66,10 @@ export const selectMemories = (state: AppStore) => state.memories
 export const selectJournalEntries = (state: AppStore) => state.journalEntries
 export const selectSoulDimensions = (state: AppStore) => state.soulDimensions
 export const selectSoulPrompts = (state: AppStore) => state.soulPrompts
+
+// Soul Amendment 选择器
+export const selectAmendments = (state: AppStore) => state.amendments
+export const selectDraftAmendments = (state: AppStore) => state.draftAmendments
 
 export const selectToasts = (state: AppStore) => state.toasts
 export const selectLogs = (state: AppStore) => state.logs

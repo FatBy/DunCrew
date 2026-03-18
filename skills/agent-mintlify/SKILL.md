@@ -2,7 +2,7 @@
 name: mintlify
 description: "Build and maintain documentation sites with Mintlify. Use when creating docs pages, configuring navigation, adding components, or setting up API references."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 license: MIT
 metadata:
   openclaw:

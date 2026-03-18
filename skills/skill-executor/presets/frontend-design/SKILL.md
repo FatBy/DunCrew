@@ -2,7 +2,7 @@
 name: frontend-design
 description: "Apply visual design improvements to frontend applications. This skill helps enhance the UI/UX of web applications through styling, layout, and component improvements."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🎨"

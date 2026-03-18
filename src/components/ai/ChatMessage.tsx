@@ -197,7 +197,7 @@ function FileCreatedOutput({ content }: { content: string }) {
     setOpening(true)
     
     try {
-      const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+      const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
       const response = await fetch(`${serverUrl}/api/tools/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -492,7 +492,7 @@ function FileCreatedCard({ file }: { file: { filePath: string; fileName: string;
     if (!file.filePath) return
     setOpening(true)
     try {
-      const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+      const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
       await fetch(`${serverUrl}/api/tools/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

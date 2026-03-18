@@ -2,7 +2,7 @@
 name: spotify-player
 description: "Terminal Spotify playback/search via spogo (preferred) or spotify_player."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://www.spotify.com
 metadata:
   openclaw:

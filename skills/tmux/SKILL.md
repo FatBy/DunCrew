@@ -2,7 +2,7 @@
 name: tmux
 description: "Remote-control tmux sessions for interactive CLIs by sending keystrokes and scraping pane output."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🧵"

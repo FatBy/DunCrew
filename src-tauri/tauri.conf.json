@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DD-OS",
+  "productName": "DunCrew",
   "version": "1.0.0",
-  "identifier": "com.ddos.desktop",
+  "identifier": "com.duncrew.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "DD-OS - AI Operating System",
+        "title": "DunCrew - AI Operating System",
         "width": 1280,
         "height": 800,
         "minWidth": 1024,
@@ -36,7 +36,7 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/ddos-server"
+      "binaries/duncrew-server"
     ],
     "resources": {
       "resources/openclaw-extension/index.ts": "openclaw-extension/index.ts",

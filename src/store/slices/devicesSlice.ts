@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import type { Device, PresenceSnapshot, HealthSnapshot, SoulDimension, AgentIdentity, SoulIdentity, SoulTruth, SoulBoundary, MBTIResult } from '@/types'
+import type { Device, PresenceSnapshot, HealthSnapshot, SoulDimension, AgentIdentity, SoulIdentity, SoulTruth, SoulBoundary, MBTIResult, MBTIAxisScores } from '@/types'
 import { healthToSoulDimensions } from '@/utils/dataMapper'
 import type { ParsedSoul } from '@/utils/soulParser'
 
@@ -28,6 +28,11 @@ export interface DevicesSlice {
   soulMBTI: MBTIResult | null
   soulMBTILoading: boolean
   
+  // MBTI 双层演化
+  soulMBTIBase: MBTIResult | null        // Layer 1: 基础类型 (来自 SOUL.md)
+  soulMBTIExpressed: MBTIResult | null   // Layer 2: 行为调整后的表达类型
+  soulMBTIAxes: MBTIAxisScores | null    // 四轴原始分数 (-1~+1)
+  
   // Actions
   setPresenceSnapshot: (snapshot: PresenceSnapshot) => void
   updateDevice: (id: string, updates: Partial<Device>) => void
@@ -45,6 +50,9 @@ export interface DevicesSlice {
   updateSoulFromState: (identity: AgentIdentity | null) => void
   setSoulDirty: (dirty: boolean) => void
   detectSoulMBTI: () => Promise<void>
+  
+  // MBTI 双层演化
+  updateExpressedMBTI: (expressed: MBTIResult, axes: MBTIAxisScores) => void
 }
 
 export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
@@ -64,6 +72,9 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
   soulDirty: false,
   soulMBTI: null,
   soulMBTILoading: false,
+  soulMBTIBase: null,
+  soulMBTIExpressed: null,
+  soulMBTIAxes: null,
 
   setPresenceSnapshot: (snapshot) => set((state) => {
     // 只更新 presence 相关数据和维度，不覆盖已解析的 soul 内容
@@ -117,7 +128,7 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
   setSoulFromParsed: (parsed, agentIdentity) => {
     set((state) => {
       const identity: SoulIdentity = {
-        name: agentIdentity?.name || 'DD-OS Agent',
+        name: agentIdentity?.name || 'DunCrew Agent',
         essence: parsed.subtitle || parsed.title || 'AI Assistant',
         vibe: parsed.vibeStatement ? parsed.vibeStatement.slice(0, 100) : '',
         symbol: agentIdentity?.emoji || '🤖',
@@ -126,7 +137,7 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
       // 生成 prompts (兼容旧版)
       const prompts = {
         identity: agentIdentity 
-          ? `I'm ${agentIdentity.name || 'DD-OS Agent'}, ID: ${agentIdentity.agentId}. ${agentIdentity.emoji || '🤖'}`
+          ? `I'm ${agentIdentity.name || 'DunCrew Agent'}, ID: ${agentIdentity.agentId}. ${agentIdentity.emoji || '🤖'}`
           : 'Connected, waiting for agent identity...',
         constraints: state.health
           ? `Status: ${state.health.status}\nUptime: ${Math.floor(state.health.uptime / 3600000)}h\nVersion: ${state.health.version || 'unknown'}`
@@ -172,7 +183,7 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
       return {
         soulDimensions: dimensions,
         soulIdentity: {
-          name: identity.name || 'DD-OS Agent',
+          name: identity.name || 'DunCrew Agent',
           essence: 'AI Assistant',
           vibe: '',
           symbol: identity.emoji || '🤖',
@@ -202,7 +213,7 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
     if (state.soulMBTILoading) return
     set({ soulMBTILoading: true })
     try {
-      const { detectMBTI } = await import('@/services/mbtiAnalyzer')
+      const { detectMBTI, rulesAxisScores } = await import('@/services/mbtiAnalyzer')
       const result = await detectMBTI(
         state.soulCoreTruths,
         state.soulBoundaries,
@@ -210,12 +221,24 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
         state.soulRawContent,
         // LLM 后台分析完成后回调更新 store
         (llmResult) => {
-          set({ soulMBTI: llmResult })
+          set({ soulMBTI: llmResult, soulMBTIBase: llmResult })
         },
       )
-      set({ soulMBTI: result, soulMBTILoading: false })
+      // 规则引擎的轴分数作为初始 axes
+      const axes = rulesAxisScores(state.soulCoreTruths, state.soulBoundaries, state.soulVibeStatement)
+      set({
+        soulMBTI: result,
+        soulMBTIBase: result,
+        soulMBTIExpressed: result,
+        soulMBTIAxes: axes,
+        soulMBTILoading: false,
+      })
     } catch {
       set({ soulMBTILoading: false })
     }
+  },
+  
+  updateExpressedMBTI: (expressed, axes) => {
+    set({ soulMBTIExpressed: expressed, soulMBTI: expressed, soulMBTIAxes: axes })
   },
 })

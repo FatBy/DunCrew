@@ -2,7 +2,7 @@
 name: imsg
 description: "iMessage/SMS CLI for listing chats, history, and sending messages via Messages.app."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://imsg.to
 metadata:
   openclaw:

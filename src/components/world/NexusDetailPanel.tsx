@@ -326,7 +326,7 @@ export function NexusDetailPanel() {
         for (let attempt = 0; attempt < 3; attempt++) {
           await new Promise(r => setTimeout(r, 300))
           try {
-            const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+            const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
             const res = await fetch(`${serverUrl}/skills`)
             if (res.ok) {
               freshSkills = await res.json()
@@ -377,7 +377,7 @@ export function NexusDetailPanel() {
   // Load experiences from server when panel opens
   useEffect(() => {
     if (!nexus?.id || !nexusPanelOpen) return
-    const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+    const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
     fetch(`${serverUrl}/nexuses/${nexus.id}`)
       .then(res => res.ok ? res.json() : null)
       .then(data => {
@@ -410,7 +410,7 @@ export function NexusDetailPanel() {
       setScoring(cached)
     } else {
       // 尝试从服务端加载，失败则用 getOrCreate 创建初始值
-      const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+      const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
       nexusScoringService.loadFromServer(nexus.id, serverUrl).then(loaded => {
         setScoring(loaded || nexusScoringService.getOrCreate(nexus.id))
       })
@@ -469,7 +469,7 @@ export function NexusDetailPanel() {
     if (!trimmedName || trimmedName === nexus.label) return
     
     try {
-      const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+      const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
       const res = await fetch(`${serverUrl}/nexuses/${nexus.id}/meta`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -946,7 +946,7 @@ export function NexusDetailPanel() {
                                 e.stopPropagation()
                                 e.preventDefault()
                                 if (!nexus) return
-                                const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+                                const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
                                 fetch(`${serverUrl}/nexuses/${nexus.id}/skills`, {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },

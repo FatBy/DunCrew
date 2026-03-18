@@ -2,7 +2,7 @@
 name: wacli
 description: "Send WhatsApp messages to other people or search/sync WhatsApp history via the wacli CLI (not for normal user chats)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://wacli.sh
 metadata:
   openclaw:

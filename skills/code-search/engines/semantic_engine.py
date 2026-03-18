@@ -37,7 +37,7 @@ class SemanticEngine:
     # Directories to skip
     SKIP_DIRS = {
         '.git', 'node_modules', '__pycache__', 'venv', 'dist', 
-        'build', '.next', 'target', '.ddos'
+        'build', '.next', 'target', '.duncrew'
     }
     
     # Chunk size for embedding (approximate tokens)
@@ -45,13 +45,13 @@ class SemanticEngine:
     
     def __init__(self, project_root: str):
         self.project_root = Path(project_root)
-        self.db_path = self.project_root / '.ddos' / 'semantic_index.db'
+        self.db_path = self.project_root / '.duncrew' / 'semantic_index.db'
         self.config = self._load_config()
         self._ensure_db()
     
     def _load_config(self) -> Dict[str, str]:
         """Load LLM config from localStorage equivalent (config file)."""
-        config_path = self.project_root / '.ddos' / 'llm_config.json'
+        config_path = self.project_root / '.duncrew' / 'llm_config.json'
         
         if config_path.exists():
             try:

@@ -2,7 +2,7 @@
 name: skill-scout
 description: "监测全球 SKILL 社区（OpenClaw 等），根据用户现有技能和目标推荐并安装新技能"
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🔭"
@@ -198,7 +198,7 @@ Step 3-N: 逐个获取并安装
 
 ## Notes
 
-- 安装新技能后需重启后端服务 (`python ddos-local-server.py`) 或等待热加载
+- 安装新技能后需重启后端服务 (`python duncrew-server.py`) 或等待热加载
 - 如果找不到合适的在线技能，可以建议使用 `skill-generator` 技能自己创建
 - 推荐时优先选择有文档、有示例、社区认可的技能
 - 保持 SKILL.md 文件原始格式，不要擅自修改获取到的技能内容

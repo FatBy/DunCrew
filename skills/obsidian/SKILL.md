@@ -2,7 +2,7 @@
 name: obsidian
 description: "Work with Obsidian vaults (plain Markdown notes) and automate via obsidian-cli."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://help.obsidian.md
 metadata:
   openclaw:

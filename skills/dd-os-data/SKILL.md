@@ -1,21 +1,21 @@
 ---
 name: dd-os-data
-description: "Provides structured data from OpenClaw's configuration files for DD-OS frontend visualization."
+description: "Provides structured data from OpenClaw's configuration files for DunCrew frontend visualization."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "💾"
     primaryEnv: "shell"
 ---
 
-# DD-OS Data Provider
+# DunCrew Data Provider
 
-Provides structured data from OpenClaw's configuration files for DD-OS frontend visualization.
+Provides structured data from OpenClaw's configuration files for DunCrew frontend visualization.
 
 ## What This Skill Does
 
-When DD-OS frontend requests data, this skill instructs the agent to:
+When DunCrew frontend requests data, this skill instructs the agent to:
 - **Read SOUL.md** — Extract soul identity, core truths, boundaries, and vibe
 - **Read IDENTITY.md** — Extract agent identity information
 - **List Skills** — Scan skills directory and return all installed skills
@@ -23,7 +23,7 @@ When DD-OS frontend requests data, this skill instructs the agent to:
 
 ## Usage
 
-When the user or DD-OS requests data, respond with the appropriate structured format.
+When the user or DunCrew requests data, respond with the appropriate structured format.
 
 ### Get Soul Data
 
@@ -109,7 +109,7 @@ When asked for memories, read the memory directory or MEMORY.md:
 
 ### Get Full Status
 
-When asked for full DD-OS status, combine all data:
+When asked for full DunCrew status, combine all data:
 
 ```json
 {
@@ -127,12 +127,12 @@ When asked for full DD-OS status, combine all data:
 }
 ```
 
-## Integration with DD-OS
+## Integration with DunCrew
 
-DD-OS frontend will send requests via WebSocket. When you see messages like:
-- "DD-OS requesting soul data"
-- "Get DD-OS status"
-- "Refresh skills list for DD-OS"
+DunCrew frontend will send requests via WebSocket. When you see messages like:
+- "DunCrew requesting soul data"
+- "Get DunCrew status"
+- "Refresh skills list for DunCrew"
 
 Read the appropriate files and respond with the structured JSON format above.
 
@@ -147,12 +147,12 @@ Read the appropriate files and respond with the structured JSON format above.
 
 ## Example Workflow
 
-1. DD-OS connects to OpenClaw Gateway
-2. DD-OS sends: `{"method": "ddos.soul"}`
+1. DunCrew connects to OpenClaw Gateway
+2. DunCrew sends: `{"method": "ddos.soul"}`
 3. Agent reads SOUL.md and IDENTITY.md
 4. Agent parses content into structured format
 5. Agent returns JSON response
-6. DD-OS renders the data in Soul Tower UI
+6. DunCrew renders the data in Soul Tower UI
 
 ## Notes
 

@@ -54,7 +54,7 @@ interface TaskDuration {
   success?: boolean
 }
 
-const STORAGE_KEY = 'ddos_execution_logs'
+const STORAGE_KEY = 'duncrew_execution_logs'
 const MAX_LOGS = 500
 const MAX_DURATIONS = 100
 

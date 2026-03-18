@@ -2,7 +2,7 @@
 name: sherpa-onnx-tts
 description: "Local text-to-speech via sherpa-onnx (offline, no cloud)"
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🗣️"

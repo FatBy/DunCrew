@@ -1,5 +1,5 @@
 /**
- * Signal Matcher -- Ported from DD-OS frontend src/utils/signalMatcher.ts
+ * Signal Matcher -- Ported from DunCrew frontend src/utils/signalMatcher.ts
  *
  * Pure string matching, no ML deps. Supports:
  * - Regex patterns: /pattern/flags

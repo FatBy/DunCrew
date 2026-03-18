@@ -194,10 +194,10 @@ function generatePurposeSummary(trigger: TriggerPattern): string {
 // 对话转 Nexus 提示词 (升级版 - 完整 Nexus 格式)
 // ============================================
 
-const CHAT_TO_NEXUS_PROMPT = `你是 DD-OS 的"提炼器"。分析用户与 AI 的对话记录，提炼出可复用的 Nexus（自动化执行节点）。
+const CHAT_TO_NEXUS_PROMPT = `你是 DunCrew 的"提炼器"。分析用户与 AI 的对话记录，提炼出可复用的 Nexus（自动化执行节点）。
 
 ## Nexus 是什么
-Nexus 是 DD-OS 的核心工作单元，类似于"专家角色+标准作业程序"的组合。每个 Nexus 应该：
+Nexus 是 DunCrew 的核心工作单元，类似于"专家角色+标准作业程序"的组合。每个 Nexus 应该：
 - 有清晰的功能定位和适用场景
 - 包含可执行的详细 SOP（标准作业程序）
 - 绑定必要的工具/技能
@@ -243,7 +243,7 @@ sopContent 必须是详细可执行的操作指南，包含：
 // LLM 模式分析提示词 (语义引擎)
 // ============================================
 
-const ANALYST_SYSTEM_PROMPT = `你是 DD-OS 系统的"观察者"。分析用户的执行日志，识别可固化的行为模式。
+const ANALYST_SYSTEM_PROMPT = `你是 DunCrew 系统的"观察者"。分析用户的执行日志，识别可固化的行为模式。
 
 输入格式：执行统计 + 工具频率 + 执行追踪样本
 
@@ -812,7 +812,7 @@ ${summaryData.recentTasks.map((t, i) =>
   checkDuplicateNexus: (suggestedSkills: string[]) => {
     // 从 localStorage 获取已有的 Nexus
     try {
-      const stored = localStorage.getItem('ddos_nexuses')
+      const stored = localStorage.getItem('duncrew_nexuses')
       if (!stored) return false
       
       const nexuses = JSON.parse(stored) as Array<{ boundSkillIds?: string[]; label?: string }>

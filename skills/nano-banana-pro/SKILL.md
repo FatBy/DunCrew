@@ -2,7 +2,7 @@
 name: nano-banana-pro
 description: "Generate or edit images via Gemini 3 Pro Image (Nano Banana Pro)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://ai.google.dev/
 metadata:
   openclaw:

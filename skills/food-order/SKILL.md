@@ -2,7 +2,7 @@
 name: food-order
 description: "Goal: reorder a previous Foodora order safely (preview first; confirm only on explicit user “yes/confirm/place the order”)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🍽️"

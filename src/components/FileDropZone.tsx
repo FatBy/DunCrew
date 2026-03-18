@@ -152,7 +152,7 @@ export function FileDropZone({
             拖拽文件到此处，或点击上传
           </p>
           <p className="text-[13px] font-mono text-stone-300">
-            支持: SOUL.md, IDENTITY.md, MEMORY.md, skills.json, ddos-config.json
+            支持: SOUL.md, IDENTITY.md, MEMORY.md, skills.json, duncrew-config.json
           </p>
         </>
       )}

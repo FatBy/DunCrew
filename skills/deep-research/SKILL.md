@@ -2,7 +2,7 @@
 name: deep-research
 description: "Async deep research via Gemini Interactions API (no Gemini CLI dependency). RAG-ground queries on local files (--context), preview costs (--dry-run), structured JSON output, adaptive polling. Universal skill for 30+ AI agents including Claude Code, Amp, Codex, and Gemini CLI."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 license: MIT
 metadata:
   openclaw:

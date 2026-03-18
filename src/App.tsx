@@ -25,6 +25,54 @@ import { persistTaskHistory } from '@/store/slices/sessionsSlice'
 import { getCachedMBTIResult } from '@/services/mbtiAnalyzer'
 
 /**
+ * 一次性迁移: 将 localStorage 中旧 ddos_ 前缀的数据移动到 duncrew_ 前缀
+ * 迁移后删除旧 key 释放空间
+ */
+function migrateLocalStorageKeys() {
+  const migrated = localStorage.getItem('duncrew_migration_done')
+  if (migrated) return
+
+  try {
+    // 收集所有需要迁移的 key
+    const oldKeys: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && (key.startsWith('ddos_') || key.startsWith('ddos-'))) {
+        oldKeys.push(key)
+      }
+    }
+
+    // 先删旧 key 腾空间，再写新 key
+    const entries: Array<[string, string]> = []
+    for (const oldKey of oldKeys) {
+      const value = localStorage.getItem(oldKey)
+      if (value) {
+        const newKey = oldKey.startsWith('ddos_')
+          ? oldKey.replace('ddos_', 'duncrew_')
+          : oldKey.replace('ddos-', 'duncrew-')
+        entries.push([newKey, value])
+      }
+      localStorage.removeItem(oldKey)
+    }
+
+    // 写入新 key
+    for (const [newKey, value] of entries) {
+      if (!localStorage.getItem(newKey)) {
+        localStorage.setItem(newKey, value)
+      }
+    }
+
+    if (oldKeys.length > 0) {
+      console.log(`[Migration] Migrated ${oldKeys.length} localStorage keys from ddos → duncrew`)
+    }
+  } catch (err) {
+    console.warn('[Migration] localStorage migration failed:', err)
+  }
+
+  localStorage.setItem('duncrew_migration_done', '1')
+}
+
+/**
  * 从 localStorage 缓存立即恢复数据到 store
  * 在服务器连接之前先显示上次的数据，避免空白等待
  */
@@ -127,7 +175,7 @@ function App() {
       // AI 执行状态
       updateExecutionStatus: useStore.getState().updateExecutionStatus,
       
-      // Gateway sessions → DD-OS 对话回填
+      // Gateway sessions → DunCrew 对话回填
       syncGatewaySessionsToConversations: useStore.getState().syncGatewaySessionsToConversations,
       
       // Native 模式: Agent 任务上下文
@@ -167,7 +215,7 @@ function App() {
     })
 
     // 自动重连: 恢复上次的连接状态
-    const savedMode = localStorage.getItem('ddos_connection_mode')
+    const savedMode = localStorage.getItem('duncrew_connection_mode')
     
     // LLM 配置自动恢复：先尝试从后端恢复，再检查localStorage
     const tryRestoreLLMConfig = async () => {
@@ -216,6 +264,9 @@ function App() {
       useStore.getState().setConnectionMode(savedMode as 'native' | 'openclaw')
 
       if (savedMode === 'native') {
+        // 迁移旧 localStorage key (ddos_ → duncrew_)
+        migrateLocalStorageKeys()
+
         // 立即从 localStorage 恢复缓存数据 (无需等待服务器)
         restoreLocalCacheToStore(storeActions)
 
@@ -230,6 +281,7 @@ function App() {
               await useStore.getState().loadConversationsFromServer()
               await useStore.getState().loadNexusesFromServer()
               await useStore.getState().loadBehaviorRecords()
+              await useStore.getState().loadSkillEnvValues()
               console.log('[App] Loaded persisted data from server')
             } catch (e) {
               console.warn('[App] Failed to load persisted data:', e)
@@ -287,7 +339,7 @@ function App() {
       if (nexuses.size > 0) {
         try {
           const arr = Array.from(nexuses.values())
-          localStorage.setItem('ddos_nexuses', JSON.stringify(arr))
+          localStorage.setItem('duncrew_nexuses', JSON.stringify(arr))
         } catch (_) { /* ignore */ }
       }
     }

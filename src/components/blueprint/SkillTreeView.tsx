@@ -9,9 +9,12 @@
 
 import { useEffect, useMemo, useRef, useState, useLayoutEffect, useCallback } from 'react'
 import { Network, Sparkles, X, Loader2 } from 'lucide-react'
+import { AnimatePresence } from 'framer-motion'
 import { useStore } from '@/store'
 import { chat } from '@/services/llmService'
 import { skillStatsService } from '@/services/skillStatsService'
+import { SkillDetailCard } from '@/components/houses/skill/SkillDetailCard'
+import { SkillDetailsDrawer } from '@/components/houses/skill/SkillDetailsDrawer'
 import type { SkillNode } from '@/types'
 
 // ── 粒子数据结构 ──
@@ -80,6 +83,9 @@ function buildSkillPrompt(skills: SkillNode[], scoringInfo: string, statsInfo: s
 export function SkillTreeView() {
   const skills = useStore((s) => s.skills)
   const nexuses = useStore((s) => s.nexuses)
+  const openClawSkills = useStore((s) => s.openClawSkills)
+  const skillEnvValues = useStore((s) => s.skillEnvValues)
+  const setSkillEnvValue = useStore((s) => s.setSkillEnvValue)
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -92,6 +98,7 @@ export function SkillTreeView() {
   const [tooltip, setTooltip] = useState<{ name: string; desc?: string; x: number; y: number } | null>(null)
   const [selectedSkill, setSelectedSkill] = useState<ParticleScreenPos | null>(null)
   const [showSummaryPopup, setShowSummaryPopup] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   // ── LLM 摘要 ──
   const [llmSummary, setLlmSummary] = useState<string | null>(null)
@@ -111,7 +118,7 @@ export function SkillTreeView() {
     }
 
     // sessionStorage 缓存
-    const cacheKey = `ddos-skill-llm-summary-${skillKey.length}-${skillKey.slice(0, 80)}`
+    const cacheKey = `duncrew-skill-llm-summary-${skillKey.length}-${skillKey.slice(0, 80)}`
     const cached = sessionStorage.getItem(cacheKey)
     if (cached) {
       setLlmSummary(cached)
@@ -145,7 +152,7 @@ export function SkillTreeView() {
     chat([
       {
         role: 'system',
-        content: '你是 DD-OS 的技能分析引擎。用自然语言简洁总结 Agent 的能力和限制。只输出一句话总结。',
+        content: '你是 DunCrew 的技能分析引擎。用自然语言简洁总结 Agent 的能力和限制。只输出一句话总结。',
       },
       { role: 'user', content: prompt },
     ]).then(result => {
@@ -377,14 +384,11 @@ export function SkillTreeView() {
         const isHovered = hoveredRef.current === p.id
         const finalSize = p.size * pScale * (isHovered ? 3 : 1)
 
-        // 活跃星点外发光
+        // 活跃星点外发光 — 用简单透明圆替代 RadialGradient
         if (p.active) {
-          const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, finalSize * 4)
-          sg.addColorStop(0, p.color.replace(/[\d.]+\)$/, '0.3)'))
-          sg.addColorStop(1, 'rgba(0,0,0,0)')
           ctx.beginPath()
-          ctx.arc(sx, sy, finalSize * 4, 0, Math.PI * 2)
-          ctx.fillStyle = sg
+          ctx.arc(sx, sy, finalSize * 3, 0, Math.PI * 2)
+          ctx.fillStyle = p.color.replace(/[\d.]+\)$/, '0.12)')
           ctx.globalAlpha = 0.7
           ctx.fill()
         }
@@ -406,8 +410,8 @@ export function SkillTreeView() {
         ctx.globalAlpha = isHovered ? 1 : Math.max(0.1, alpha)
         ctx.fill()
 
-        // 随机能量连线
-        if (p.active && Math.random() > 0.992) {
+        // 随机能量连线 (降低频率)
+        if (p.active && Math.random() > 0.997) {
           ctx.beginPath()
           ctx.moveTo(sx, sy)
           ctx.lineTo(cx, cy)
@@ -433,10 +437,31 @@ export function SkillTreeView() {
   const cx = containerSize.w / 2
   const cy = containerSize.h / 2
 
-  const selectedFull = useMemo(() => {
+  // 查找完整 OpenClawSkill（含 requires/inputs 等）
+  const selectedOpenClaw = useMemo(() => {
     if (!selectedSkill) return null
-    return skills.find(s => s.id === selectedSkill.id) || null
-  }, [selectedSkill, skills])
+    return openClawSkills.find(s =>
+      s.name?.toLowerCase() === selectedSkill.name?.toLowerCase()
+      || s.toolName === selectedSkill.id
+    ) || null
+  }, [selectedSkill, openClawSkills])
+
+  // 稳定化 envValues 引用（避免每帧创建新 {} 触发子组件重渲染）
+  const emptyEnv = useMemo<Record<string, string>>(() => ({}), [])
+  const currentEnvValues = selectedOpenClaw
+    ? skillEnvValues[selectedOpenClaw.name] || emptyEnv
+    : emptyEnv
+
+  const handleEnvChange = useCallback((key: string, val: string) => {
+    if (selectedOpenClaw) setSkillEnvValue(selectedOpenClaw.name, key, val)
+  }, [selectedOpenClaw, setSkillEnvValue])
+
+  const handleOpenDrawer = useCallback(() => setDrawerOpen(true), [])
+  const handleCloseDrawer = useCallback(() => setDrawerOpen(false), [])
+  const handleCloseCard = useCallback(() => {
+    setSelectedSkill(null)
+    selectedIdRef.current = null
+  }, [])
 
   return (
     <div className="h-full relative overflow-hidden">
@@ -513,7 +538,7 @@ export function SkillTreeView() {
               ) : (
                 <Network className="w-5 h-5 text-cyan-400 mb-2" />
               )}
-              <span className="text-[10px] font-black text-slate-200 tracking-wider mb-2">DD-OS CORE</span>
+              <span className="text-[10px] font-black text-slate-200 tracking-wider mb-2">DunCrew CORE</span>
               <p className="text-[11px] text-stone-400 leading-[1.7] line-clamp-4 max-w-[180px]">
                 {summaryLoading ? '正在分析技能矩阵...' : displaySummary}
               </p>
@@ -545,72 +570,29 @@ export function SkillTreeView() {
           </div>
         )}
 
-        {/* ── 点击详情气泡 ── */}
-        {selectedSkill && (() => {
-          const bubbleW = 288
-          const bubbleH = 220
-          const pad = 12
-          let bx = selectedSkill.sx + 16
-          let by = selectedSkill.sy - bubbleH / 2
-          // 右溢出 → 翻到左边
-          if (bx + bubbleW + pad > containerSize.w) bx = selectedSkill.sx - bubbleW - 16
-          // 左溢出兜底
-          if (bx < pad) bx = pad
-          if (by < pad) by = pad
-          if (by + bubbleH + pad > containerSize.h) by = containerSize.h - bubbleH - pad
-          return (
-            <div
-              className="absolute z-[100] w-72 bg-white/95 backdrop-blur-xl border border-stone-200 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.12)] overflow-hidden"
-              style={{ left: bx, top: by }}
-            >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100 bg-stone-50/50">
-                <h3 className="text-sm font-black text-stone-800 truncate">{selectedSkill.name}</h3>
-                <button
-                  onClick={() => { setSelectedSkill(null); selectedIdRef.current = null }}
-                  className="w-6 h-6 rounded-lg bg-stone-100 hover:bg-rose-50 flex items-center justify-center transition-colors pointer-events-auto"
-                >
-                  <X className="w-3 h-3 text-stone-500" />
-                </button>
-              </div>
-              <div className="px-4 py-3 space-y-2">
-                {selectedSkill.category && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Category</span>
-                    <span className="px-1.5 py-0.5 bg-indigo-50 border border-indigo-200 rounded text-[10px] font-bold text-indigo-600">
-                      {selectedSkill.category}
-                    </span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Status</span>
-                  <span className={`px-1.5 py-0.5 border rounded text-[10px] font-bold ${
-                    selectedSkill.status === 'active'
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
-                      : selectedSkill.status === 'error'
-                      ? 'bg-red-50 border-red-200 text-red-500'
-                      : 'bg-stone-50 border-stone-200 text-stone-500'
-                  }`}>
-                    {selectedSkill.status === 'active' ? '活跃' : selectedSkill.status === 'error' ? '异常' : '未激活'}
-                  </span>
-                </div>
-                {selectedFull?.description ? (
-                  <div>
-                    <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest block mb-1">Description</span>
-                    <p className="text-xs text-stone-600 leading-relaxed">{selectedFull.description}</p>
-                  </div>
-                ) : (
-                  <p className="text-xs text-stone-400 italic">暂无详细描述</p>
-                )}
-                {selectedFull?.version && (
-                  <div className="flex items-center gap-2 pt-1">
-                    <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Version</span>
-                    <span className="text-[10px] font-mono text-stone-500">{selectedFull.version}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )
-        })()}
+        {/* ── 点击详情卡片 ── */}
+        <AnimatePresence>
+          {selectedSkill && selectedOpenClaw && (
+            <SkillDetailCard
+              skill={selectedOpenClaw}
+              x={selectedSkill.sx}
+              y={selectedSkill.sy}
+              envValues={currentEnvValues}
+              onEnvChange={handleEnvChange}
+              onOpenDrawer={handleOpenDrawer}
+              onClose={handleCloseCard}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* ── 配置抽屉 ── */}
+        <SkillDetailsDrawer
+          skill={selectedOpenClaw || null}
+          isOpen={drawerOpen}
+          envValues={currentEnvValues}
+          onEnvChange={handleEnvChange}
+          onClose={handleCloseDrawer}
+        />
 
         {/* 空状态 */}
         {skills.length === 0 && (

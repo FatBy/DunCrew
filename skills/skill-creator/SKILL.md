@@ -2,7 +2,7 @@
 name: skill-creator
 description: "Create or update AgentSkills. Use when designing, structuring, or packaging skills with scripts, references, and assets."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🏗️"

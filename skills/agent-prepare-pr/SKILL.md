@@ -2,7 +2,7 @@
 name: prepare-pr
 description: "Script-first PR preparation with structured findings resolution, deterministic push safety, and explicit gate execution."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🔧"

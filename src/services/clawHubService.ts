@@ -24,7 +24,7 @@ const REQUEST_TIMEOUT = 15000
 const MAX_RETRIES = 3
 
 function getServerUrl(): string {
-  return localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+  return localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
 }
 
 class ClawHubService {

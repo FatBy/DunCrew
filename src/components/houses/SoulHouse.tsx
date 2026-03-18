@@ -1,7 +1,9 @@
 import { motion } from 'framer-motion'
-import { Fingerprint, Shield, AlertTriangle, Sparkles, Loader2 } from 'lucide-react'
+import { Fingerprint, Shield, AlertTriangle, Sparkles, Loader2, Layers, FileText } from 'lucide-react'
 import { useStore } from '@/store'
 import { SoulAnimalAvatar } from '@/components/visuals/SoulAnimalAvatar'
+import { MBTIAxisSpectrum } from '@/components/visuals/MBTIAxisSpectrum'
+import { SoulAmendmentPanel } from '@/components/houses/SoulAmendmentPanel'
 import { HudPanel } from '@/components/ui/HudPanel'
 import { AISummaryCard } from '@/components/ai/AISummaryCard'
 import { useT } from '@/i18n'
@@ -15,6 +17,9 @@ export function SoulHouse() {
   const soulDimensions = useStore((s) => s.soulDimensions)
   const soulMBTI = useStore((s) => s.soulMBTI)
   const soulMBTILoading = useStore((s) => s.soulMBTILoading)
+  const soulMBTIBase = useStore((s) => s.soulMBTIBase)
+  const soulMBTIExpressed = useStore((s) => s.soulMBTIExpressed)
+  const soulMBTIAxes = useStore((s) => s.soulMBTIAxes)
   const loading = useStore((s) => s.devicesLoading)
 
   if (loading && !soulIdentity) {
@@ -126,54 +131,96 @@ export function SoulHouse() {
                     </p>
                   )}
                   {soulMBTI && (
-                    <div className="flex items-center gap-2 pt-1 border-t border-skin-border/5">
-                      <span className="text-[13px] font-mono font-bold text-skin-accent-cyan">
-                        {soulMBTI.type.toUpperCase()}
-                      </span>
-                      <span className="text-[11px] text-skin-text-secondary/40">
-                        {soulMBTI.animalZh} · {soulMBTI.group}
-                      </span>
+                    <div className="space-y-2 pt-1 border-t border-skin-border/5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-mono font-bold text-skin-accent-cyan">
+                          {soulMBTI.type.toUpperCase()}
+                        </span>
+                        <span className="text-[11px] text-skin-text-secondary/40">
+                          {soulMBTI.animalZh} · {soulMBTI.group}
+                        </span>
+                      </div>
+                      {/* Dual-layer MBTI indicator */}
+                      {soulMBTIBase && soulMBTIExpressed && soulMBTIBase.type !== soulMBTIExpressed.type && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                          <span className="text-skin-text-secondary/30">{t('soul.mbti_base')}: {soulMBTIBase.type.toUpperCase()}</span>
+                          <span className="text-skin-accent-amber/50">&rarr;</span>
+                          <span className="text-skin-accent-cyan/70">{t('soul.mbti_expressed')}: {soulMBTIExpressed.type.toUpperCase()}</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               </HudPanel>
             )}
+
+            {/* MBTI Axis Spectrum (Layer 2) */}
+            {soulMBTIAxes && (
+              <HudPanel title={t('soul.mbti_drift')} icon={Layers} side="right" delay={0.6}>
+                <MBTIAxisSpectrum
+                  baseAxes={soulMBTIAxes}
+                  expressedAxes={soulMBTIAxes}
+                />
+              </HudPanel>
+            )}
           </div>
         </div>
 
-        {/* Bottom: dimension bars */}
-        {soulDimensions.length > 0 && (
+        {/* Bottom section: amendments + dimension bars */}
+        <div className="flex flex-col gap-3 items-center">
+          {/* Amendment panel */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.7 }}
-            className="flex justify-center pointer-events-auto"
+            transition={{ delay: 0.65 }}
+            className="w-full max-w-md pointer-events-auto"
           >
-            <div className="flex gap-4 px-6 py-3 bg-skin-bg-panel/40 backdrop-blur-xl rounded-2xl border border-skin-border/5">
-              {soulDimensions.slice(0, 6).map((d, i) => (
-                <motion.div
-                  key={d.name}
-                  className="flex flex-col items-center gap-1.5 w-12"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.8 + i * 0.1 }}
-                >
-                  <div className="h-14 w-1.5 bg-stone-50 rounded-full relative overflow-hidden">
-                    <motion.div
-                      className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-skin-accent-cyan via-skin-accent-purple to-skin-accent-amber rounded-full"
-                      initial={{ height: 0 }}
-                      animate={{ height: `${d.value}%` }}
-                      transition={{ duration: 1, delay: 0.9 + i * 0.1 }}
-                    />
-                  </div>
-                  <span className="text-[11px] text-skin-text-secondary/40 font-mono truncate max-w-full text-center">
-                    {d.name}
-                  </span>
-                </motion.div>
-              ))}
+            <div className="bg-skin-bg-panel/40 backdrop-blur-xl rounded-2xl border border-skin-border/5 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <FileText className="w-3.5 h-3.5 text-skin-accent-cyan" />
+                <span className="text-[13px] font-mono uppercase tracking-widest text-skin-text-secondary/70">
+                  {t('soul.amendments')}
+                </span>
+              </div>
+              <div className="max-h-40 overflow-y-auto">
+                <SoulAmendmentPanel />
+              </div>
             </div>
           </motion.div>
-        )}
+
+          {soulDimensions.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.7 }}
+              className="flex justify-center pointer-events-auto"
+            >
+              <div className="flex gap-4 px-6 py-3 bg-skin-bg-panel/40 backdrop-blur-xl rounded-2xl border border-skin-border/5">
+                {soulDimensions.slice(0, 6).map((d, i) => (
+                  <motion.div
+                    key={d.name}
+                    className="flex flex-col items-center gap-1.5 w-12"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.8 + i * 0.1 }}
+                  >
+                    <div className="h-14 w-1.5 bg-stone-50 rounded-full relative overflow-hidden">
+                      <motion.div
+                        className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-skin-accent-cyan via-skin-accent-purple to-skin-accent-amber rounded-full"
+                        initial={{ height: 0 }}
+                        animate={{ height: `${d.value}%` }}
+                        transition={{ duration: 1, delay: 0.9 + i * 0.1 }}
+                      />
+                    </div>
+                    <span className="text-[11px] text-skin-text-secondary/40 font-mono truncate max-w-full text-center">
+                      {d.name}
+                    </span>
+                  </motion.div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </div>
       </div>
     </div>
   )

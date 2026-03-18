@@ -2,7 +2,7 @@
 name: sonoscli
 description: "Control Sonos speakers (discover/status/play/volume/group)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://sonoscli.sh
 metadata:
   openclaw:

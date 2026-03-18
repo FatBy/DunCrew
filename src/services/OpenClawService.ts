@@ -137,7 +137,7 @@ type StoreActions = {
   // AI 执行状态
   updateExecutionStatus: (id: string, updates: Partial<ExecutionStatus>) => void
   
-  // Gateway sessions → DD-OS 对话回填
+  // Gateway sessions → DunCrew 对话回填
   syncGatewaySessionsToConversations: (sessions: Session[]) => void
   
   // Task Panel (sessionsSlice → activeExecutions)
@@ -154,7 +154,7 @@ type StoreActions = {
   getNexuses?: () => Map<string, any>
   activeNexusId?: string | null
   
-  // OpenClaw agents → DD-OS Nexuses 同步
+  // OpenClaw agents → DunCrew Nexuses 同步
   syncAgentsAsNexuses?: (agents: GatewayAgentRow[], skills: OpenClawSkill[]) => void
 }
 
@@ -403,7 +403,7 @@ class OpenClawService {
         sessions = (sessionsResult.value as { sessions?: Session[] }).sessions || []
         this.storeActions?.setSessions(sessions)
         this.storeActions?.setMemoriesFromSessions(sessions)
-        // 将 Gateway 会话的完成结果回填到 DD-OS 对话（修复刷新后结果丢失）
+        // 将 Gateway 会话的完成结果回填到 DunCrew 对话（修复刷新后结果丢失）
         if (sessions.length > 0) {
           this.storeActions?.syncGatewaySessionsToConversations(sessions)
         }
@@ -443,7 +443,7 @@ class OpenClawService {
       // 确保 channelsLoading 变为 false（无论 API 是否成功）
       this.storeActions?.setChannelsLoading(false)
 
-      // 处理 agents.list → Agent Identity + 同步为 DD-OS Nexuses
+      // 处理 agents.list → Agent Identity + 同步为 DunCrew Nexuses
       // (替代之前调用 Gateway 不支持的 agent.identity / files.read 方法)
       if (agentsListResult.status === 'fulfilled' && agentsListResult.value) {
         const agentsData = agentsListResult.value as AgentsListResponse
@@ -518,7 +518,7 @@ class OpenClawService {
         maxProtocol: CONFIG.PROTOCOL_VERSION,
         client: {
           id: 'gateway-client',
-          displayName: 'DD-OS',
+          displayName: 'DunCrew',
           version: '1.0.0',
           platform: 'browser',
           mode: 'ui',
@@ -577,7 +577,7 @@ class OpenClawService {
     this.storeActions?.addToast({
       type: 'success',
       title: '已连接',
-      message: '已连接到 DD-OS Cloud Gateway',
+      message: '已连接到 DunCrew Cloud Gateway',
     })
     
     // 启动心跳
@@ -1023,7 +1023,7 @@ class OpenClawService {
         break
       }
 
-      // DD-OS Extension: Agent 自动激活 Nexus
+      // DunCrew Extension: Agent 自动激活 Nexus
       case 'ddos.nexus.activated': {
         const activatePayload = event.payload as {
           nexusId?: string
@@ -1042,7 +1042,7 @@ class OpenClawService {
         break
       }
 
-      // DD-OS Extension: SOP 被 Agent 重写
+      // DunCrew Extension: SOP 被 Agent 重写
       case 'ddos.nexus.sopUpdated': {
         const sopPayload = event.payload as {
           nexusId?: string
@@ -1059,7 +1059,7 @@ class OpenClawService {
         break
       }
 
-      // DD-OS Extension: Agent 绑定技能到 Nexus
+      // DunCrew Extension: Agent 绑定技能到 Nexus
       case 'ddos.nexus.skillBound': {
         const bindPayload = event.payload as {
           nexusId?: string
@@ -1078,7 +1078,7 @@ class OpenClawService {
         break
       }
 
-      // DD-OS Extension: Nexus Scoring 更新广播
+      // DunCrew Extension: Nexus Scoring 更新广播
       case 'ddos.nexus.xpUpdate': {
         // V2: 兼容旧 xpUpdate 事件，转换为 scoring 更新
         const payload = event.payload as {
@@ -1237,7 +1237,7 @@ class OpenClawService {
    * Nexus 经验记录 + XP 同步
    * 在 agent lifecycle/end 或 lifecycle/error 时调用
    * 
-   * OpenClaw 模式: DD-OS Extension 的 agent_end hook 已通过 broadcast 推送 XP 更新，
+   * OpenClaw 模式: DunCrew Extension 的 agent_end hook 已通过 broadcast 推送 XP 更新，
    * 前端通过 ddos.nexus.xpUpdate 事件接收。此处仅尝试写经验记录到本地后端（如可用）。
    */
   private async recordNexusExperience(
@@ -1248,7 +1248,7 @@ class OpenClawService {
     const nexusId = this.storeActions?.activeNexusId
     if (!nexusId) return
 
-    const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+    const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
 
     // 写入经验记录到本地后端（如可用，静默失败）
     try {
@@ -1492,7 +1492,7 @@ class OpenClawService {
    */
   createChatSession(_label?: string): string {
     // 客户端生成唯一 key，Gateway 会自动关联
-    return `ddos-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    return `duncrew-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   }
 
   /**

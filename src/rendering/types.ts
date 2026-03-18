@@ -1,5 +1,5 @@
 // ============================================
-// DD-OS 渲染器架构 - 核心类型定义
+// DunCrew 渲染器架构 - 核心类型定义
 // ============================================
 
 import type { NexusEntity, CameraState, RenderSettings } from '@/types'

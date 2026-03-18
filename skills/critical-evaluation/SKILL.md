@@ -2,7 +2,7 @@
 name: critical-evaluation
 description: "Systematic critical evaluation framework for analyzing arguments, detecting cognitive biases, and improving decision quality. Use for complex decisions, debate analysis, and identifying logical fallacies."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🔍"

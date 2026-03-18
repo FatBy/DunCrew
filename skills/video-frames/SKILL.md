@@ -2,7 +2,7 @@
 name: video-frames
 description: "Extract frames or short clips from videos using ffmpeg."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://ffmpeg.org
 metadata:
   openclaw:

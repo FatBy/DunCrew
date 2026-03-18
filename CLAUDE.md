@@ -10,7 +10,7 @@ The content below is automatically synced from AGENTS.md.
 
 <!-- BEGIN AGENTS.md CONTENT -->
 
-# DD-OS Repository Guidelines
+# DunCrew Repository Guidelines
 
 > 本文件为 AI Agent (Qoder, Claude, Cursor 等) 提供项目级开发指南。
 
@@ -19,13 +19,13 @@ The content below is automatically synced from AGENTS.md.
 - **Dev server**: `npm run dev`
 - **Build**: `npm run build`
 - **Type check**: `npx tsc --noEmit`
-- **Backend**: `python ddos-local-server.py`
+- **Backend**: `python duncrew-server.py`
 
 ## Key Files
 
 - `src/services/LocalClawService.ts` - ReAct 执行引擎
 - `src/store/slices/aiSlice.ts` - AI 状态管理
-- `ddos-local-server.py` - Python 工具后端
+- `duncrew-server.py` - Python 工具后端
 - `skills/*/SKILL.md` - 技能定义
 
 ## Before Committing

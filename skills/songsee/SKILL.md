@@ -2,7 +2,7 @@
 name: songsee
 description: "Generate spectrograms and feature-panel visualizations from audio with the songsee CLI."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://github.com/steipete/songsee
 metadata:
   openclaw:

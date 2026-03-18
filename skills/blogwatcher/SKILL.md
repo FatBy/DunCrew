@@ -2,7 +2,7 @@
 name: blogwatcher
 description: "Monitor blogs and RSS/Atom feeds for updates using the blogwatcher CLI."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://github.com/Hyaxia/blogwatcher
 metadata:
   openclaw:

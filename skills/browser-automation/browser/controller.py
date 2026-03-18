@@ -23,12 +23,12 @@ class BrowserController:
     
     def __init__(self, headless: bool = True, user_data_dir: Optional[str] = None):
         self.headless = headless
-        self.user_data_dir = user_data_dir or str(Path.home() / '.ddos' / 'browser_data')
+        self.user_data_dir = user_data_dir or str(Path.home() / '.duncrew' / 'browser_data')
         self.playwright = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
-        self._screenshots_dir = Path.home() / '.ddos' / 'screenshots'
+        self._screenshots_dir = Path.home() / '.duncrew' / 'screenshots'
         self._screenshots_dir.mkdir(parents=True, exist_ok=True)
     
     async def initialize(self):

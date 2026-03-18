@@ -2,7 +2,7 @@
 name: skill-executor
 description: "SKILL.md parser and execution engine for autonomous agent capabilities"
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 executable: execute.py
 runtime: python
 tools:

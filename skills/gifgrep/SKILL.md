@@ -2,7 +2,7 @@
 name: gifgrep
 description: "Search GIF providers with CLI/TUI, download results, and extract stills/sheets."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://gifgrep.com
 metadata:
   openclaw:

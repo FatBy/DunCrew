@@ -1,5 +1,5 @@
 /**
- * DD-OS Nexus Manager — Node.js file-based Nexus management for OpenClaw extension.
+ * DunCrew Nexus Manager — Node.js file-based Nexus management for OpenClaw extension.
  *
  * Handles: NEXUS.md parsing, experience read/write, SOP tracking, Nexus state persistence.
  * Data stored in: {nexusDataDir}/nexuses/{nexusId}/

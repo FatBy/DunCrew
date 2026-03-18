@@ -102,7 +102,7 @@ export function AIChatPanel() {
   }, [input])
 
   const getServerUrl = () => {
-    return localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+    return localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
   }
 
   const MAX_UPLOAD_SIZE = 10 * 1024 * 1024 // 10MB，与后端 MAX_FILE_SIZE 一致
@@ -307,7 +307,7 @@ export function AIChatPanel() {
               installSummary = `，已安装 ${installed.length} 个技能`
               // 刷新前端技能列表
               try {
-                const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+                const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
                 const res = await fetch(`${serverUrl}/skills`)
                 if (res.ok) {
                   const skills = await res.json()

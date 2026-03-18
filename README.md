@@ -1,31 +1,35 @@
 <div align="center">
 
-![DD-OS Banner](docs/images/ddos-banner.png)
+![DunCrew Banner](docs/images/ddos-banner.png)
 
-### The AI that learns, evolves, and remembers -- not just chats.
+# DunCrew
+
+### 给 AI 一个工位 — Give AI a Workstation
+
+The AI that learns, evolves, and remembers -- not just chats.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org/)
 [![Python](https://img.shields.io/badge/Python-3.10+-yellow.svg)](https://python.org/)
 
-[GitHub](https://github.com/FatBy/DD-OS) | [Skills Hub](https://github.com/FatBy/DD-OS/tree/main/skills) | [Examples](examples/)
+[GitHub](https://github.com/FatBy/DunCrew) | [Skills Hub](https://github.com/FatBy/DunCrew/tree/main/skills) | [Examples](examples/)
 
 </div>
 
 ---
 
-## What is DD-OS?
+## What is DunCrew?
 
-**DD-OS** (Digital Dimension Operating System) is a self-evolving AI operating system that runs entirely on your local machine. Unlike traditional AI assistants that treat every conversation as a blank slate, DD-OS builds **persistent expertise** -- each workflow node (Nexus) develops its own memory, scoring history, and operational genes through use.
+**DunCrew** is a self-evolving AI operating system that runs entirely on your local machine. Unlike traditional AI assistants that treat every conversation as a blank slate, DunCrew builds **persistent expertise** -- each workflow node (Nexus) develops its own memory, scoring history, and operational genes through use.
 
-Built on a ReAct execution engine with Reflexion self-correction, Critic verification, and confidence-based knowledge promotion, DD-OS turns your AI from a stateless chatbot into a **trainable specialist that gets smarter over time**.
+Built on a ReAct execution engine with Reflexion self-correction, Critic verification, and confidence-based knowledge promotion, DunCrew turns your AI from a stateless chatbot into a **trainable specialist that gets smarter over time**.
 
 ---
 
 ## Interface Preview
 
-DD-OS replaces the traditional chatbox with an explorable digital world. Three visual themes available:
+DunCrew replaces the traditional chatbox with an explorable digital world. Three visual themes available:
 
 <table>
 <tr>
@@ -44,7 +48,7 @@ DD-OS replaces the traditional chatbox with an explorable digital world. Three v
 <table>
 <tr>
 <td align="center"><b>AI Chat Panel</b><br/>ReAct execution with tool calls<br/><img src="docs/images/screenshot-chat-active.png" width="350"/></td>
-<td align="center"><b>Skill Tree</b><br/>92 skills with particle visualization<br/><img src="docs/images/screenshot-skilltree-populated.png" width="450"/></td>
+<td align="center"><b>Skill Tree</b><br/>90+ skills with particle visualization<br/><img src="docs/images/screenshot-skilltree-populated.png" width="450"/></td>
 </tr>
 </table>
 
@@ -56,16 +60,17 @@ DD-OS replaces the traditional chatbox with an explorable digital world. Three v
 
 ---
 
-## Why DD-OS?
+## Why DunCrew?
 
-Most AI agent frameworks give you a loop: *plan, act, observe, repeat*. DD-OS goes further with **self-evolution primitives** that no other open-source framework provides:
+Most AI agent frameworks give you a loop: *plan, act, observe, repeat*. DunCrew goes further with **self-evolution primitives** that no other open-source framework provides:
 
-| Capability | DD-OS | Typical AI Agents |
+| Capability | DunCrew | Typical AI Agents |
 |---|---|---|
 | **Per-domain memory** | L1 Hot/Cold split per Nexus + L0 global knowledge | Flat session history |
 | **Knowledge promotion** | Multi-signal confidence scoring, auto-promote to global | None |
 | **Self-correction** | Reflexion (structured retry) + Critic (result verification) | Simple retry |
-| **Experience harvesting** | Gene Pool with confidence decay | None |
+| **Experience harvesting** | Gene Pool with confidence decay + cross-Nexus sharing | None |
+| **Soul evolution** | Dual-layer MBTI + behavioral amendment system | Static persona |
 | **File awareness** | O(1) File Registry, zero redundant exploration | Re-explore every time |
 | **Execution scoring** | 0-100 per Nexus, streak bonuses, tool dimension tracking | None |
 | **Dangerous op control** | 3-level risk classification + user approval flow | Basic confirmation |
@@ -74,14 +79,12 @@ Most AI agent frameworks give you a loop: *plan, act, observe, repeat*. DD-OS go
 
 ## Architecture
 
-![DD-OS Architecture](docs/images/ddos-architecture.png)
-
 ```
   GitHub / Slack / Local Bash / MCP Servers / Web
                |
                v   (MCP Standard Protocol)
   +-------------------------------+
-  |     ddos-local-server.py      |  <-- Tool Execution Layer
+  |      duncrew-server.py        |  <-- Tool Execution Layer
   |      (Python / MCP Host)      |
   +---------------+---------------+
                   |  (HTTP REST API)
@@ -116,7 +119,7 @@ Each Nexus is not just a prompt template -- it's an **evolvable workflow node** 
 
 ### Two-Tier Memory -- Knowledge That Grows
 
-DD-OS implements a biologically-inspired memory architecture:
+DunCrew implements a biologically-inspired memory architecture:
 
 **L1 Memory (Per-Nexus, Private)**
 - **L1-Hot**: Last 5 turns as structured action snapshots (metadata only, not raw output)
@@ -138,6 +141,32 @@ DD-OS implements a biologically-inspired memory architecture:
 
 **File Registry** -- Every file operation is auto-registered with O(1) lookup. The agent never wastes turns re-exploring known paths.
 
+### Soul Evolution -- Dual-Layer Personality
+
+DunCrew implements a constitutional soul system with behavioral evolution:
+
+**Layer 1: Factory Constitution (Immutable)**
+- Defined in `SOUL.md`: identity, core truths, boundaries, vibe statement
+- MBTI personality derived from rules-based axis scoring (E/I, S/N, T/F, J/P)
+
+**Layer 2: Behavioral Amendments (Dynamic)**
+- Cross-Nexus behavioral pattern detection (requires 2+ Nexus observation)
+- Amendments carry weight (0~1) with 30-day half-life decay
+- Active amendments injected into LLM context during execution
+- User approval workflow: draft → approved → archived
+- Expressed MBTI shifts based on accumulated behavioral modifiers
+
+### Gene Pool -- Self-Healing Experience Library
+
+The Gene Pool captures `error → recovery` patterns as reusable "genes":
+
+- **Auto-Harvesting**: Detects failure-then-success patterns in execution traces
+- **Structured Signal Matching**: Error classification by type (missing_resource, permission, transient, etc.)
+- **Reflexion Injection**: Matching repair genes injected as hints during error recovery
+- **Cross-Nexus Sharing**: Genes from one Nexus help others facing similar errors
+- **Confidence Lifecycle**: Success boosts confidence, failure decays it, old genes naturally retire
+- **Nexus Communication**: Capability, artifact, and activity genes enable cross-Nexus discovery
+
 ### ReAct Engine -- Self-Correcting Execution
 
 The execution engine goes beyond basic plan-act loops:
@@ -146,9 +175,7 @@ The execution engine goes beyond basic plan-act loops:
 - **Tool Calling**: File I/O, shell commands, web search, MCP tools, and 90+ skills
 - **Reflexion**: On failure, triggers structured self-reflection with error analysis -- not blind retry
 - **Critic Verification**: After file writes and shell commands, automatically verifies the result
-- **Digital Immune System**: Failure pattern signatures matched against self-healing scripts
 - **Dangerous Operation Approval**: 3-tier risk classification (critical/high/medium) with user approval flow
-- **Gene Pool Harvesting**: Successful execution patterns extracted as reusable "genes" with confidence tracking
 
 ---
 
@@ -165,8 +192,8 @@ The execution engine goes beyond basic plan-act loops:
 ### Step 1: Clone
 
 ```bash
-git clone https://github.com/FatBy/DD-OS.git
-cd DD-OS
+git clone https://github.com/FatBy/DunCrew.git
+cd DunCrew
 ```
 
 ### Step 2: Install Dependencies
@@ -184,14 +211,16 @@ pip install pyyaml
 **Windows:**
 Double-click `start.bat` in the project root.
 
-**macOS:**
-Double-click `DD-OS.command` in Finder.
+**macOS / Linux:**
+```bash
+chmod +x start.sh && ./start.sh
+```
 
 **Manual Launch (all platforms):**
 
 ```bash
 # Terminal 1 -- Backend
-python ddos-local-server.py --path ~/.ddos --port 3001
+python duncrew-server.py --path ~/.duncrew --port 3001
 
 # Terminal 2 -- Frontend
 npm run dev
@@ -202,8 +231,6 @@ Open **http://localhost:5173** in your browser.
 ---
 
 ## API Configuration
-
-![Settings Panel](docs/images/screenshot-settings.png)
 
 1. Click **Settings** in the left sidebar
 2. Fill in Base URL, API Key, and Model name
@@ -246,12 +273,12 @@ See the [`examples/`](examples/) directory for real-world use cases:
 
 ### 90+ Community Skills
 
-DD-OS ships with 90+ skills covering code generation, document writing, image creation, stock analysis, PPT generation, and more. Skills are defined as `SKILL.md` files and hot-reload without restart.
+DunCrew ships with 90+ skills covering code generation, document writing, image creation, stock analysis, PPT generation, and more. Skills are defined as `SKILL.md` files and hot-reload without restart.
 
 ### Create Custom Skills
 
 ```
-~/.ddos/skills/my-skill/SKILL.md
+~/.duncrew/skills/my-skill/SKILL.md
 ```
 
 ```markdown
@@ -276,20 +303,22 @@ What this skill does and how it works...
 | **Task Monitor** | Running/completed tasks with real-time execution step tracking |
 | **Skill Tree** | AI capability radar with particle visualization |
 | **Memory Palace** | Adventure logs, memory playback, AI narrative generation |
-| **Soul Tower** | AI personality config (SOUL.md), core values and behavior boundaries |
+| **Soul Tower** | AI personality config (SOUL.md), dual-layer MBTI evolution, behavioral amendments |
 
 ---
 
 ## Data Directory
 
 ```
-~/.ddos/
+~/.duncrew/
 ├── SOUL.md              # AI personality config
 ├── USER.md              # User preferences
 ├── skills/              # Skill definitions (SKILL.md)
 ├── nexuses/             # Nexus workflow data + SOPs
 ├── memory/              # Two-tier memory storage
-│   └── exec_traces/     # JSONL execution traces
+│   ├── exec_traces/     # JSONL execution traces
+│   ├── gene_pool.jsonl  # Self-healing gene library
+│   └── soul_amendments.json  # Behavioral amendment records
 └── logs/                # Conversation logs
 ```
 
@@ -301,15 +330,16 @@ What this skill does and how it works...
 |-------|-----------|
 | Frontend | React 18 + TypeScript + Vite + Zustand + Tailwind CSS + Framer Motion |
 | Rendering | Canvas 2D (GameCanvas engine) |
-| Backend | Python (ddos-local-server.py) with SQLite + FTS5 |
+| Backend | Python (duncrew-server.py) with SQLite + FTS5 |
 | Memory | SQLite (FTS5 full-text search) + JSONL traces + localStorage |
+| Desktop | Tauri (optional, for native packaging) |
 | Protocol | HTTP REST API + MCP Standard Protocol |
 
 ---
 
 ## Contributing
 
-We welcome contributions! Check out our [open issues](https://github.com/FatBy/DD-OS/issues) for `good first issue` labels.
+We welcome contributions! Check out our [open issues](https://github.com/FatBy/DunCrew/issues) for `good first issue` labels.
 
 ---
 
@@ -320,7 +350,7 @@ We welcome contributions! Check out our [open issues](https://github.com/FatBy/D
 - 3-tier dangerous command classification with approval dialogs
 - File operations sandboxed to workspace directory
 - Sensitive data auto-redacted in execution traces
-- Run `python ddos-local-server.py --doctor` to check security config
+- Run `python duncrew-server.py --doctor` to check security config
 
 ---
 

@@ -1,5 +1,5 @@
 /**
- * Gene Pool Service — DD-OS 自愈基因库
+ * Gene Pool Service — DunCrew 自愈基因库
  * 
  * 捕获工具失败→修复的模式为"基因"，在后续遇到相似错误时
  * 自动注入修复策略到 Reflexion 提示中。
@@ -11,7 +11,7 @@
  */
 
 import type { Gene, GeneMatch, Capsule, ExecTraceToolCall, NexusCapabilityInfo, NexusArtifactInfo, NexusActivityInfo } from '@/types'
-import { extractSignals, rankGenes, signalOverlap } from '@/utils/signalMatcher'
+import { extractSignals, rankGenes, signalOverlap, classifyErrorType } from '@/utils/signalMatcher'
 import { nexusRuleEngine } from './nexusRuleEngine'
 
 const SERVER_URL = 'http://localhost:3001'
@@ -162,24 +162,32 @@ class GenePoolService {
 
   /**
    * 查找与当前错误匹配的基因 (Phase 1 核心)
+   * 仅匹配 repair 类基因，避免 activity/capability 污染
    */
   findMatchingGenes(toolName: string, errorMsg: string): GeneMatch[] {
     if (this.genes.length === 0) return []
 
+    const repairGenes = this.genes.filter(g => g.category === 'repair')
+    if (repairGenes.length === 0) return []
+
     const signals = extractSignals(toolName, errorMsg)
-    const matches = rankGenes(signals, this.genes)
+    const matches = rankGenes(signals, repairGenes)
 
     return matches.slice(0, MAX_GENE_HINTS)
   }
 
   /**
    * Phase 3: 跨 Nexus 基因共享 — 带加权的匹配 (含时间衰减)
+   * 仅匹配 repair 类基因，避免 activity/capability 污染
    */
   findCrossNexusGenes(toolName: string, errorMsg: string, currentNexusId?: string): GeneMatch[] {
     if (this.genes.length === 0) return []
 
+    const repairGenes = this.genes.filter(g => g.category === 'repair')
+    if (repairGenes.length === 0) return []
+
     const signals = extractSignals(toolName, errorMsg)
-    const matches = rankGenes(signals, this.genes)
+    const matches = rankGenes(signals, repairGenes)
 
     // Phase 3 加权 + 优化2 时间衰减
     for (const match of matches) {
@@ -273,7 +281,7 @@ ${hints.join('\n')}
       } else {
         // 优化2: 按错误类型分级衰减
         const errorContext = trigger.join(' ')
-        const errorType = this.classifyErrorType(errorContext)
+        const errorType = this.classifyError(errorContext)
         const decay = ERROR_TYPE_DECAY[errorType] ?? CONFIDENCE_DECAY
         gene.metadata.confidence *= decay
       }
@@ -284,23 +292,10 @@ ${hints.join('\n')}
   }
 
   /**
-   * 优化2: 按错误类型分级衰减 — 错误分类器
+   * 优化2: 按错误类型分级衰减 — 委托给 signalMatcher 的统一分类器
    */
-  private classifyErrorType(errorMsg: string): string {
-    const lower = errorMsg.toLowerCase()
-    if (/timeout|etimedout|econnreset|econnrefused|fetch failed|aborted|network/i.test(lower)) {
-      return 'transient'
-    }
-    if (/enoent|not found|not exist|no such file|does not exist|找不到|不存在/i.test(lower)) {
-      return 'missing_resource'
-    }
-    if (/permission|eacces|access denied|forbidden|权限/i.test(lower)) {
-      return 'permission'
-    }
-    if (/invalid.*param|bad.*argument|type.*error|invalid.*type|参数错误|格式错误/i.test(lower)) {
-      return 'bad_input'
-    }
-    return 'unknown'
+  private classifyError(errorMsg: string): string {
+    return classifyErrorType(errorMsg)
   }
 
   /**

@@ -1,7 +1,7 @@
 ---
 name: proactive-agent
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🤖"

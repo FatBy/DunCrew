@@ -1,8 +1,8 @@
-# 📦 DD-OS 技能封装完整指南
+# 📦 DunCrew 技能封装完整指南
 
 ## 🎯 概述
 
-DD-OS 项目可以封装成 OpenClaw Skill，让其他 OpenClaw 实例直接调用你的 AI 操作系统能力。
+DunCrew 项目可以封装成 OpenClaw Skill，让其他 OpenClaw 实例直接调用你的 AI 操作系统能力。
 
 ---
 
@@ -92,7 +92,7 @@ skills/
 ### 🎯 策略C: 混合策略（生产推荐）
 
 1. **核心技能**：`code-knowledge-butler`（满足 SOP 要求）→ **独立发布**
-2. **集成包**：`ddos-bundle` → 声明依赖其他所有 DD-OS 技能
+2. **集成包**：`ddos-bundle` → 声明依赖其他所有 DunCrew 技能
 
 ```
 # 用户选择：
@@ -147,11 +147,11 @@ claw run code-knowledge-butler help
 ```yaml
 ---
 name: ai-assistant
-description: DD-OS AI 助手核心，支持多模型对话、工作流执行
+description: DunCrew AI 助手核心，支持多模型对话、工作流执行
 emoji: 🤖
 version: 1.0.0
 homepage: https://github.com/yourname/ddos
-author: DD-OS Team
+author: DunCrew Team
 license: MIT
 
 openclaw:
@@ -188,7 +188,7 @@ param(
     [string]$Model = "gpt-4"
 )
 
-# 调用 DD-OS AI 助手的实际逻辑
+# 调用 DunCrew AI 助手的实际逻辑
 # 可能需要调用本地 API 或 oracle
 
 Write-Host "🤖 AI Assistant (Model: $Model)" -ForegroundColor Cyan
@@ -241,7 +241,7 @@ openclaw:
 ```yaml
 ---
 name: mcp-server
-description: DD-OS 的 Python MCP 后端服务器
+description: DunCrew 的 Python MCP 后端服务器
 emoji: 🐍
 version: 1.0.0
 
@@ -355,7 +355,7 @@ clawhub install code-knowledge-butler
 claw run code-knowledge-butler search --query "用户认证" --path "myproject/"
 ```
 
-### 场景2: 想要 DD-OS 全套
+### 场景2: 想要 DunCrew 全套
 
 ```powershell
 # 方案A: 安装所有技能（分别）
@@ -415,6 +415,6 @@ claw run code-knowledge-butler search --query "Nexus 系统" --path "D:\编程\S
 
 ---
 
-**结论**：✅ **DD-OS 完全可以封装成 OpenClaw Skill**，你已经有了很好的基础，我帮你完成了第一个核心技能 `code-knowledge-butler`。
+**结论**：✅ **DunCrew 完全可以封装成 OpenClaw Skill**，你已经有了很好的基础，我帮你完成了第一个核心技能 `code-knowledge-butler`。
 
 **下一步**：你想先测试这个技能，还是继续封装其他技能？

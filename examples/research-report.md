@@ -2,11 +2,11 @@
 
 ## Scenario
 
-Using DD-OS to research a topic, gather information from the web, and produce a structured report -- all in one automated flow.
+Using DunCrew to research a topic, gather information from the web, and produce a structured report -- all in one automated flow.
 
 ## Setup
 
-1. DD-OS running with backend connected
+1. DunCrew running with backend connected
 2. API configured with a capable model (GPT-4o recommended for research tasks)
 3. Enter any Nexus from the World View
 
@@ -81,7 +81,7 @@ The AI produces a well-structured markdown report:
 
 ## What Makes This Different from ChatGPT?
 
-| Aspect | DD-OS | ChatGPT |
+| Aspect | DunCrew | ChatGPT |
 |--------|-------|---------|
 | **Web access** | Real-time search + full page fetch | Limited browsing |
 | **File output** | Saved as actual .md file on your machine | Copy-paste from chat |

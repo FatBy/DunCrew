@@ -1,8 +1,8 @@
 ---
 name: skill-generator
-description: "帮助用户通过对话创建新的 DD-OS 技能。"
+description: "帮助用户通过对话创建新的 DunCrew 技能。"
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🛠️"
@@ -11,7 +11,7 @@ metadata:
 
 # Skill Generator
 
-帮助用户通过对话创建新的 DD-OS 技能。
+帮助用户通过对话创建新的 DunCrew 技能。
 
 ## 工作流程
 

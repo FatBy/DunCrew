@@ -1,6 +1,6 @@
 /**
- * DD-OS 本地服务通信模块
- * 通过 HTTP API 与 ddos-local-server.py 通信
+ * DunCrew 本地服务通信模块
+ * 通过 HTTP API 与 duncrew-server.py 通信
  * 用于执行任务（绕过 WebSocket chat 层，直接调用 claw CLI）
  *
  * 远程访问策略：
@@ -29,7 +29,7 @@ function getDefaultServerUrl(): string {
 const DEFAULT_LOCAL_SERVER = getDefaultServerUrl()
 
 // 配置 key
-const STORAGE_KEY = 'ddos_local_server_url'
+const STORAGE_KEY = 'duncrew_local_server_url'
 
 export interface TaskExecuteResponse {
   taskId: string
@@ -180,7 +180,7 @@ class LocalServerService {
   }
 
   // ============================================
-  // 数据持久化 API (存储到 ~/.ddos/data/)
+  // 数据持久化 API (存储到 ~/.duncrew/data/)
   // ============================================
 
   /**

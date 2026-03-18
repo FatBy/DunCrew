@@ -2,7 +2,7 @@
 name: code-review
 description: "Comprehensive code review focusing on quality, security, and best practices"
 version: "1.0.0"
-author: "DD-OS Team"
+author: "DunCrew Team"
 metadata:
   openclaw:
     emoji: "🔧"

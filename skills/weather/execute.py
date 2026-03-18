@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Weather Skill Plugin for DD-OS
+Weather Skill Plugin for DunCrew
 Reads location from stdin (JSON), outputs weather report to stdout.
 
 Protocol:

@@ -2,7 +2,7 @@
 name: gemini
 description: "Gemini CLI for one-shot Q&A, summaries, and generation."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://ai.google.dev/
 metadata:
   openclaw:

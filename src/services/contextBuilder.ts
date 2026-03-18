@@ -11,26 +11,26 @@ import type { ChatMessage, ViewType, TaskItem, SkillNode, MemoryEntry, SoulTruth
 
 const OPENCLAW_CAPABILITY = `
 
-你可以通过 DD-OS 直接控制 AI Agent 执行任务。当用户请求你执行某项操作时（如发消息、执行命令、自动化任务等），在你的回复末尾包含以下特殊标记：
+你可以通过 DunCrew 直接控制 AI Agent 执行任务。当用户请求你执行某项操作时（如发消息、执行命令、自动化任务等），在你的回复末尾包含以下特殊标记：
 \`\`\`execute
 {"action":"sendTask","prompt":"要发送给 Agent 的具体指令"}
 \`\`\`
 只在需要执行操作时才添加此标记，纯分析或回答问题时不需要。`
 
 const SYSTEM_PROMPTS: Record<string, string> = {
-  task: `你是 DD-OS 任务管理助手。你的职责是帮助用户分析任务状态、建议优先级、识别瓶颈。
+  task: `你是 DunCrew 任务管理助手。你的职责是帮助用户分析任务状态、建议优先级、识别瓶颈。
 回答要简洁精炼，使用中文。` + OPENCLAW_CAPABILITY,
 
-  skill: `你是 DD-OS 技能分析助手。你的职责是帮助用户了解当前已安装的技能、分析技能覆盖度、推荐可能需要的新技能。
+  skill: `你是 DunCrew 技能分析助手。你的职责是帮助用户了解当前已安装的技能、分析技能覆盖度、推荐可能需要的新技能。
 回答要简洁精炼，使用中文。` + OPENCLAW_CAPABILITY,
 
-  memory: `你是 DD-OS 记忆管理助手。你的职责是帮助用户总结和分析记忆数据、发现记忆间的关联、提取关键洞察。
+  memory: `你是 DunCrew 记忆管理助手。你的职责是帮助用户总结和分析记忆数据、发现记忆间的关联、提取关键洞察。
 回答要简洁精炼，使用中文。` + OPENCLAW_CAPABILITY,
 
-  soul: `你是 DD-OS 灵魂分析助手。你的职责是帮助用户理解 Agent 的个性配置、分析核心特质和边界规则、建议优化方向。
+  soul: `你是 DunCrew 灵魂分析助手。你的职责是帮助用户理解 Agent 的个性配置、分析核心特质和边界规则、建议优化方向。
 回答要简洁精炼，使用中文。` + OPENCLAW_CAPABILITY,
 
-  default: `你是 DD-OS 智能助手，帮助用户管理和分析 AI Agent 的各项数据。
+  default: `你是 DunCrew 智能助手，帮助用户管理和分析 AI Agent 的各项数据。
 回答要简洁精炼，使用中文。` + OPENCLAW_CAPABILITY,
 }
 
@@ -192,7 +192,7 @@ export function buildChatMessages(
 ): ChatMessage[] {
   const systemPrompt = SYSTEM_PROMPTS[view] || SYSTEM_PROMPTS.default
   const context = getContextForView(view, data)
-  const connStatus = data.connectionStatus === 'connected' ? 'DD-OS 已连接，可执行任务' : 'DD-OS 未连接，无法执行任务'
+  const connStatus = data.connectionStatus === 'connected' ? 'DunCrew 已连接，可执行任务' : 'DunCrew 未连接，无法执行任务'
   
   const messages: ChatMessage[] = [
     {

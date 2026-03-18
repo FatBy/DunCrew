@@ -2,7 +2,7 @@
 name: apple-reminders
 description: "Manage Apple Reminders via remindctl CLI (list, add, edit, complete, delete). Supports lists, date filters, and JSON/plain output."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://github.com/steipete/remindctl
 metadata:
   openclaw:

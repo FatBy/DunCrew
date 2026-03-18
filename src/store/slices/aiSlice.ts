@@ -63,12 +63,12 @@ const DATA_KEYS = {
 
 // LocalStorage 键名 (作为备份/缓存)
 const STORAGE_KEYS = {
-  CONVERSATIONS: 'ddos_conversations_v2',
-  ACTIVE_CONVERSATION: 'ddos_active_conv_id',
-  EXECUTION_STATUS: 'ddos_execution_status',
+  CONVERSATIONS: 'duncrew_conversations_v2',
+  ACTIVE_CONVERSATION: 'duncrew_active_conv_id',
+  EXECUTION_STATUS: 'duncrew_execution_status',
   // 旧键名 (用于迁移)
-  LEGACY_CHAT_HISTORY: 'ddos_chat_history',
-  LEGACY_NEXUS_CHAT_MAP: 'ddos_nexus_chat_map',
+  LEGACY_CHAT_HISTORY: 'duncrew_chat_history',
+  LEGACY_NEXUS_CHAT_MAP: 'duncrew_nexus_chat_map',
 }
 
 // ============================================
@@ -325,7 +325,7 @@ export interface AiSlice {
   loadConversationsFromServer: () => Promise<void>
   // 懒加载单个对话的消息
   loadConversationMessages: (id: string) => Promise<void>
-  // 将 Gateway sessions 的完成结果回填到 DD-OS 对话
+  // 将 Gateway sessions 的完成结果回填到 DunCrew 对话
   syncGatewaySessionsToConversations: (sessions: Session[]) => void
 
 
@@ -512,7 +512,7 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
     }
   },
 
-  // 将 Gateway sessions 的完成结果回填到 DD-OS 对话
+  // 将 Gateway sessions 的完成结果回填到 DunCrew 对话
   syncGatewaySessionsToConversations: (sessions: Session[]) => {
     if (sessions.length === 0) return
     
@@ -1129,7 +1129,7 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
       const isOpenClawConnected = connectionMode === 'openclaw' && connectionStatus === 'connected'
       if (isOpenClawConnected) {
         const execId = `oc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-        const idempotencyKey = `ddos-${execId}`
+        const idempotencyKey = `duncrew-${execId}`
         const chatTaskId = `oc-chat-${execId}`
         const chatTaskStartedAt = Date.now()
 
@@ -1686,7 +1686,7 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
       }
 
       // 检查 localStorage 缓存
-      const CACHE_KEY = 'ddos_journal_entries'
+      const CACHE_KEY = 'duncrew_journal_entries'
       let cached: JournalEntry[] = []
       try {
         const raw = localStorage.getItem(CACHE_KEY)
@@ -1745,7 +1745,7 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
     const fullState = get() as any
 
     // 1. 从 localStorage 加载缓存的日志条目
-    const CACHE_KEY = 'ddos_journal_entries'
+    const CACHE_KEY = 'duncrew_journal_entries'
     let cached: JournalEntry[] = []
     try {
       const raw = localStorage.getItem(CACHE_KEY)

@@ -1,12 +1,12 @@
 // ============================================
-// DD-OS English Language Pack
+// DunCrew English Language Pack
 // ============================================
 
 import type { TranslationKey } from './zh'
 
 const en: Record<TranslationKey, string> = {
   // ---- Navigation ----
-  'app.logo': 'DD-OS',
+  'app.logo': 'DunCrew',
   'app.menu.soul': 'Soul Tower',
   'app.menu.skill': 'Skill Tree',
   'app.menu.memory': 'Memory Palace',
@@ -53,7 +53,7 @@ const en: Record<TranslationKey, string> = {
   'settings.version': 'Version',
   'settings.run_mode': 'Run Mode',
   'settings.native_local': 'Native (Local)',
-  'settings.openclaw_network': 'DD-OS Cloud (Network)',
+  'settings.openclaw_network': 'DunCrew Cloud (Network)',
   'settings.agent_idle': 'Idle',
   'settings.agent_thinking': 'Thinking',
   'settings.agent_executing': 'Executing',
@@ -125,8 +125,8 @@ const en: Record<TranslationKey, string> = {
   'task.agent_executing': 'Executing',
   'task.messages': 'messages',
   'task.native_setup': 'Start Native Server',
-  'task.native_cmd': 'python ddos-local-server.py --port 3001',
-  'task.native_connect': 'Connect DD-OS Native',
+  'task.native_cmd': 'python duncrew-server.py --port 3001',
+  'task.native_connect': 'Connect DunCrew Native',
   'task.native_connect_desc': 'Select Native mode at bottom-left and connect',
   'task.start_chat': 'Start Chatting',
   'task.start_chat_desc': 'Chat with the Agent via AI panel',
@@ -169,6 +169,27 @@ const en: Record<TranslationKey, string> = {
   'soul.boundaries': 'Boundaries',
   'soul.vibe': 'Vibe & MBTI',
   'soul.soul_avatar': 'Soul Avatar',
+  // ---- Soul Evolution (Layer 2) ----
+  'soul.amendments': 'Amendments',
+  'soul.amendments_empty': 'No amendments yet. Use more Nexuses to auto-detect patterns.',
+  'soul.amendment_draft': 'Pending',
+  'soul.amendment_approved': 'Active',
+  'soul.amendment_archived': 'Archived',
+  'soul.approve': 'Approve',
+  'soul.reject': 'Reject',
+  'soul.archive': 'Archive',
+  'soul.weight': 'Weight',
+  'soul.hit_count': 'Injections',
+  'soul.detected_from': 'Detected from',
+  'soul.mbti_base': 'Base',
+  'soul.mbti_expressed': 'Expressed',
+  'soul.mbti_drift': 'Behavioral Drift',
+  'soul.axis_ei': 'E Extraverted / I Introverted',
+  'soul.axis_sn': 'S Sensing / N Intuition',
+  'soul.axis_tf': 'T Thinking / F Feeling',
+  'soul.axis_jp': 'J Judging / P Perceiving',
+  'soul.layer1': 'Factory Soul',
+  'soul.layer2': 'User Soul',
 
   // ---- Observer Proposal ----
   'build.signal': 'Observer Signal',
@@ -194,9 +215,9 @@ const en: Record<TranslationKey, string> = {
   'conn.error': 'Connection Failed',
   'conn.mode': 'Run Mode',
   'conn.native': 'Native',
-  'conn.openclaw': 'DD-OS Cloud',
+  'conn.openclaw': 'DunCrew Cloud',
   'conn.native_desc': 'Native: Run locally, direct control, no token needed',
-  'conn.openclaw_desc': 'DD-OS Cloud: Remote gateway, token required',
+  'conn.openclaw_desc': 'DunCrew Cloud: Remote gateway, token required',
   'conn.gateway': 'Gateway Address (Optional)',
   'conn.gateway_placeholder': 'Leave empty for proxy, or enter IP:18789 for direct',
   'conn.gateway_hint': 'Empty = via Vite/nginx proxy; Filled = browser direct connect',

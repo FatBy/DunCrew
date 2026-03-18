@@ -29,6 +29,7 @@ import type {
   OnChildEndedParams,
   ChatMessage,
   L1ActionSnapshot,
+  MemorySearchResult,
 } from '@/types'
 import { L1_MEMORY_CONFIG } from '@/types'
 import { chat } from './llmService'
@@ -72,6 +73,8 @@ interface ContextEngineConfig {
   getSystemPrompt: () => string
   /** 获取历史上下文（最近对话） */
   getConversationHistory?: () => ChatMessage[]
+  /** 按 Nexus 加载持久化记忆 (返回最近 N 条) */
+  loadNexusMemories?: (nexusId: string, limit: number) => Promise<MemorySearchResult[]>
 }
 
 /**
@@ -88,6 +91,8 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
   private compactionHistory: Array<{ before: number; after: number; ts: number }> = []
   /** V3: L1-Hot 记忆快照 (最近 N 轮的结构化操作摘要) */
   private l1HotSnapshots: L1ActionSnapshot[] = []
+  /** L1-Hot 持久化防抖计时器 */
+  private l1HotPersistTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(config: ContextEngineConfig) {
     this.config = config
@@ -296,13 +301,26 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
       }
       console.log(`[ContextEngine] L1-Hot: ${this.l1HotSnapshots.length} snapshots (added ${newSnapshots.length})`)
 
-      // V3: L1-Cold 异步持久化到 memoryStore
+      // V3: L1-Hot 持久化 (2 秒防抖)
+      this.debouncePersistL1Hot()
+
+      // V3: L1-Cold 异步持久化到 memoryStore (语义化摘要)
       for (const snap of newSnapshots) {
+        const semanticContent = this.buildSemanticSummary(snap)
+        const tags = [snap.action, snap.status]
+        // 从 target 提取额外标签 (文件扩展名、路径关键词等)
+        if (snap.target) {
+          const extMatch = snap.target.match(/\.(\w{1,6})$/)
+          if (extMatch) tags.push(extMatch[1])
+          // 提取路径中有意义的部分
+          const pathParts = snap.target.split(/[/\\]/).filter(p => p && !p.startsWith('.'))
+          if (pathParts.length > 0) tags.push(pathParts[pathParts.length - 1])
+        }
         memoryStore.write({
           source: 'l1_memory',
-          content: `[Turn ${snap.turn}] ${snap.action} → ${snap.target} (${snap.status}, ${snap.resultSize}B)${snap.resultPreview ? ' "' + snap.resultPreview.slice(0, 80) + '..."' : ''}`,
+          content: semanticContent,
           nexusId: this.config.nexusId,
-          tags: [snap.action, snap.status],
+          tags,
           metadata: { turn: snap.turn, resultSize: snap.resultSize },
         }).catch(() => {}) // 不阻塞
       }
@@ -329,25 +347,61 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
     this.compactionHistory = []
     this.l1HotSnapshots = []
 
-    // 尝试从历史对话加载上下文
-    const history = this.config.getConversationHistory?.() ?? []
-    if (history.length > 0) {
-      // 导入最近的消息作为初始上下文
-      const recentHistory = history.slice(-10) // 最近 10 条
-      for (const msg of recentHistory) {
-        this.ingestedMessages.push(msg)
-      }
+    let importedMessages = 0
+    let memoriesLoaded = 0
 
-      return {
-        bootstrapped: true,
-        importedMessages: recentHistory.length,
+    // ---- 阶段 1: 从 memoryStore 加载该 Nexus 的持久化记忆 ----
+    if (this.config.loadNexusMemories) {
+      try {
+        const memories = await this.config.loadNexusMemories(this.config.nexusId, 15)
+        if (memories.length > 0) {
+          memoriesLoaded = memories.length
+          // 构建记忆回顾注入消息
+          const recapLines = memories.map(m => {
+            const ts = m.createdAt ? new Date(m.createdAt).toLocaleString('zh-CN') : '未知时间'
+            const snippet = (m.snippet || m.content || '').slice(0, 150)
+            return `- [${ts}] ${snippet}`
+          })
+          const recapContent = `## 历史记忆回顾\n以下是你与该用户在之前会话中积累的记忆，请基于这些信息保持连贯性：\n${recapLines.join('\n')}`
+
+          this.ingestedMessages.push({
+            id: `bootstrap-memories-${Date.now()}`,
+            role: 'system',
+            content: recapContent,
+            timestamp: Date.now(),
+          })
+          console.log(`[ContextEngine] Bootstrap: loaded ${memoriesLoaded} memories from store`)
+        }
+      } catch (e) {
+        console.warn('[ContextEngine] Bootstrap: failed to load nexus memories:', e)
       }
     }
 
+    // ---- 阶段 2: 恢复 L1-Hot 快照 ----
+    const restoredSnapshots = await this.restoreL1Hot()
+    if (restoredSnapshots > 0) {
+      console.log(`[ContextEngine] Bootstrap: restored ${restoredSnapshots} L1-Hot snapshots`)
+    }
+
+    // ---- 阶段 3: 从当前会话历史导入 ----
+    const history = this.config.getConversationHistory?.() ?? []
+    if (history.length > 0) {
+      const recentHistory = history.slice(-10)
+      for (const msg of recentHistory) {
+        this.ingestedMessages.push(msg)
+      }
+      importedMessages = recentHistory.length
+    }
+
+    const reason = memoriesLoaded === 0 && importedMessages === 0
+      ? 'Fresh session, no prior history or memories'
+      : undefined
+
     return {
       bootstrapped: true,
-      importedMessages: 0,
-      reason: 'Fresh session, no prior history',
+      importedMessages,
+      memoriesLoaded,
+      reason,
     }
   }
 
@@ -421,6 +475,12 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
 
   async dispose(): Promise<void> {
     console.log(`[ContextEngine] Disposing engine for Nexus: ${this.config.nexusId}`)
+    // 在清理前持久化 L1-Hot
+    await this.persistL1Hot()
+    if (this.l1HotPersistTimer) {
+      clearTimeout(this.l1HotPersistTimer)
+      this.l1HotPersistTimer = null
+    }
     this.ingestedMessages = []
     this.compactionHistory = []
     this.l1HotSnapshots = []
@@ -480,6 +540,92 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
     })
 
     return `## 最近操作回顾 (L1-Hot)\n以下是本次会话中最近的操作记录，可用于追踪执行进度：\n${lines.join('\n')}`
+  }
+
+  /** 根据工具类型构建语义化摘要 (替代纯 metadata 记录) */
+  private buildSemanticSummary(snap: L1ActionSnapshot): string {
+    const statusText = snap.status === 'success' ? '成功' : '失败'
+    const preview = snap.resultPreview || ''
+
+    switch (snap.action) {
+      case 'readFile':
+        return `读取文件 ${snap.target} ${statusText}，内容 ${snap.resultSize} 字节。${preview ? '内容摘要: ' + preview.slice(0, 100) : ''}`
+      case 'writeFile':
+        return `写入文件 ${snap.target} ${statusText}，写入 ${snap.resultSize} 字节。`
+      case 'appendFile':
+        return `追加内容到文件 ${snap.target} ${statusText}。`
+      case 'runCmd':
+        return `执行命令 "${snap.target}" ${statusText}。${preview ? '输出: ' + preview.slice(0, 100) : ''}`
+      case 'webSearch':
+        return `搜索 "${snap.target}" ${statusText}。${preview ? '结果: ' + preview.slice(0, 100) : ''}`
+      case 'webFetch':
+        return `获取网页 ${snap.target} ${statusText}，内容 ${snap.resultSize} 字节。`
+      case 'saveMemory':
+        return `保存记忆 "${snap.target}" ${statusText}。`
+      case 'searchMemory':
+        return `检索记忆 "${snap.target}" ${statusText}。${preview ? '结果: ' + preview.slice(0, 100) : ''}`
+      default:
+        return `执行 ${snap.action} → ${snap.target} ${statusText} (${snap.resultSize}B)。${preview ? ' ' + preview.slice(0, 80) : ''}`
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  // V3: L1-Hot 持久化
+  // ═══════════════════════════════════════════
+
+  /** 持久化 L1-Hot 快照到 memoryStore (单条 JSON 记录) */
+  private async persistL1Hot(): Promise<void> {
+    if (this.l1HotSnapshots.length === 0) return
+    try {
+      await memoryStore.write({
+        source: 'l1_memory',
+        content: `[L1-Hot-State] ${JSON.stringify(this.l1HotSnapshots)}`,
+        nexusId: this.config.nexusId,
+        tags: ['l1_hot_state'],
+        metadata: { type: 'l1_hot_state', count: this.l1HotSnapshots.length },
+      })
+      console.log(`[ContextEngine] L1-Hot persisted: ${this.l1HotSnapshots.length} snapshots`)
+    } catch (e) {
+      console.warn('[ContextEngine] L1-Hot persist failed:', e)
+    }
+  }
+
+  /** 防抖持久化 L1-Hot (2 秒) */
+  private debouncePersistL1Hot(): void {
+    if (this.l1HotPersistTimer) clearTimeout(this.l1HotPersistTimer)
+    this.l1HotPersistTimer = setTimeout(() => {
+      this.persistL1Hot()
+      this.l1HotPersistTimer = null
+    }, 2000)
+  }
+
+  /** 从 memoryStore 恢复 L1-Hot 快照 */
+  private async restoreL1Hot(): Promise<number> {
+    try {
+      // 搜索最近的 l1_hot_state 记录
+      const results = await memoryStore.search({
+        query: 'L1-Hot-State',
+        nexusId: this.config.nexusId,
+        maxResults: 1,
+        useMmr: false,
+        minScore: 0,
+      })
+      for (const r of results) {
+        const content = r.snippet || r.content || ''
+        const jsonMatch = content.match(/\[L1-Hot-State\]\s*(\[[\s\S]*\])/)
+        if (jsonMatch) {
+          const snapshots: L1ActionSnapshot[] = JSON.parse(jsonMatch[1])
+          if (Array.isArray(snapshots) && snapshots.length > 0) {
+            this.l1HotSnapshots = snapshots.slice(-L1_MEMORY_CONFIG.HOT_MAX_SNAPSHOTS)
+            console.log(`[ContextEngine] L1-Hot restored: ${this.l1HotSnapshots.length} snapshots`)
+            return this.l1HotSnapshots.length
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[ContextEngine] L1-Hot restore failed:', e)
+    }
+    return 0
   }
 }
 

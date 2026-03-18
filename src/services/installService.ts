@@ -18,7 +18,7 @@ export interface InstallResult {
 
 // 获取服务器 URL
 function getServerUrl(): string {
-  return localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+  return localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
 }
 
 /**

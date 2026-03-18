@@ -2,7 +2,7 @@
 name: discord
 description: "Discord ops via the message tool (channel=discord)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🎮"

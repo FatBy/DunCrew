@@ -1,23 +1,23 @@
 @echo off
 chcp 65001 >nul 2>&1
-title DD-OS Desktop
+title DunCrew Desktop
 
 echo.
 echo  ╔══════════════════════════════════════════╗
-echo  ║          DD-OS Desktop Launcher          ║
+echo  ║         DunCrew Desktop Launcher         ║
 echo  ╠══════════════════════════════════════════╣
-echo  ║  Starting DD-OS on http://localhost:3001 ║
+echo  ║  Starting on http://localhost:3001       ║
 echo  ╚══════════════════════════════════════════╝
 echo.
 
 :: 获取当前脚本所在目录
-set "DDOS_DIR=%~dp0"
+set "DUNCREW_DIR=%~dp0"
 
 :: ============================================
 :: 1. 部署 OpenClaw 扩展 (如果用户有 OpenClaw)
 :: ============================================
-set "OPENCLAW_EXT_DIR=%USERPROFILE%\.openclaw\extensions\ddos"
-set "SOURCE_EXT_DIR=%DDOS_DIR%openclaw-extension"
+set "OPENCLAW_EXT_DIR=%USERPROFILE%\.openclaw\extensions\duncrew"
+set "SOURCE_EXT_DIR=%DUNCREW_DIR%openclaw-extension"
 
 if not exist "%SOURCE_EXT_DIR%\index.ts" (
     echo [Deploy] OpenClaw extension source not found, skipping.
@@ -45,7 +45,7 @@ echo [Deploy] OpenClaw extension deployed to %OPENCLAW_EXT_DIR%
 :: ============================================
 :: 2. 检查前端构建
 :: ============================================
-if not exist "%DDOS_DIR%dist\index.html" (
+if not exist "%DUNCREW_DIR%dist\index.html" (
     echo [Error] Frontend build not found (dist/index.html missing)
     echo         Please run "npm run build" first.
     pause
@@ -55,17 +55,17 @@ if not exist "%DDOS_DIR%dist\index.html" (
 :: ============================================
 :: 3. 启动后端服务器
 :: ============================================
-set "SERVER_EXE=%DDOS_DIR%ddos-server.exe"
-set "SERVER_PY=%DDOS_DIR%ddos-local-server.py"
+set "SERVER_EXE=%DUNCREW_DIR%duncrew-server.exe"
+set "SERVER_PY=%DUNCREW_DIR%duncrew-server.py"
 
 if exist "%SERVER_EXE%" (
-    echo [Server] Starting ddos-server.exe ...
+    echo [Server] Starting duncrew-server.exe ...
     start "" /B "%SERVER_EXE%" --port 3001
 ) else if exist "%SERVER_PY%" (
-    echo [Server] Starting ddos-local-server.py ...
+    echo [Server] Starting duncrew-server.py ...
     start "" /B python "%SERVER_PY%" --port 3001
 ) else (
-    echo [Error] Neither ddos-server.exe nor ddos-local-server.py found!
+    echo [Error] Neither duncrew-server.exe nor duncrew-server.py found!
     pause
     exit /b 1
 )
@@ -92,13 +92,13 @@ goto wait_loop
 :server_ready
 echo [Ready] Server is running!
 echo.
-echo  Opening DD-OS in your default browser...
+echo  Opening DunCrew in your default browser...
 echo  URL: http://localhost:3001
 echo.
 start "" "http://localhost:3001"
 
 echo  ══════════════════════════════════════════
-echo   DD-OS is running. Press Ctrl+C to stop.
+echo   DunCrew is running. Press Ctrl+C to stop.
 echo  ══════════════════════════════════════════
 echo.
 

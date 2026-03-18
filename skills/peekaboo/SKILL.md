@@ -2,7 +2,7 @@
 name: peekaboo
 description: "Capture and automate macOS UI with the Peekaboo CLI."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://peekaboo.boo
 metadata:
   openclaw:

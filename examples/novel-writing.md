@@ -6,7 +6,7 @@ Using the `novel-master` Nexus to plan and write the first chapter of a sci-fi n
 
 ## Setup
 
-1. Ensure DD-OS is running (frontend + backend)
+1. Ensure DunCrew is running (frontend + backend)
 2. Configure your LLM API in Settings (GPT-4o or DeepSeek recommended for creative tasks)
 3. The `novel-master` Nexus is preinstalled -- click it on the World View to enter
 

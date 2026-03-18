@@ -13,7 +13,7 @@ interface CrashLog {
   userAgent: string
 }
 
-const CRASH_LOG_KEY = 'ddos_crash_logs'
+const CRASH_LOG_KEY = 'duncrew_crash_logs'
 const MAX_CRASH_LOGS = 10
 
 class CrashMonitor {
@@ -50,14 +50,14 @@ class CrashMonitor {
     // 监听 beforeunload 事件，检测非正常退出
     window.addEventListener('beforeunload', () => {
       // 标记正常退出
-      sessionStorage.setItem('ddos_clean_exit', 'true')
+      sessionStorage.setItem('duncrew_clean_exit', 'true')
     })
 
     // 检查上次是否正常退出
-    const cleanExit = sessionStorage.getItem('ddos_clean_exit')
+    const cleanExit = sessionStorage.getItem('duncrew_clean_exit')
     if (cleanExit !== 'true') {
       // 上次非正常退出，可能是崩溃
-      const lastSession = localStorage.getItem('ddos_last_session_time')
+      const lastSession = localStorage.getItem('duncrew_last_session_time')
       if (lastSession) {
         const elapsed = Date.now() - parseInt(lastSession, 10)
         // 如果上次会话时间距离现在不到 5 分钟，可能是崩溃重启
@@ -68,8 +68,8 @@ class CrashMonitor {
     }
     
     // 清除退出标记，记录新会话时间
-    sessionStorage.removeItem('ddos_clean_exit')
-    localStorage.setItem('ddos_last_session_time', String(Date.now()))
+    sessionStorage.removeItem('duncrew_clean_exit')
+    localStorage.setItem('duncrew_last_session_time', String(Date.now()))
 
     console.log('[CrashMonitor] Initialized')
   }

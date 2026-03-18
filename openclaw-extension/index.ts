@@ -1,5 +1,5 @@
 /**
- * DD-OS OpenClaw Extension — Main entry point.
+ * DunCrew OpenClaw Extension — Main entry point.
  *
  * Registers hooks:
  *   - before_prompt_build: Inject System Brief, Nexus profile, SOP, Gene Pool hints
@@ -112,7 +112,7 @@ function captureBroadcast(context: any): void {
 
 const plugin = {
   id: "ddos",
-  name: "DD-OS Integration",
+  name: "DunCrew Integration",
   description:
     "Nexus-driven SOP execution, experience tracking, Gene Pool self-healing, and adaptive context injection for OpenClaw agents.",
 
@@ -122,12 +122,12 @@ const plugin = {
     nexusManager = new NexusManager(dataDir);
     genePool = new ExtensionGenePool(dataDir);
 
-    api.logger.info(`[DD-OS] Nexus data dir: ${dataDir}`);
+    api.logger.info(`[DunCrew] Nexus data dir: ${dataDir}`);
     api.logger.info(
-      `[DD-OS] Config: SOP=${cfg.enableSOPInjection}, Anaphora=${cfg.enableAnaphoraResolution}, Experience=${cfg.enableExperienceRecording}, GenePool=${cfg.enableGenePool}`
+      `[DunCrew] Config: SOP=${cfg.enableSOPInjection}, Anaphora=${cfg.enableAnaphoraResolution}, Experience=${cfg.enableExperienceRecording}, GenePool=${cfg.enableGenePool}`
     );
     api.logger.info(
-      `[DD-OS] Loaded ${nexusManager.listNexuses().length} nexuses, ${genePool.getGeneCount()} genes`
+      `[DunCrew] Loaded ${nexusManager.listNexuses().length} nexuses, ${genePool.getGeneCount()} genes`
     );
 
     // ========================================
@@ -147,7 +147,7 @@ const plugin = {
       if (!systemBriefInjected) {
         systemBriefText = DDOS_SYSTEM_BRIEF;
         systemBriefInjected = true;
-        api.logger.info("[DD-OS] System Brief injected via prependSystemContext");
+        api.logger.info("[DunCrew] System Brief injected via prependSystemContext");
       }
 
       // ── Auto-detect active Nexus from user message ──
@@ -155,7 +155,7 @@ const plugin = {
       if (!activeNexusId && userMessage) {
         activeNexusId = matchNexusByTrigger(userMessage, nexusManager);
         if (activeNexusId) {
-          api.logger.info(`[DD-OS] Nexus matched by trigger: ${activeNexusId}`);
+          api.logger.info(`[DunCrew] Nexus matched by trigger: ${activeNexusId}`);
         }
       }
 
@@ -186,7 +186,7 @@ const plugin = {
           sopActive = sopMode === "strict";
           sopFirstReply = sopMode === "optional";
           api.logger.info(
-            `[DD-OS] SOP evaluation: mode=${sopMode}, reason="${evaluation.reason}"`
+            `[DunCrew] SOP evaluation: mode=${sopMode}, reason="${evaluation.reason}"`
           );
 
           const directive = nexusManager.buildSOPDirective(activeNexusId, sopMode);
@@ -204,7 +204,7 @@ const plugin = {
               dynamicParts.push("\n" + reminder);
               lastSOPReminderAt = promptBuildCount;
               api.logger.info(
-                `[DD-OS] SOP reminder injected at prompt build #${promptBuildCount}`
+                `[DunCrew] SOP reminder injected at prompt build #${promptBuildCount}`
               );
             }
           }
@@ -233,13 +233,13 @@ const plugin = {
           const sopHints = nexusManager.buildSOPImprovementHints(activeNexusId);
           if (sopHints) {
             dynamicParts.push("\n" + sopHints);
-            api.logger.info("[DD-OS] SOP improvement hints injected");
+            api.logger.info("[DunCrew] SOP improvement hints injected");
           }
 
           const rewriteReq = nexusManager.buildSOPRewriteRequest(activeNexusId);
           if (rewriteReq) {
             dynamicParts.push("\n" + rewriteReq);
-            api.logger.info("[DD-OS] SOP rewrite request injected");
+            api.logger.info("[DunCrew] SOP rewrite request injected");
           }
         }
       }
@@ -249,7 +249,7 @@ const plugin = {
         const catalog = nexusManager.buildNexusCatalog();
         if (catalog) {
           dynamicParts.push("\n" + catalog);
-          api.logger.info("[DD-OS] Nexus catalog injected (no active Nexus)");
+          api.logger.info("[DunCrew] Nexus catalog injected (no active Nexus)");
         }
       }
 
@@ -268,7 +268,7 @@ const plugin = {
         const geneHints = genePool.consumePendingHints();
         if (geneHints) {
           dynamicParts.push("\n" + geneHints);
-          api.logger.info("[DD-OS] Gene Pool hints injected into context");
+          api.logger.info("[DunCrew] Gene Pool hints injected into context");
         }
       }
 
@@ -294,10 +294,10 @@ const plugin = {
       // ── DEBUG: dump event structure to verify field names ──
       const eventKeys = event ? Object.keys(event) : [];
       api.logger.info(
-        `[DD-OS][DEBUG] after_tool_call event keys: [${eventKeys.join(", ")}]`
+        `[DunCrew][DEBUG] after_tool_call event keys: [${eventKeys.join(", ")}]`
       );
       api.logger.info(
-        `[DD-OS][DEBUG] after_tool_call event dump: ${JSON.stringify(event, null, 0)?.slice(0, 1500)}`
+        `[DunCrew][DEBUG] after_tool_call event dump: ${JSON.stringify(event, null, 0)?.slice(0, 1500)}`
       );
 
       const toolName = event?.toolName || event?.name || "";
@@ -309,7 +309,7 @@ const plugin = {
       const toolError = event?.error || "";
 
       api.logger.info(
-        `[DD-OS][DEBUG] after_tool_call resolved: tool="${toolName}", hasError=${!!toolError}, errorSnippet="${toolError.slice(0, 200)}", resultSnippet="${toolResult.slice(0, 200)}"`
+        `[DunCrew][DEBUG] after_tool_call resolved: tool="${toolName}", hasError=${!!toolError}, errorSnippet="${toolError.slice(0, 200)}", resultSnippet="${toolResult.slice(0, 200)}"`
       );
 
       // Record last tool result (for SOP reminders)
@@ -345,7 +345,7 @@ const plugin = {
       if (cfg.enableGenePool && toolError) {
         genePool.matchAndQueue(toolName, toolError);
         api.logger.info(
-          `[DD-OS] Gene Pool: error detected for ${toolName}, queued matching hints`
+          `[DunCrew] Gene Pool: error detected for ${toolName}, queued matching hints`
         );
       }
     });
@@ -366,7 +366,7 @@ const plugin = {
         const adopted = nexusManager.detectSOPAdoption(responseText);
         sopActive = adopted;
         api.logger.info(
-          `[DD-OS] SOP adoption detection: ${adopted ? "FOLLOW" : "FREE"}`
+          `[DunCrew] SOP adoption detection: ${adopted ? "FOLLOW" : "FREE"}`
         );
       }
 
@@ -395,7 +395,7 @@ const plugin = {
               sopFirstReply = sopMode === "optional";
             }
             api.logger.info(
-              `[DD-OS] Agent activated Nexus: ${candidateId} (${meta.name})`
+              `[DunCrew] Agent activated Nexus: ${candidateId} (${meta.name})`
             );
             if (broadcastFn) {
               try {
@@ -409,13 +409,13 @@ const plugin = {
                 });
               } catch (err) {
                 api.logger.warn(
-                  `[DD-OS] Failed to broadcast Nexus activation: ${err}`
+                  `[DunCrew] Failed to broadcast Nexus activation: ${err}`
                 );
               }
             }
           } else {
             api.logger.warn(
-              `[DD-OS] Agent tried to activate unknown Nexus: ${candidateId}`
+              `[DunCrew] Agent tried to activate unknown Nexus: ${candidateId}`
             );
           }
         }
@@ -436,7 +436,7 @@ const plugin = {
             if (written) {
               nexusManager.resetSOPFitnessAfterRewrite(activeNexusId);
               api.logger.info(
-                `[DD-OS] SOP rewritten by Agent for Nexus: ${activeNexusId}`
+                `[DunCrew] SOP rewritten by Agent for Nexus: ${activeNexusId}`
               );
               if (broadcastFn) {
                 try {
@@ -446,7 +446,7 @@ const plugin = {
                   });
                 } catch (err) {
                   api.logger.warn(
-                    `[DD-OS] Failed to broadcast SOP update: ${err}`
+                    `[DunCrew] Failed to broadcast SOP update: ${err}`
                   );
                 }
               }
@@ -464,7 +464,7 @@ const plugin = {
           const skillName = match[1].trim();
           if (skillName) {
             api.logger.info(
-              `[DD-OS] Agent binding skill "${skillName}" to Nexus ${activeNexusId}`
+              `[DunCrew] Agent binding skill "${skillName}" to Nexus ${activeNexusId}`
             );
             if (broadcastFn) {
               try {
@@ -475,7 +475,7 @@ const plugin = {
                 });
               } catch (err) {
                 api.logger.warn(
-                  `[DD-OS] Failed to broadcast skill binding: ${err}`
+                  `[DunCrew] Failed to broadcast skill binding: ${err}`
                 );
               }
             }
@@ -524,7 +524,7 @@ const plugin = {
             meta.sopContent
           );
           api.logger.info(
-            `[DD-OS] SOP tracker initialized for Nexus: ${meta.name}`
+            `[DunCrew] SOP tracker initialized for Nexus: ${meta.name}`
           );
         }
       }
@@ -540,10 +540,10 @@ const plugin = {
       // ── DEBUG: dump agent_end event ──
       const eventKeys = event ? Object.keys(event) : [];
       api.logger.info(
-        `[DD-OS][DEBUG] agent_end event keys: [${eventKeys.join(", ")}]`
+        `[DunCrew][DEBUG] agent_end event keys: [${eventKeys.join(", ")}]`
       );
       api.logger.info(
-        `[DD-OS][DEBUG] agent_end: activeNexusId=${activeNexusId}, enableGenePool=${cfg.enableGenePool}, traceLength=${genePool.getSessionTrace().length}`
+        `[DunCrew][DEBUG] agent_end: activeNexusId=${activeNexusId}, enableGenePool=${cfg.enableGenePool}, traceLength=${genePool.getSessionTrace().length}`
       );
 
       const duration = event?.durationMs || (Date.now() - sessionStartTime);
@@ -551,7 +551,7 @@ const plugin = {
       const isError = !isSuccess;
 
       api.logger.info(
-        `[DD-OS][DEBUG] agent_end: success=${event?.success}, isSuccess=${isSuccess}, isError=${isError}`
+        `[DunCrew][DEBUG] agent_end: success=${event?.success}, isSuccess=${isSuccess}, isError=${isError}`
       );
 
       // ── Existing: Record experience ──
@@ -572,7 +572,7 @@ const plugin = {
           }
         );
         api.logger.info(
-          `[DD-OS] Experience recorded for ${activeNexusId}: ${isError ? "failure" : "success"} (${Math.round(duration / 1000)}s)`
+          `[DunCrew] Experience recorded for ${activeNexusId}: ${isError ? "failure" : "success"} (${Math.round(duration / 1000)}s)`
         );
       }
 
@@ -580,21 +580,21 @@ const plugin = {
       if (cfg.enableGenePool) {
         const traceSnapshot = genePool.getSessionTrace();
         api.logger.info(
-          `[DD-OS][DEBUG] Gene Pool harvest check: traceLength=${traceSnapshot.length}, activeNexus=${activeNexusId}`
+          `[DunCrew][DEBUG] Gene Pool harvest check: traceLength=${traceSnapshot.length}, activeNexus=${activeNexusId}`
         );
         if (traceSnapshot.length > 0) {
           api.logger.info(
-            `[DD-OS][DEBUG] Session trace statuses: [${traceSnapshot.map(t => `${t.name}:${t.status}`).join(", ")}]`
+            `[DunCrew][DEBUG] Session trace statuses: [${traceSnapshot.map(t => `${t.name}:${t.status}`).join(", ")}]`
           );
         }
         const harvested = genePool.harvestGenes(activeNexusId || undefined);
         if (harvested.length > 0) {
           api.logger.info(
-            `[DD-OS] Gene Pool: harvested ${harvested.length} new gene(s) for ${activeNexusId || "global"}`
+            `[DunCrew] Gene Pool: harvested ${harvested.length} new gene(s) for ${activeNexusId || "global"}`
           );
         } else {
           api.logger.info(
-            `[DD-OS][DEBUG] Gene Pool: no genes harvested (no error->success pairs found)`
+            `[DunCrew][DEBUG] Gene Pool: no genes harvested (no error->success pairs found)`
           );
         }
       }
@@ -616,10 +616,10 @@ const plugin = {
         const newLevel = NexusManager.xpToLevel(newXP);
 
         api.logger.info(
-          `[DD-OS] XP update: ${activeNexusId} ${xpDelta > 0 ? "+" : ""}${xpDelta} → XP ${newXP} (Lv${newLevel})`
+          `[DunCrew] XP update: ${activeNexusId} ${xpDelta > 0 ? "+" : ""}${xpDelta} → XP ${newXP} (Lv${newLevel})`
         );
 
-        // Broadcast to DD-OS frontend
+        // Broadcast to DunCrew frontend
         if (broadcastFn) {
           try {
             broadcastFn("ddos.nexus.xpUpdate", {
@@ -629,12 +629,12 @@ const plugin = {
               newLevel,
               reason: isSuccess ? "task_success" : "task_failure",
             });
-            api.logger.info("[DD-OS] XP update broadcasted to frontend");
+            api.logger.info("[DunCrew] XP update broadcasted to frontend");
           } catch (err) {
-            api.logger.warn(`[DD-OS] Failed to broadcast XP update: ${err}`);
+            api.logger.warn(`[DunCrew] Failed to broadcast XP update: ${err}`);
           }
         } else {
-          api.logger.info("[DD-OS] XP saved locally (broadcast not available)");
+          api.logger.info("[DunCrew] XP saved locally (broadcast not available)");
         }
       }
 
@@ -648,10 +648,10 @@ const plugin = {
           const updatedFitness =
             nexusManager.updateSOPFitness(activeNexusId, traceSummary);
           api.logger.info(
-            `[DD-OS] SOP fitness: ${(fitness * 100).toFixed(0)}%, ema: ${(updatedFitness.ema * 100).toFixed(0)}% (${updatedFitness.totalExecutions} executions)`
+            `[DunCrew] SOP fitness: ${(fitness * 100).toFixed(0)}%, ema: ${(updatedFitness.ema * 100).toFixed(0)}% (${updatedFitness.totalExecutions} executions)`
           );
         } catch (err) {
-          api.logger.warn(`[DD-OS] SOP fitness update failed: ${err}`);
+          api.logger.warn(`[DunCrew] SOP fitness update failed: ${err}`);
         }
       }
     });
@@ -724,7 +724,7 @@ const plugin = {
         if (meta.sopContent) {
           nexusManager.createSOPTracker(nexusId, meta.name, meta.sopContent);
         }
-        api.logger.info(`[DD-OS] Nexus activated: ${meta.name}`);
+        api.logger.info(`[DunCrew] Nexus activated: ${meta.name}`);
         const xpData = nexusManager.loadNexusXP(nexusId);
         respond(true, {
           ok: true,
@@ -748,7 +748,7 @@ const plugin = {
     );
 
     api.logger.info(
-      `[DD-OS] Extension registered. ${nexusManager.listNexuses().length} nexuses, ${genePool.getGeneCount()} genes found.`
+      `[DunCrew] Extension registered. ${nexusManager.listNexuses().length} nexuses, ${genePool.getGeneCount()} genes found.`
     );
   },
 };

@@ -2,7 +2,7 @@
 name: openhue
 description: "Control Philips Hue lights and scenes via the OpenHue CLI."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://www.openhue.io/cli
 metadata:
   openclaw:

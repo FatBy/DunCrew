@@ -2,7 +2,7 @@
 name: openai-whisper
 description: "Local speech-to-text with the Whisper CLI (no API key)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://openai.com/research/whisper
 metadata:
   openclaw:

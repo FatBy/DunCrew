@@ -2,7 +2,7 @@
 name: feishu-drive
 description: "Feishu cloud storage file management. Activate when user mentions cloud space, folders, drive."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🔧"

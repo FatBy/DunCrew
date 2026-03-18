@@ -1,5 +1,5 @@
 // ============================================
-// DD-OS 主题 & 语言状态管理
+// DunCrew 主题 & 语言状态管理
 // ============================================
 
 import type { StateCreator } from 'zustand'
@@ -10,8 +10,8 @@ import { applyThemeToDOM, getCanvasPalette } from '@/utils/themeUtils'
 import type { CanvasPalette } from '@/types/theme'
 
 // LocalStorage 键名
-const THEME_STORAGE_KEY = 'ddos_theme'
-const LOCALE_STORAGE_KEY = 'ddos_locale'
+const THEME_STORAGE_KEY = 'duncrew_theme'
+const LOCALE_STORAGE_KEY = 'duncrew_locale'
 
 // 从 localStorage 读取主题
 function loadTheme(): ThemeName {

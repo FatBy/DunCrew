@@ -2,7 +2,8 @@
  * MBTI 灵魂形象分析器
  * 规则打分(默认) + LLM 覆盖(可选)
  */
-import type { MBTIType, MBTIResult, SoulTruth, SoulBoundary } from '@/types'
+import type { MBTIType, MBTIResult, SoulTruth, SoulBoundary, MBTIAxisScores, SoulAmendment, NexusScoring } from '@/types'
+import { SOUL_EVOLUTION_CONFIG } from '@/types'
 import { isLLMConfigured, chat } from './llmService'
 
 // ── 16 种 MBTI 完整映射表 ──────────────────────────
@@ -118,8 +119,8 @@ export function analyzeByRules(
 
 // ── 缓存层 ─────────────────────────────────────────
 
-const CACHE_KEY_LLM = 'ddos_soul_mbti'
-const CACHE_KEY_RESULT = 'ddos_soul_mbti_result'
+const CACHE_KEY_LLM = 'duncrew_soul_mbti'
+const CACHE_KEY_RESULT = 'duncrew_soul_mbti_result'
 
 function simpleHash(str: string): number {
   let hash = 0
@@ -243,4 +244,172 @@ export function getAvatarPath(result: MBTIResult): string {
 
 export function getMBTIProfile(type: MBTIType): MBTIProfile {
   return MBTI_PROFILES[type]
+}
+
+// ── 双层演化: Layer 1 轴分数 ────────────────────────
+
+const CACHE_KEY_AXES = 'duncrew_soul_mbti_axes'
+
+/** 从规则引擎结果导出归一化轴分数 (-1~+1) */
+export function rulesAxisScores(
+  coreTruths: SoulTruth[],
+  boundaries: SoulBoundary[],
+  vibeStatement: string,
+): MBTIAxisScores {
+  const parts = [
+    ...coreTruths.map(t => `${t.title} ${t.principle} ${t.description}`),
+    ...boundaries.map(b => b.rule),
+    vibeStatement,
+  ]
+  const corpus = parts.join(' ').toLowerCase()
+
+  const maxPossible = 10
+  const normalize = (raw: number) => Math.max(-1, Math.min(1, raw / maxPossible))
+
+  return {
+    ei: normalize(scoreAxis(corpus, EI_KEYWORDS)),
+    sn: normalize(scoreAxis(corpus, SN_KEYWORDS)),
+    tf: normalize(scoreAxis(corpus, TF_KEYWORDS)),
+    jp: normalize(scoreAxis(corpus, JP_KEYWORDS)),
+  }
+}
+
+// ── 双层演化: Layer 2 行为修正 ──────────────────────
+
+// 工具分类映射: 用于推断 S/N 和 E/I 偏移
+const PRACTICAL_TOOLS = ['runCmd', 'writeFile', 'appendFile', 'deleteFile', 'moveFile', 'copyFile']
+const RESEARCH_TOOLS = ['readFile', 'listDir', 'webSearch', 'webFetch', 'searchMemory']
+const SOCIAL_TOOLS = ['sendMessage', 'slack', 'email', 'telegram', 'discord']
+
+/** 从 Nexus 评分数据和已批准修正案计算行为修正因子 */
+export function computeBehavioralModifiers(
+  nexusScoringMap: Record<string, NexusScoring>,
+  amendments: SoulAmendment[],
+): MBTIAxisScores {
+  const MAX = SOUL_EVOLUTION_CONFIG.MBTI_MAX_MODIFIER
+  const clamp = (v: number) => Math.max(-MAX, Math.min(MAX, v))
+
+  let eiMod = 0
+  let snMod = 0
+  let tfMod = 0
+  let jpMod = 0
+
+  // --- 从 Nexus 工具使用分布推断 ---
+  let practicalCount = 0
+  let researchCount = 0
+  let socialCount = 0
+  let totalToolCalls = 0
+  let totalSuccessRate = 0
+  let nexusCount = 0
+
+  for (const scoring of Object.values(nexusScoringMap)) {
+    if (!scoring.dimensions) continue
+    nexusCount++
+    totalSuccessRate += scoring.successRate
+
+    for (const [toolName, dim] of Object.entries(scoring.dimensions)) {
+      const calls = dim.calls || 0
+      totalToolCalls += calls
+
+      if (PRACTICAL_TOOLS.some(t => toolName.toLowerCase().includes(t.toLowerCase()))) {
+        practicalCount += calls
+      }
+      if (RESEARCH_TOOLS.some(t => toolName.toLowerCase().includes(t.toLowerCase()))) {
+        researchCount += calls
+      }
+      if (SOCIAL_TOOLS.some(t => toolName.toLowerCase().includes(t.toLowerCase()))) {
+        socialCount += calls
+      }
+    }
+  }
+
+  if (totalToolCalls > 0) {
+    // E/I: 社交工具比例 → 偏 E; 反之偏 I
+    const socialRatio = socialCount / totalToolCalls
+    eiMod += socialRatio > 0.1 ? 0.2 : -0.1
+
+    // S/N: 实操工具 vs 研究工具
+    const practicalRatio = practicalCount / totalToolCalls
+    const researchRatio = researchCount / totalToolCalls
+    snMod += (practicalRatio - researchRatio) * 0.5
+  }
+
+  // J/P: 高成功率 → 偏 J (结构化); 低成功率可能表示更多探索 → 偏 P
+  if (nexusCount > 0) {
+    const avgSuccess = totalSuccessRate / nexusCount
+    jpMod += (avgSuccess - 0.5) * 0.3
+  }
+
+  // --- 从已批准 amendments 关键词推断 T/F ---
+  const approvedTexts = amendments
+    .filter(a => a.status === 'approved')
+    .map(a => a.content.toLowerCase())
+    .join(' ')
+
+  if (approvedTexts.length > 0) {
+    const tfScore = scoreAxis(approvedTexts, TF_KEYWORDS)
+    tfMod += Math.max(-0.2, Math.min(0.2, tfScore * 0.1))
+
+    const jpScore = scoreAxis(approvedTexts, JP_KEYWORDS)
+    jpMod += Math.max(-0.15, Math.min(0.15, jpScore * 0.08))
+  }
+
+  return {
+    ei: clamp(eiMod),
+    sn: clamp(snMod),
+    tf: clamp(tfMod),
+    jp: clamp(jpMod),
+  }
+}
+
+/** 合成基础类型 + 行为修正 → 表达类型 */
+export function computeExpressedMBTI(
+  baseResult: MBTIResult,
+  modifiers: MBTIAxisScores,
+): { result: MBTIResult; axes: MBTIAxisScores } {
+  // 基础轴分: 从 base 的 4 字母推导
+  const baseType = baseResult.type
+  const baseEI = baseType[0] === 'e' ? 0.5 : -0.5
+  const baseSN = baseType[1] === 's' ? 0.5 : -0.5
+  const baseTF = baseType[2] === 't' ? 0.5 : -0.5
+  const baseJP = baseType[3] === 'j' ? 0.5 : -0.5
+
+  // 叠加修正, clamp 到 [-1, +1]
+  const clamp1 = (v: number) => Math.max(-1, Math.min(1, v))
+  const axes: MBTIAxisScores = {
+    ei: clamp1(baseEI + modifiers.ei),
+    sn: clamp1(baseSN + modifiers.sn),
+    tf: clamp1(baseTF + modifiers.tf),
+    jp: clamp1(baseJP + modifiers.jp),
+  }
+
+  // 由最终轴分正负决定 4 字母
+  const letter1 = axes.ei >= 0 ? 'e' : 'i'
+  const letter2 = axes.sn >= 0 ? 's' : 'n'
+  const letter3 = axes.tf >= 0 ? 't' : 'f'
+  const letter4 = axes.jp >= 0 ? 'j' : 'p'
+  const expressedType = `${letter1}${letter2}${letter3}${letter4}` as MBTIType
+
+  const profile = MBTI_PROFILES[expressedType]
+  const result: MBTIResult = {
+    ...profile,
+    confidence: baseResult.confidence * 0.9,
+    source: 'rule',
+  }
+
+  // 持久化轴分数
+  try { localStorage.setItem(CACHE_KEY_AXES, JSON.stringify(axes)) } catch {}
+
+  return { result, axes }
+}
+
+/** 从缓存恢复轴分数 */
+export function getCachedAxes(): MBTIAxisScores | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY_AXES)
+    if (!raw) return null
+    return JSON.parse(raw) as MBTIAxisScores
+  } catch {
+    return null
+  }
 }

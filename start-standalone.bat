@@ -1,19 +1,19 @@
 @echo off
 chcp 65001 >nul
-title DD-OS Standalone
+title DunCrew Standalone
 
 :: 设置数据目录
-set DDOS_DATA_PATH=%USERPROFILE%\.ddos
+set DUNCREW_DATA_PATH=%USERPROFILE%\.duncrew
 
 echo.
-echo  DD-OS Standalone Server
+echo  DunCrew Standalone Server
 echo  ========================
 echo.
-echo  Data: %DDOS_DATA_PATH%
+echo  Data: %DUNCREW_DATA_PATH%
 echo  URL:  http://localhost:3001
 echo.
 
 :: 启动服务器
-ddos-server\ddos-server.exe --path "%DDOS_DATA_PATH%"
+duncrew-server\duncrew-server.exe --path "%DUNCREW_DATA_PATH%"
 
 pause

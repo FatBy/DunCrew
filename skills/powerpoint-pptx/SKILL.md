@@ -2,7 +2,7 @@
 name: PowerPoint PPTX
 description: "Create, edit, and automate PowerPoint presentations with python-pptx for slides, layouts, charts, and batch processing."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://clawic.com/skills/powerpoint-pptx
 metadata:
   openclaw:

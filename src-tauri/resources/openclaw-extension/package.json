@@ -1,14 +1,14 @@
 {
   "name": "@ddos/openclaw-extension",
   "version": "1.0.0",
-  "description": "DD-OS Nexus integration plugin for OpenClaw — SOP-driven task execution, experience tracking, Gene Pool self-healing, and adaptive context injection.",
+  "description": "DunCrew Nexus integration plugin for OpenClaw — SOP-driven task execution, experience tracking, Gene Pool self-healing, and adaptive context injection.",
   "main": "index.ts",
   "type": "module",
   "license": "MIT",
   "keywords": [
     "openclaw",
     "openclaw-plugin",
-    "ddos",
+    "duncrew",
     "nexus",
     "sop",
     "agent"

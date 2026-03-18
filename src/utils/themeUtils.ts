@@ -1,5 +1,5 @@
 // ============================================
-// DD-OS 主题工具函数
+// DunCrew 主题工具函数
 // ============================================
 
 import type { Theme, ThemeColors, CanvasPalette } from '@/types/theme'

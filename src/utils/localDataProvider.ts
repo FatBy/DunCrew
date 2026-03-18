@@ -8,11 +8,11 @@ import { parseSoulMd } from './soulParser'
 
 // localStorage keys
 const STORAGE_KEYS = {
-  SOUL_MD: 'ddos_soul_md',
-  IDENTITY_MD: 'ddos_identity_md',
-  SKILLS_JSON: 'ddos_skills_json',
-  MEMORIES_JSON: 'ddos_memories_json',
-  DATA_MODE: 'ddos_data_mode', // 'local' | 'network'
+  SOUL_MD: 'duncrew_soul_md',
+  IDENTITY_MD: 'duncrew_identity_md',
+  SKILLS_JSON: 'duncrew_skills_json',
+  MEMORIES_JSON: 'duncrew_memories_json',
+  DATA_MODE: 'duncrew_data_mode', // 'local' | 'network'
 }
 
 export type DataMode = 'local' | 'network'
@@ -66,7 +66,7 @@ export function getLocalSoulData(): LocalSoulData | null {
   const identityMd = getIdentityMd()
   
   // 从 IDENTITY.md 提取名字和 emoji（如果有）
-  let name = 'DD-OS Agent'
+  let name = 'DunCrew Agent'
   let symbol = '🤖'
   
   if (identityMd) {

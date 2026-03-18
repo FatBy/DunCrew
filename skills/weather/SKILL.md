@@ -2,7 +2,7 @@
 name: weather
 description: "Query weather information for any location."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 executable: execute.py
 runtime: python
 dangerLevel: safe

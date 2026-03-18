@@ -3,7 +3,7 @@
  *
  * 流程:
  * 1. 打开浏览器到 ClawHub GitHub OAuth 页面
- * 2. 用户授权后，ClawHub 回调到 ddos-local-server.py 的临时端点
+ * 2. 用户授权后，ClawHub 回调到 duncrew-server.py 的临时端点
  * 3. Token 通过 polling 获取并存储到 localStorage
  */
 
@@ -14,7 +14,7 @@ const CLAWHUB_AUTH_URL = 'https://clawhub.ai/auth/github'
 const TOKEN_KEY = 'clawhub_auth_token'
 
 function getServerUrl(): string {
-  return localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+  return localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
 }
 
 class ClawHubAuthService {

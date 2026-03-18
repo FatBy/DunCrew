@@ -2,7 +2,7 @@
 name: oracle
 description: "Best practices for using the oracle CLI (prompt + file bundling, engines, sessions, and file attachment patterns)."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://askoracle.dev
 metadata:
   openclaw:

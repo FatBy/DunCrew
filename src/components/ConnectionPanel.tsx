@@ -15,7 +15,7 @@ import type { TranslationKey } from '@/i18n/locales/zh'
 // 存储 keys
 const TOKEN_STORAGE_KEY = 'openclaw_auth_token'
 const GATEWAY_STORAGE_KEY = 'openclaw_gateway_url'
-const MODE_STORAGE_KEY = 'ddos_connection_mode'
+const MODE_STORAGE_KEY = 'duncrew_connection_mode'
 
 type ConnectionMode = 'native' | 'openclaw'
 

@@ -1,8 +1,8 @@
 [package]
-name = "ddos"
+name = "duncrew"
 version = "1.0.0"
-description = "DD-OS - AI Operating System"
-authors = ["DD-OS Team"]
+description = "DunCrew - AI Operating System"
+authors = ["DunCrew Team"]
 edition = "2021"
 
 [build-dependencies]

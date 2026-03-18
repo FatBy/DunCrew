@@ -1,7 +1,7 @@
 ---
 name: architecture-decision-records
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "📐"

@@ -2,7 +2,7 @@
 name: file-operations
 description: "Read, write, and manage files on the local system."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 metadata:
   openclaw:
     emoji: "🔧"

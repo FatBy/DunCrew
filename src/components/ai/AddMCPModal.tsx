@@ -56,7 +56,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
     setInstallStatus(null)
     setShowEnvInput(null)
     setLoading(true)
-    const serverUrl = localStorage.getItem('ddos_server_url') || 'http://localhost:3001'
+    const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
     fetch(`${serverUrl}/mcp/servers`)
       .then(res => res.ok ? res.json() : null)
       .then(data => {

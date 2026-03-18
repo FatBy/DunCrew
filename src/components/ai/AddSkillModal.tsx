@@ -195,7 +195,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
             {/* 概念说明 */}
             <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/10">
               <p className="text-xs text-stone-500 leading-relaxed">
-                <span className="text-amber-400 font-semibold">SKILL</span> 是 DD-OS 
+                <span className="text-amber-400 font-semibold">SKILL</span> 是 DunCrew 
                 的能力模块，每个 SKILL 定义了一套专业工作流程。
                 {activeTab === 'online' && ' 在线搜索无需 AI 调用，响应速度极快。'}
               </p>

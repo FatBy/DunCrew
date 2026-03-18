@@ -2,7 +2,7 @@
 name: sag
 description: "ElevenLabs text-to-speech with mac-style say UX."
 version: "1.0.0"
-author: "DD-OS"
+author: "DunCrew"
 homepage: https://sag.sh
 metadata:
   openclaw:

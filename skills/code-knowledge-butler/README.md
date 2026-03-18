@@ -1,6 +1,6 @@
 # Code Knowledge Butler 🔮
 
-深度代码理解与检索专家 - DD-OS 核心技能
+深度代码理解与检索专家 - DunCrew 核心技能
 
 ## ✨ 功能特性
 
@@ -15,7 +15,7 @@
 ### 方式一：本地安装（开发中）
 
 ```powershell
-# 在 DD-OS 项目根目录
+# 在 DunCrew 项目根目录
 clawhub install ./skills/code-knowledge-butler
 ```
 
@@ -116,4 +116,4 @@ npm install -g @steipete/oracle
 
 ## 📄 License
 
-MIT © DD-OS Team
+MIT © DunCrew Team
