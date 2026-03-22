@@ -8,10 +8,11 @@
  * - 本地记忆持久化
  */
 
-import { chat, streamChat, isLLMConfigured, embed, cosineSimilarity, convertToolInfoToFunctions } from './llmService'
+import { chat, streamChat, isLLMConfigured, embed, cosineSimilarity, convertToolInfoToFunctions, getLLMConfig, saveLLMConfig, clearEmbedUnsupportedCache } from './llmService'
 import type { SimpleChatMessage, LLMStreamResult } from './llmService'
-import type { ExecutionStatus, OpenClawSkill, MemoryEntry, ToolInfo, ExecTrace, ExecTraceToolCall, ApprovalRequest, ExecutionStep, NexusEntity, TaskCheckpoint } from '@/types'
+import type { ExecutionStatus, OpenClawSkill, MemoryEntry, ToolInfo, ExecTrace, ExecTraceToolCall, ApprovalRequest, ExecutionStep, NexusEntity, TaskCheckpoint, GeneMatch } from '@/types'
 import { parseSoulMd, type ParsedSoul } from '@/utils/soulParser'
+import { classifyBaseType, updateBaseClassifierCtx, createBaseClassifierCtx, buildBaseSequence, buildBaseDistribution } from '@/utils/baseClassifier'
 import { skillStatsService } from './skillStatsService'
 import { immuneService } from './capsuleService'
 import { nexusRuleEngine } from './nexusRuleEngine'
@@ -124,12 +125,11 @@ interface StoreActions {
 // ============================================
 
 // 检测运行环境
-const isDevMode = import.meta.env?.DEV ?? false
-const isTauriMode = typeof window !== 'undefined' && '__TAURI__' in window
+import { getServerUrl } from '@/utils/env'
 
 const CONFIG = {
   // 开发模式使用 localhost:3001，生产模式使用相对路径（Python 托管）
-  LOCAL_SERVER_URL: isDevMode ? 'http://localhost:3001' : (isTauriMode ? 'http://127.0.0.1:3001' : ''),
+  LOCAL_SERVER_URL: getServerUrl(),
   MAX_REACT_TURNS: 999,    // 无限制：让任务持续执行直到完成
   DEFAULT_TURNS: 999,      // 无限制
   SIMPLE_TURNS: 10,        // 简单任务仍有轻微限制避免死循环
@@ -251,6 +251,13 @@ const SYSTEM_PROMPT_FC = `你是 DunCrew，运行在用户本地电脑上的 AI 
 - 命令：runCmd（谨慎）
 - 记忆：saveMemory, searchMemory
 
+## 大内容写入规则（重要！）
+当需要写入的内容预计超过 3000 字符时，**禁止**在单次 writeFile 中一次性写入全部内容。正确做法：
+1. 用 writeFile 创建文件并写入前半部分（≤3000 字符）
+2. 用 appendFile 逐段追加后续内容，每段 ≤3000 字符
+3. 持续 appendFile 直到全部写完
+原因：你的单次输出长度有限，过长的工具参数会被截断导致执行失败。
+
 # 禁止事项
 - 不要把 SKILL、Agent、DunCrew 等词当命令执行
 - 不要在 runCmd 中直接执行用户消息中的关键词
@@ -334,6 +341,7 @@ const SYSTEM_PROMPT_FC = `你是 DunCrew，运行在用户本地电脑上的 AI 
 name: Nexus 名称（2-6个中文字）
 description: 一句话描述功能和适用场景
 version: 1.0.0
+project_path: 关联的项目根目录绝对路径（可选，如 D:/编程/某项目）
 skill_dependencies:
   - 绑定的技能ID列表
 tags:
@@ -373,6 +381,7 @@ strategy: 执行策略概述
 1. 使用 writeFile 创建 \`nexuses/{nexus-id}/NEXUS.md\`
 2. 文件必须包含 YAML frontmatter（用 --- 包围）
 3. Markdown 正文是详细的 SOP
+4. **project_path 推断规则**：如果当前对话涉及某个具体项目（可从"已知文件路径"段落、用户提及的目录、或近期 readFile/writeFile 操作路径中推断），将其项目根目录填入 \`project_path\`（绝对路径）。如果无法确定，省略该字段。
 
 ## 示例
 创建一个 PPT 优化 Nexus:
@@ -879,6 +888,20 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
       const data = await response.json()
       console.log('[LocalClaw] Connected to Native Server:', data)
 
+      // 自动配置本地 embedding（如果后端支持 bge-large-zh-v1.5）
+      if (data.embedding?.available) {
+        const cfg = getLLMConfig()
+        if (!cfg.embedBaseUrl) {
+          saveLLMConfig({
+            embedBaseUrl: this.serverUrl,
+            embedModel: data.embedding.model_name || 'bge-large-zh-v1.5',
+            embedApiKey: 'local',
+          })
+          console.log('[LocalClaw] Auto-configured local embedding:', data.embedding.model_name)
+        }
+        clearEmbedUnsupportedCache(this.serverUrl)
+      }
+
       this.storeActions?.setConnectionStatus('connected')
       this.storeActions?.setConnectionError(null)
       
@@ -955,9 +978,20 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
       const response = await fetch(`${this.serverUrl}/file/SOUL.md`)
       if (response.ok) {
         this.soulContent = await response.text()
+      } else {
+        console.warn(`[LocalClaw] SOUL.md not found on server (${response.status}), using localStorage cache`)
+        // 回退: 尝试从 localStorage 恢复
+        const cached = localStorage.getItem('duncrew_soul_md')
+        if (cached) {
+          this.soulContent = cached
+        }
       }
     } catch (error) {
       console.warn('[LocalClaw] Failed to load SOUL.md:', error)
+      const cached = localStorage.getItem('duncrew_soul_md')
+      if (cached) {
+        this.soulContent = cached
+      }
     }
   }
 
@@ -1163,42 +1197,53 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
       contextParts.push(`## 🤖 自适应约束\n${ruleTexts}`)
     }
 
-    // 2. V3: 记忆检索 - 双路搜索 (FTS 语义 + 按 Nexus 最近)，支持续联关键词扩展
+    // 2. V4: 记忆检索 - 分层注入 (L0 核心记忆优先 + exec_trace 补充)
     try {
       const isContinuation = /^(继续|接着|上次|还有|然后|go on|continue|last time|resume)/i.test(userQuery.trim())
       const effectiveNexusId = activeNexusId || undefined
-      const seen = new Set<string>()
-      let allMemoryResults: import('@/types').MemorySearchResult[] = []
-
-      // 路径 A: FTS 语义搜索 (非续联场景 或 扩展后的查询)
       const searchQuery = isContinuation && effectiveNexusId
-        ? effectiveNexusId  // 续联时用 nexusId 作为关键词，比 "继续" 更有搜索意义
+        ? effectiveNexusId
         : userQuery
-      const ftsResults = await memoryStore.search({
+
+      // 层 1: L0 核心记忆 (高质量、已提炼)
+      const l0Results = await memoryStore.search({
         query: searchQuery,
-        maxResults: 5,
+        sources: ['memory'],
+        maxResults: 3,
         nexusId: effectiveNexusId,
         useMmr: true,
       })
-      for (const r of ftsResults) {
-        if (!seen.has(r.id)) { seen.add(r.id); allMemoryResults.push(r) }
+
+      if (l0Results.length > 0) {
+        const l0Hints = l0Results.map(r => `- ${(r.snippet || r.content || '').slice(0, 200)}`).join('\n')
+        contextParts.push(`## 核心记忆\n${l0Hints}`)
       }
 
-      // 路径 B: 按 Nexus 最近记忆 (保底 - 确保续联时有内容)
+      // 层 2: exec_trace 执行轨迹 (工具序列参考)
+      const seen = new Set<string>(l0Results.map(r => r.id))
+      const traceResults = await memoryStore.search({
+        query: searchQuery,
+        sources: ['exec_trace'],
+        maxResults: 4,
+        nexusId: effectiveNexusId,
+        useMmr: true,
+      })
+
+      // 层 3: 按 Nexus 最近记忆 (保底 - 确保续联时有内容)
+      let recentResults: import('@/types').MemorySearchResult[] = []
       if (effectiveNexusId) {
         const recentByNexus = await memoryStore.getByNexus(effectiveNexusId, 5)
-        for (const r of recentByNexus) {
-          if (!seen.has(r.id)) { seen.add(r.id); allMemoryResults.push(r) }
-        }
+        recentResults = recentByNexus.filter(r => !seen.has(r.id))
       }
 
-      // 按时间降序排列 (最近优先)，截断到 8 条
-      allMemoryResults.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-      allMemoryResults = allMemoryResults.slice(0, 8)
+      // 合并 trace + recent，去重，截断
+      const supplementary = [...traceResults, ...recentResults]
+        .filter(r => !seen.has(r.id))
+        .slice(0, 5)
 
-      if (allMemoryResults.length > 0) {
-        const memoryHints = allMemoryResults.map(r => `- ${(r.snippet || r.content || '').slice(0, 200)}`).join('\n')
-        contextParts.push(`## 相关记忆\n${memoryHints}`)
+      if (supplementary.length > 0) {
+        const traceHints = supplementary.map(r => `- ${(r.snippet || r.content || '').slice(0, 150)}`).join('\n')
+        contextParts.push(`## 历史操作参考\n${traceHints}`)
       }
     } catch {
       // memoryStore 不可用时降级到文件读取
@@ -1250,7 +1295,7 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
     }
 
     // 🧬 Phase 4: Nexus 通讯提示 (让 AI 知道可以协作的其他 Nexus)
-    const nexusCommunicationHint = genePoolService.buildNexusCommunicationHint(userQuery, activeNexusId || undefined)
+    const nexusCommunicationHint = nexusManager.buildNexusCommunicationHint(userQuery, activeNexusId || undefined)
     if (nexusCommunicationHint) {
       contextParts.push(nexusCommunicationHint)
     }
@@ -1863,6 +1908,8 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
     let consecutiveFailures = 0  // 连续失败计数 (用于触发重规划)
     const MAX_CONSECUTIVE_FAILURES = 2  // 连续失败阈值
     const errorSignatureHistory: string[] = []  // 错误签名追踪 (防 Reflexion 死循环)
+    let pendingGeneMatches: GeneMatch[] = []  // 🧬 Gene Pool: 待反馈的基因匹配（Reflexion 注入后等待下一轮结果）
+    let truncationRetries = 0  // 输出截断重试计数器
     
     // 🔄 升级机制状态
     let currentMaxTurns = maxTurns
@@ -1873,6 +1920,7 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
     const traceTools: ExecTraceToolCall[] = []
     const traceStartTime = Date.now()
     const TOKEN_BUDGET = 128000
+    const baseCtx = createBaseClassifierCtx()  // V2: 碱基分类器上下文
 
     // 🧬 Gene Pool: 懒加载基因库
     await genePoolService.ensureLoaded()
@@ -1963,6 +2011,57 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
         let { content, toolCalls, finishReason, reasoningContent } = result
         agentEventBus.messageEnd(content || '')
         console.log(`[LocalClaw/FC] finish_reason: ${finishReason}, toolCalls: ${toolCalls.length}`)
+
+        // 🛡️ 输出截断检测: finish_reason 非正常完成 + tool_call 参数 JSON 不完整
+        if (finishReason !== 'stop' && finishReason !== 'tool_calls' && toolCalls.length > 0) {
+          const hasCorruptedArgs = toolCalls.some(tc => {
+            try {
+              JSON.parse(tc.function.arguments || '{}')
+              return false
+            } catch {
+              return true
+            }
+          })
+
+          if (hasCorruptedArgs) {
+            truncationRetries++
+            console.warn(`[LocalClaw/FC] OUTPUT TRUNCATION detected at turn ${turnCount}, finishReason=${finishReason}, truncationRetries=${truncationRetries}`)
+
+            onStep?.({
+              id: `truncation-${Date.now()}`,
+              type: 'error',
+              content: `检测到输出截断（第 ${truncationRetries} 次），正在指导模型分段重试...`,
+              timestamp: Date.now(),
+            })
+
+            if (truncationRetries >= 3) {
+              finalResponse = '输出多次截断，无法完成当前操作。请尝试将任务拆分为更小的步骤，或减少单次写入的内容量。'
+              break
+            }
+
+            // 不推 assistant 消息（损坏的 tool_calls 会导致 API 400）
+            // 推入 user 恢复指令，要求模型分段重试
+            const recoveryMessage = truncationRetries >= 2
+              ? `[系统提示 - 输出截断恢复（第${truncationRetries}次）]
+你的回复再次因为过长被截断，工具调用参数不完整无法执行。
+你必须极大地缩减每次写入的内容量：
+1. 每次 writeFile/appendFile 的 content 不超过 1500 字符
+2. 将内容分成 5 段以上分别写入
+3. 第一段用 writeFile 创建文件，后续全部用 appendFile 追加
+请立即用这种方式重试你上一步的操作。`
+              : `[系统提示 - 输出截断恢复]
+你上一次的回复因为过长被截断，工具调用参数不完整无法执行。
+请使用以下策略重试：
+1. 将要写入的内容分成多段（每段不超过 3000 字符）
+2. 第一段用 writeFile 创建文件
+3. 后续段用 appendFile 逐段追加
+4. 如果不是文件写入操作，请缩减参数长度后重试
+请立即重试你上一步的操作。`
+
+            messages.push({ role: 'user', content: recoveryMessage })
+            continue // 回到 while 循环顶部，让模型重新生成
+          }
+        }
 
         // 🔄 文本工具调用回退解析
         // 部分模型 (如 step-3.5-flash) 不支持 OpenAI tools API，
@@ -2072,18 +2171,20 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
                   })
 
                   // V3: 审批拒绝 → 人类负面反馈信号
-                  const recentL1Ids = confidenceTracker.getEntriesByNexus(this.getActiveNexusId() || '').slice(-3).map(e => e.id)
-                  for (const id of recentL1Ids) {
-                    confidenceTracker.addHumanFeedback(id, false)
+                  const rejectNexusId = this.getActiveNexusId() || ''
+                  const rejectMemoryId = `l1-${rejectNexusId}-${toolName}`
+                  if (confidenceTracker.getEntry(rejectMemoryId)) {
+                    confidenceTracker.addHumanFeedback(rejectMemoryId, false)
                   }
 
                   continue
                 }
 
                 // V3: 审批通过 → 人类正面反馈信号
-                const approvedL1Ids = confidenceTracker.getEntriesByNexus(this.getActiveNexusId() || '').slice(-3).map(e => e.id)
-                for (const id of approvedL1Ids) {
-                  confidenceTracker.addHumanFeedback(id, true)
+                const approveNexusId = this.getActiveNexusId() || ''
+                const approveMemoryId = `l1-${approveNexusId}-${toolName}`
+                if (confidenceTracker.getEntry(approveMemoryId)) {
+                  confidenceTracker.addHumanFeedback(approveMemoryId, true)
                 }
               }
             }
@@ -2133,14 +2234,19 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
             })
 
             // P2: 记录到执行追踪
+            const toolStatus: 'success' | 'error' = toolResult.status === 'error' ? 'error' : 'success'
+            const toolOrder = traceTools.length + 1
+            const baseType = classifyBaseType(toolName, toolArgs, toolStatus, baseCtx)
             traceTools.push({
               name: toolName,
               args: toolArgs,
-              status: toolResult.status === 'error' ? 'error' : 'success',
+              status: toolStatus,
               result: toolResult.result,
               latency: toolLatency,
-              order: traceTools.length + 1,
+              order: toolOrder,
+              baseType,
             })
+            updateBaseClassifierCtx(baseCtx, toolName, toolArgs, toolStatus, toolOrder)
 
             // Layer 4: 缓存验证结果
             if (toolResult.verification) {
@@ -2209,6 +2315,20 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
             if (toolResult.status === 'error') {
               consecutiveFailures++
               
+              // 🧬 Gene Pool 闭环: 上一轮 Reflexion 注入了基因但本轮仍失败 → 记录失败反馈
+              if (pendingGeneMatches.length > 0) {
+                for (const match of pendingGeneMatches) {
+                  genePoolService.recordCapsule(
+                    match.gene.id,
+                    match.matchedSignals,
+                    'failure',
+                    this.getActiveNexusId() || undefined
+                  )
+                }
+                console.log(`[GenePool/Diag] Capsule failure: ${pendingGeneMatches.length} genes did not help recover ${toolName}`)
+                pendingGeneMatches = []
+              }
+              
               // 🧬 能力缺失检测
               this.detectAndRecordCapabilityGap(toolName, toolResult.result, userPrompt)
 
@@ -2242,6 +2362,10 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
                 const crisisGeneMatches = genePoolService.findCrossNexusGenes(toolName, toolResult.result, this.getActiveNexusId() || undefined)
                 const crisisGeneHint = genePoolService.buildGeneHint(crisisGeneMatches)
                 console.log(`[GenePool/Diag] Crisis path triggered: tool=${toolName}, geneMatches=${crisisGeneMatches.length}, poolSize=${genePoolService.geneCount}`)
+                // 🧬 记录待反馈基因，等下一轮工具成功后闭环
+                if (crisisGeneMatches.length > 0) {
+                  pendingGeneMatches = crisisGeneMatches
+                }
 
                 messages.push({
                   role: 'tool',
@@ -2271,6 +2395,10 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
                 const reflexionGeneMatches = genePoolService.findCrossNexusGenes(toolName, toolResult.result, this.getActiveNexusId() || undefined)
                 const reflexionGeneHint = genePoolService.buildGeneHint(reflexionGeneMatches)
                 console.log(`[GenePool/Diag] Reflexion path triggered: tool=${toolName}, geneMatches=${reflexionGeneMatches.length}, poolSize=${genePoolService.geneCount}`)
+                // 🧬 记录待反馈基因，等下一轮工具成功后闭环
+                if (reflexionGeneMatches.length > 0) {
+                  pendingGeneMatches = reflexionGeneMatches
+                }
 
                 const reflexionHint = `
 
@@ -2308,9 +2436,9 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
               // V3: 工具失败 → 系统失败信号
               const failNexusId = nexusId || this.getActiveNexusId()
               if (failNexusId) {
-                const recentL1 = confidenceTracker.getEntriesByNexus(failNexusId).slice(-1)
-                for (const entry of recentL1) {
-                  confidenceTracker.addFailureSignal(entry.id)
+                const targetMemoryId = `l1-${failNexusId}-${toolName}`
+                if (confidenceTracker.getEntry(targetMemoryId)) {
+                  confidenceTracker.addFailureSignal(targetMemoryId)
                 }
               }
 
@@ -2322,6 +2450,21 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
             } else {
               // 成功时重置连续失败计数
               consecutiveFailures = 0
+              truncationRetries = 0
+              
+              // 🧬 Gene Pool 闭环: Reflexion 注入了基因提示后，下一轮工具成功 → 记录 Capsule
+              if (pendingGeneMatches.length > 0) {
+                for (const match of pendingGeneMatches) {
+                  genePoolService.recordCapsule(
+                    match.gene.id,
+                    match.matchedSignals,
+                    'success',
+                    this.getActiveNexusId() || undefined
+                  )
+                }
+                console.log(`[GenePool/Diag] Capsule recorded: ${pendingGeneMatches.length} genes contributed to recovery of ${toolName}`)
+                pendingGeneMatches = []
+              }
               
               // 🔍 Critic 自检: 修改类工具成功后触发验证
               const needsCritic = CONFIG.CRITIC_TOOLS.includes(toolName)
@@ -2373,9 +2516,9 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
                 // V3: Critic 验证通过 → 环境正面信号 (修改类工具执行成功)
                 const criticNexusId = nexusId || this.getActiveNexusId()
                 if (criticNexusId) {
-                  const recentL1 = confidenceTracker.getEntriesByNexus(criticNexusId).slice(-1)
-                  for (const entry of recentL1) {
-                    confidenceTracker.addEnvironmentSignal(entry.id, true)
+                  const targetMemoryId = `l1-${criticNexusId}-${toolName}`
+                  if (confidenceTracker.getEntry(targetMemoryId)) {
+                    confidenceTracker.addEnvironmentSignal(targetMemoryId, true)
                   }
                 }
               } else {
@@ -2406,7 +2549,7 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
                     })
                     
                     // 🧬 Phase 4: 注册产出物基因 (让其他 Nexus 能发现)
-                    const currentNexusId = this.getActiveNexusId()
+                    const currentNexusId = nexusId || this.getActiveNexusId()
                     if (currentNexusId) {
                       const pathStr = String(toolArgs.path || '')
                       const ext = pathStr.split('.').pop()?.toLowerCase() || ''
@@ -2416,7 +2559,7 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
                         pptx: 'presentation', docx: 'document', pdf: 'document',
                         png: 'image', jpg: 'image', svg: 'image',
                       }
-                      genePoolService.registerArtifact({
+                      nexusManager.registerArtifact({
                         nexusId: currentNexusId,
                         path: parsed.filePath,
                         name: parsed.fileName || pathStr.split('/').pop() || 'unnamed',
@@ -2448,12 +2591,33 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
               }
             }
 
+            // 🌌 Nexus 目录写入检测 — Agent 通过 writeFile 创建 Nexus 时刷新前端列表
+            if (toolName === 'writeFile' && toolResult.status !== 'error' &&
+                String(toolArgs.path || '').replace(/\\/g, '/').includes('nexuses/')) {
+              try {
+                await this.loadAllDataToStore()
+                console.log('[LocalClaw/FC] Nexuses refreshed after writeFile to nexuses/')
+              } catch {
+                console.warn('[LocalClaw/FC] Failed to refresh nexuses after writeFile')
+              }
+            }
+
             // 🌌 Nexus 技能绑定变更检测 (FC 模式)
             if ((toolName === 'nexusBindSkill' || toolName === 'nexusUnbindSkill') &&
                 toolResult.status === 'success') {
               try {
                 await this.loadAllDataToStore()
                 console.log('[LocalClaw/FC] Nexus skills refreshed after self-adaptation')
+
+                // 标记 skillsConfirmed（用户已通过 Agent 对话确认了技能）
+                const activeNexusId = this.getActiveNexusId()
+                if (activeNexusId) {
+                  fetch(`${this.serverUrl}/nexuses/${encodeURIComponent(activeNexusId)}/meta`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ skills_confirmed: true }),
+                  }).catch(() => {})
+                }
               } catch {
                 console.warn('[LocalClaw/FC] Failed to refresh nexuses after skill adaptation')
               }
@@ -2626,6 +2790,9 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
         errorCount,
         skillIds: [],
         activeNexusId: activeNexusId || undefined,
+        // V2: 碱基序列与分布
+        baseSequence: buildBaseSequence(traceTools),
+        baseDistribution: buildBaseDistribution(traceTools),
       }
 
       // 先保存 trace，成功后再更新 stats，保证两者一致
@@ -2660,21 +2827,6 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
           console.warn('[LocalClaw/FC] Failed to record Nexus experience:', err)
         })
 
-        // 🧬 Phase 4: 记录活动基因 (让其他 Nexus 能发现这个 Nexus 做了什么)
-        const nexuses = (this.storeActions as any)?.nexuses as Map<string, NexusEntity> | undefined
-        const nexusName = nexuses?.get(activeNexusId)?.label || activeNexusId
-        const successCount = traceTools.filter(t => t.status === 'success').length
-        const artifactsCreated = this._lastCreatedFiles.map(f => f.fileName).filter(Boolean)
-        genePoolService.recordActivity({
-          nexusId: activeNexusId,
-          nexusName,
-          summary: userPrompt.slice(0, 100) + (userPrompt.length > 100 ? '...' : ''),
-          toolsUsed: [...new Set(traceTools.map(t => t.name))],
-          artifactsCreated,
-          duration: traceTools.reduce((sum, t) => sum + t.latency, 0),
-          status: successCount > 0 ? 'success' : 'failed',
-        })
-
         // Phase 3: NexusScoring - 使用 ExecTrace 驱动评分更新
         try {
           const { scoring, scoreChange } = nexusScoringService.updateFromTrace(activeNexusId, trace, finalResponse)
@@ -2697,7 +2849,7 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
           source: 'exec_trace',
           content: `Task: ${userPrompt.slice(0, 200)}\nTools: ${traceTools.map(t => `${t.name}(${t.status})`).join(', ')}\nDuration: ${trace.duration}ms\nSuccess: ${trace.success}`,
           nexusId: activeNexusId,
-          tags: trace.tags,
+          tags: Array.isArray(trace.tags) ? trace.tags : [],
           metadata: { traceId: trace.id, turnCount, toolCount: traceTools.length, success: trace.success },
         }).catch(err => console.warn('[LocalClaw/FC] memoryStore.write trace failed:', err))
 

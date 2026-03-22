@@ -1,3 +1,4 @@
+import { getServerUrl as _getServerUrl } from '@/utils/env'
 /**
  * 在线搜索服务 - 从 Registry 搜索可安装的 SKILL 和 MCP 服务器
  * 
@@ -34,7 +35,7 @@ export interface RegistryMCPResult {
 
 // 获取服务器 URL
 function getServerUrl(): string {
-  return localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+  return localStorage.getItem('duncrew_server_url') || _getServerUrl()
 }
 
 /**

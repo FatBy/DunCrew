@@ -215,9 +215,34 @@ export class GameCanvas {
 
   // ---- Main Render Loop ----
 
+  // ---- Pause / Resume ----
+
+  private _paused = false
+
+  /** 暂停渲染循环（House 打开时调用，零 GPU 开销） */
+  pause(): void {
+    if (this._paused) return
+    this._paused = true
+    cancelAnimationFrame(this.animFrameId)
+  }
+
+  /** 恢复渲染循环（回到世界视图时调用） */
+  resume(): void {
+    if (!this._paused) return
+    this._paused = false
+    this.animFrameId = requestAnimationFrame(this.render)
+  }
+
+  get paused(): boolean {
+    return this._paused
+  }
+
+  // ---- Main Render Loop ----
+
   private _lastLogTime = 0
 
   private render(timestamp: number): void {
+    if (this._paused) return
     this.animFrameId = requestAnimationFrame(this.render)
     
     const w = this.canvas.clientWidth

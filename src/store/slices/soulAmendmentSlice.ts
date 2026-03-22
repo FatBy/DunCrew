@@ -1,9 +1,10 @@
 import type { StateCreator } from 'zustand'
 import type { SoulAmendment } from '@/types'
 import { SOUL_EVOLUTION_CONFIG } from '@/types'
+import { getServerUrl } from '@/utils/env'
 
 const STORAGE_KEY = 'duncrew_soul_amendments'
-const SERVER_URL = 'http://localhost:3001'
+const SERVER_URL = getServerUrl()
 const SAVE_DEBOUNCE_MS = 5000
 
 export interface SoulAmendmentSlice {

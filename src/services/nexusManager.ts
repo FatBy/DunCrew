@@ -3,7 +3,7 @@
 // 职责: Nexus 路由匹配、工具装配、性能统计、上下文构建、经验系统、SOP 执行追踪
 // ============================================
 
-import type { NexusEntity, ToolInfo, ExecTrace } from '@/types'
+import type { NexusEntity, ToolInfo, ExecTrace, NexusCapabilityInfo, NexusArtifactInfo } from '@/types'
 import { nexusRuleEngine, type NexusStats } from './nexusRuleEngine'
 import { genePoolService } from './genePoolService'
 
@@ -51,6 +51,11 @@ export class NexusManagerService {
   private statsSaveTimer: ReturnType<typeof setTimeout> | null = null
   private static readonly STATS_MAX_RETRIES = 3
   private static readonly STATS_RETRY_DELAYS = [2000, 5000, 15000] // 递增重试延迟
+  // Nexus 能力/产出物注册 (从 genePoolService 迁移)
+  private capabilitiesMap: Map<string, NexusCapabilityInfo> = new Map()
+  private artifactsMap: Map<string, NexusArtifactInfo[]> = new Map()
+  private artifactsDirty = false
+  private artifactsSaveTimer: ReturnType<typeof setTimeout> | null = null
 
   setIO(io: NexusManagerIO): void {
     this.io = io
@@ -74,11 +79,13 @@ export class NexusManagerService {
     } catch {
       // 文件不存在，从空开始
     }
+    // 加载产出物索引
+    await this.loadArtifacts()
   }
 
   /**
-   * 🧬 Phase 4: 注册所有 Nexus 的能力基因
-   * 让其他 Nexus 能通过 Gene Pool 发现可协作的节点
+   * 注册所有 Nexus 的能力信息 (纯内存，不持久化)
+   * 每次启动从 Nexus 元数据重建
    */
   async registerAllNexusCapabilities(): Promise<void> {
     if (!this.io) return
@@ -86,6 +93,7 @@ export class NexusManagerService {
     const nexuses = this.io.getNexuses()
     if (!nexuses || nexuses.size === 0) return
 
+    this.capabilitiesMap.clear()
     let registeredCount = 0
     for (const [nexusId, nexus] of nexuses) {
       // 提取能力关键词
@@ -116,21 +124,18 @@ export class NexusManagerService {
 
       if (uniqueCapabilities.length === 0) continue
 
-      // 构建目录路径
-      const dirPath = `nexuses/${nexusId}/`
-
-      genePoolService.registerNexusCapability({
+      this.capabilitiesMap.set(nexusId, {
         nexusId,
         nexusName: nexus.label || nexusId,
         description: nexus.flavorText || nexus.objective || '',
         capabilities: uniqueCapabilities,
-        dirPath,
+        dirPath: `nexuses/${nexusId}/`,
       })
       
       registeredCount++
     }
 
-    console.log(`[NexusManager] Registered ${registeredCount} Nexus capability genes`)
+    console.log(`[NexusManager] Registered ${registeredCount} Nexus capabilities`)
   }
 
   private async saveStats(): Promise<void> {
@@ -306,7 +311,7 @@ export class NexusManagerService {
       if (active) return active
     }
 
-    const nexusList = Array.from(nexuses.values()).filter(n => n.constructionProgress >= 1)
+    const nexusList = Array.from(nexuses.values()).filter(n => n.constructionProgress >= 1 || (Date.now() - n.createdAt >= 3000))
 
     // P1: 触发词命中
     for (const nexus of nexusList) {
@@ -434,6 +439,12 @@ export class NexusManagerService {
       if (!this.nexusVectorCache.has(queryKey)) {
         const qv = await this.io.embedText(queryLower)
         if (qv.length > 0) {
+          // 维度变更检测 — 清除不兼容的旧缓存 (如从 TF-IDF 2000维切换到 bge 1024维)
+          const firstCached = this.nexusVectorCache.values().next().value
+          if (firstCached && firstCached.length !== qv.length) {
+            console.log(`[NexusRouter] Embedding dimension changed (${firstCached.length} → ${qv.length}), clearing vector cache`)
+            this.nexusVectorCache.clear()
+          }
           this.nexusVectorCache.set(queryKey, qv)
         }
       }
@@ -633,6 +644,9 @@ export class NexusManagerService {
     // Light 模式：仅返回 Nexus 身份 + 目标，不注入 SOP
     if (!needsFullSOP) {
       let ctx = `## 🌌 Active Nexus: ${nexus?.label || nexusId}\n\n`
+      if (nexus?.projectPath) {
+        ctx += `项目路径: ${nexus.projectPath}\n`
+      }
       if (nexus?.objective) {
         ctx += `核心目标: ${nexus.objective}\n`
       }
@@ -646,6 +660,10 @@ export class NexusManagerService {
     if (!sopContent) return null
 
     let ctx = `## 🌌 Active Nexus: ${nexus?.label || nexusId}\n\n`
+
+    if (nexus?.projectPath) {
+      ctx += `项目路径: ${nexus.projectPath}\n\n`
+    }
 
     const objective = nexus?.objective
     const metrics = nexus?.metrics
@@ -694,6 +712,34 @@ export class NexusManagerService {
     const experiences = await this.searchExperiences(nexusId, userQuery)
     if (experiences.length > 0) {
       ctx += `\n\n### 相关历史经验\n${experiences.join('\n---\n')}`
+    }
+
+    // 首次使用时要求 Agent 确认技能配置
+    if (nexus && !nexus.skillsConfirmed) {
+      const boundSkills = nexus.boundSkillIds || []
+      const availableTools = this.io?.getAvailableTools?.() || []
+      const installableSkills = availableTools
+        .filter(t => t.type !== 'builtin')
+        .map(t => `${t.name}: ${t.description || ''}`.slice(0, 80))
+        .slice(0, 15)
+
+      ctx += '\n\n---\n### ⚠️ 首次技能配置确认\n'
+      ctx += '这是此 Nexus 的首次使用，请在执行任何任务之前先确认技能配置。\n\n'
+
+      if (boundSkills.length > 0) {
+        ctx += `当前已绑定技能: ${boundSkills.join(', ')}\n`
+        ctx += '请向用户简要介绍这些技能的用途，询问是否需要调整。\n'
+      } else {
+        ctx += '当前未绑定任何技能。\n'
+        ctx += '可用技能列表（前15个）:\n'
+        for (const s of installableSkills) {
+          ctx += `- ${s}\n`
+        }
+        ctx += `\n请基于此 Nexus 的职能（${nexus.label || nexusId}），向用户推荐合适的技能并询问是否绑定。\n`
+        ctx += '绑定技能使用 nexusBindSkill 工具。\n'
+      }
+
+      ctx += '\n用户确认后，请调用 nexusBindSkill（如需调整）并告知用户技能已配置完成。\n'
     }
 
     return ctx
@@ -1003,6 +1049,217 @@ export class NexusManagerService {
     return [...chineseWords, ...englishWords]
       .filter(w => !stopWords.has(w))
       .slice(0, 8) // 每步最多 8 个关键词
+  }
+
+  // ============================================
+  // Nexus 产出物索引
+  // ============================================
+
+  /**
+   * 注册一个产出物 (writeFile 成功后调用)
+   */
+  registerArtifact(artifact: NexusArtifactInfo, _keywords?: string[]): void {
+    const list = this.artifactsMap.get(artifact.nexusId) || []
+    // 去重: 同路径的 artifact 更新
+    const existingIdx = list.findIndex(a => a.path === artifact.path)
+    if (existingIdx >= 0) {
+      list[existingIdx] = artifact
+    } else {
+      list.push(artifact)
+    }
+    this.artifactsMap.set(artifact.nexusId, list)
+    console.log(`[NexusManager] Registered artifact: ${artifact.name} from ${artifact.nexusId}`)
+    this.scheduleArtifactsSave()
+  }
+
+  /**
+   * 获取指定 Nexus 的所有产出物
+   */
+  getNexusArtifacts(nexusId: string): NexusArtifactInfo[] {
+    return this.artifactsMap.get(nexusId) || []
+  }
+
+  /**
+   * 获取所有已注册的 Nexus 能力列表
+   */
+  getAllNexusCapabilities(): NexusCapabilityInfo[] {
+    return [...this.capabilitiesMap.values()]
+  }
+
+  // ============================================
+  // Nexus 协作路由
+  // ============================================
+
+  /**
+   * 构建 Nexus 通讯提示 (注入到动态上下文)
+   * 根据用户查询找到相关的 Nexus 能力和产出物
+   */
+  buildNexusCommunicationHint(query: string, currentNexusId?: string): string {
+    const signals = query.toLowerCase().split(/[,，、\s]+/).filter(s => s.length > 1)
+    if (signals.length === 0) return ''
+
+    // 匹配 capabilities
+    const capMatches: Array<{ cap: NexusCapabilityInfo; score: number }> = []
+    for (const [nid, cap] of this.capabilitiesMap) {
+      if (nid === currentNexusId) continue // 排除当前 Nexus
+      const allSignals = [
+        cap.nexusName.toLowerCase(),
+        ...cap.capabilities,
+        ...cap.description.toLowerCase().split(/[,，、\s]+/).filter(s => s.length > 1),
+      ]
+      const matched = signals.filter(s => allSignals.some(gs => gs.includes(s) || s.includes(gs)))
+      if (matched.length === 0) continue
+      capMatches.push({ cap, score: matched.length / Math.max(signals.length, 1) })
+    }
+    capMatches.sort((a, b) => b.score - a.score)
+
+    // 匹配 artifacts
+    const artMatches: Array<{ art: NexusArtifactInfo; score: number }> = []
+    for (const arts of this.artifactsMap.values()) {
+      for (const art of arts) {
+        const artSignals = [
+          art.name.toLowerCase(),
+          art.type.toLowerCase(),
+          ...(art.description?.toLowerCase().split(/[,，、\s]+/).filter(s => s.length > 1) || []),
+        ]
+        const matched = signals.filter(s => artSignals.some(as => as.includes(s) || s.includes(as)))
+        if (matched.length === 0) continue
+        let score = matched.length / Math.max(signals.length, 1)
+        if (currentNexusId && art.nexusId !== currentNexusId) score *= 0.9
+        artMatches.push({ art, score })
+      }
+    }
+    artMatches.sort((a, b) => b.score - a.score)
+
+    if (capMatches.length === 0 && artMatches.length === 0) return ''
+
+    const hints: string[] = ['## Nexus 协作资源']
+
+    if (capMatches.length > 0) {
+      hints.push('\n### 可协作的 Nexus 节点')
+      for (const m of capMatches.slice(0, 5)) {
+        hints.push(`- **${m.cap.nexusName}** (${m.cap.nexusId})`)
+        hints.push(`  能力: ${m.cap.capabilities.join(', ')}`)
+        hints.push(`  路径: ${m.cap.dirPath}`)
+      }
+    }
+
+    if (artMatches.length > 0) {
+      hints.push('\n### 相关产出物')
+      for (const m of artMatches.slice(0, 5)) {
+        hints.push(`- **${m.art.name}** (来自 ${m.art.nexusId})`)
+        hints.push(`  路径: ${m.art.path}`)
+        hints.push(`  类型: ${m.art.type}`)
+        if (m.art.description) {
+          hints.push(`  描述: ${m.art.description}`)
+        }
+      }
+    }
+
+    hints.push('\n如需访问其他 Nexus 的产出物，直接使用 readFile(路径) 读取。')
+    return hints.join('\n')
+  }
+
+  // ============================================
+  // 产出物持久化
+  // ============================================
+
+  private async loadArtifacts(): Promise<void> {
+    if (!this.io) return
+    try {
+      const result = await this.io.executeTool({
+        name: 'readFile',
+        args: { path: 'memory/nexus_artifacts.json' },
+      })
+      if (result.status === 'success' && result.result) {
+        const data: Record<string, NexusArtifactInfo[]> = JSON.parse(result.result)
+        this.artifactsMap.clear()
+        for (const [nexusId, arts] of Object.entries(data)) {
+          if (Array.isArray(arts)) {
+            this.artifactsMap.set(nexusId, arts)
+          }
+        }
+        const total = [...this.artifactsMap.values()].reduce((s, a) => s + a.length, 0)
+        console.log(`[NexusManager] Loaded ${total} artifacts for ${this.artifactsMap.size} nexuses`)
+        return
+      }
+    } catch {
+      // 文件不存在
+    }
+
+    // 首次启动: 从 gene_pool.jsonl 中迁移 artifact 数据
+    await this.migrateArtifactsFromGenePool()
+  }
+
+  /**
+   * 一次性迁移: 从 gene_pool.jsonl 中提取 artifact 数据
+   */
+  private async migrateArtifactsFromGenePool(): Promise<void> {
+    if (!this.io) return
+    try {
+      const result = await this.io.executeTool({
+        name: 'readFile',
+        args: { path: 'memory/gene_pool.jsonl' },
+      })
+      if (result.status !== 'success' || !result.result) return
+
+      let migrated = 0
+      for (const line of result.result.split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const gene = JSON.parse(line)
+          if (gene.category === 'artifact' && gene.artifactInfo) {
+            const art: NexusArtifactInfo = gene.artifactInfo
+            const list = this.artifactsMap.get(art.nexusId) || []
+            if (!list.some(a => a.path === art.path)) {
+              list.push(art)
+              this.artifactsMap.set(art.nexusId, list)
+              migrated++
+            }
+          }
+        } catch {
+          // skip malformed line
+        }
+      }
+
+      if (migrated > 0) {
+        console.log(`[NexusManager] Migrated ${migrated} artifacts from gene_pool.jsonl`)
+        await this.saveArtifacts()
+      }
+    } catch {
+      // gene_pool.jsonl 不存在或读取失败
+    }
+  }
+
+  private async saveArtifacts(): Promise<void> {
+    if (!this.io) return
+    const data: Record<string, NexusArtifactInfo[]> = {}
+    for (const [nexusId, arts] of this.artifactsMap) {
+      data[nexusId] = arts
+    }
+    try {
+      await this.io.executeTool({
+        name: 'writeFile',
+        args: {
+          path: 'memory/nexus_artifacts.json',
+          content: JSON.stringify(data, null, 2),
+        },
+      })
+      this.artifactsDirty = false
+    } catch (err) {
+      console.warn('[NexusManager] Failed to save artifacts:', err)
+    }
+  }
+
+  private scheduleArtifactsSave(): void {
+    this.artifactsDirty = true
+    if (this.artifactsSaveTimer) return
+    this.artifactsSaveTimer = setTimeout(() => {
+      this.artifactsSaveTimer = null
+      if (this.artifactsDirty) {
+        this.saveArtifacts().catch(() => {})
+      }
+    }, 5000)
   }
 }
 

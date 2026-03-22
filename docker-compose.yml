@@ -17,8 +17,25 @@ services:
       # - ./skills:/app/skills
     environment:
       - TZ=Asia/Shanghai
+      - SEARXNG_URL=http://searxng:8080
+    depends_on:
+      - searxng
+    restart: unless-stopped
+
+  # SearXNG 聚合搜索引擎 (免费、自托管、70+ 搜索源)
+  searxng:
+    image: searxng/searxng:latest
+    container_name: duncrew-searxng
+    ports:
+      - "8888:8080"   # 宿主机 8888 → 容器 8080
+    volumes:
+      - searxng-data:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888/
     restart: unless-stopped
 
 volumes:
   ddos-data:
     name: ddos-data
+  searxng-data:
+    name: searxng-data

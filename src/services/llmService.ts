@@ -5,6 +5,7 @@
  */
 
 import type { LLMConfig, ToolInfo } from '@/types'
+import { getServerUrl } from '@/utils/env'
 
 // ============================================
 // Function Calling 类型定义
@@ -90,11 +91,7 @@ const STORAGE_KEYS = {
 
 /** 获取本地后端服务器 URL (用于 LLM 代理) */
 function getLocalServerUrl(): string {
-  const isDevMode = import.meta.env?.DEV ?? false
-  const isTauriMode = typeof window !== 'undefined' && '__TAURI__' in window
-  if (isDevMode) return 'http://localhost:3001'
-  if (isTauriMode) return 'http://127.0.0.1:3001'
-  return ''  // 生产模式: 相对路径 (Python 托管同域)
+  return getServerUrl()
 }
 
 export function getLLMConfig(): LLMConfig {
@@ -149,7 +146,7 @@ export function isLLMConfigured(): boolean {
  */
 async function persistLLMConfigToServer(config: LLMConfig) {
   try {
-    const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+    const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
     await fetch(`${serverUrl}/data/llm_config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -167,7 +164,7 @@ async function persistLLMConfigToServer(config: LLMConfig) {
  */
 export async function restoreLLMConfigFromServer(): Promise<LLMConfig | null> {
   try {
-    const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+    const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
     const res = await fetch(`${serverUrl}/data/llm_config`)
     if (!res.ok) return null
     
@@ -849,6 +846,14 @@ function buildEmbeddingUrl(baseUrl: string): string {
 // Embed API 可用性缓存: 记录哪些 baseUrl 不支持 embeddings，避免重复 400/404
 let _embedUnsupportedProviders: Set<string> = new Set()
 
+export function clearEmbedUnsupportedCache(baseUrl?: string): void {
+  if (baseUrl) {
+    _embedUnsupportedProviders.delete(baseUrl)
+  } else {
+    _embedUnsupportedProviders.clear()
+  }
+}
+
 export async function embed(
   text: string,
   config?: Partial<LLMConfig>,
@@ -886,10 +891,17 @@ export async function embed(
     })
 
     if (!res.ok) {
-      // 400/404 表示该 provider 不支持 embeddings 端点，缓存避免重复请求
+      const isLocal = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')
+      // 400/404 表示该 provider 不支持 embeddings 端点
       if (res.status === 400 || res.status === 404) {
-        _embedUnsupportedProviders.add(baseUrl)
-        console.warn(`[Embed] Provider ${baseUrl} does not support embeddings (${res.status}), permanently falling back to local TF-IDF`)
+        if (!isLocal) {
+          _embedUnsupportedProviders.add(baseUrl)
+          console.warn(`[Embed] Provider ${baseUrl} does not support embeddings (${res.status}), permanently falling back to local TF-IDF`)
+        } else {
+          console.warn(`[Embed] Local embedding server returned ${res.status}, using local TF-IDF temporarily`)
+        }
+      } else if (res.status === 501 || res.status === 503) {
+        console.warn(`[Embed] Embedding service not ready (${res.status}), using local TF-IDF temporarily`)
       } else {
         console.warn(`[Embed] API error (${res.status}), using local TF-IDF fallback`)
       }
@@ -899,7 +911,14 @@ export async function embed(
     const data = await res.json()
     return data.data?.[0]?.embedding || (useLocalFallback ? localEmbed(text) : [])
   } catch (err) {
-    console.warn('[Embed] Request failed, using local TF-IDF fallback:', err)
+    // 网络错误 (CORS / 连接失败等)
+    const isLocal = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')
+    if (!isLocal) {
+      _embedUnsupportedProviders.add(baseUrl)
+      console.warn(`[Embed] Request failed (${baseUrl}), permanently falling back to local TF-IDF:`, err)
+    } else {
+      console.warn(`[Embed] Local embedding server unreachable, using local TF-IDF temporarily:`, err)
+    }
     return useLocalFallback ? localEmbed(text) : []
   }
 }

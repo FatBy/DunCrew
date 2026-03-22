@@ -11,6 +11,7 @@
  * 限流: 120 reads/min, 30 writes/min
  */
 
+import { getServerUrl as _getServerUrl } from '@/utils/env'
 import type {
   ClawHubSearchResult,
   ClawHubSkillDetail,
@@ -24,7 +25,7 @@ const REQUEST_TIMEOUT = 15000
 const MAX_RETRIES = 3
 
 function getServerUrl(): string {
-  return localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+  return localStorage.getItem('duncrew_server_url') || _getServerUrl()
 }
 
 class ClawHubService {
@@ -95,7 +96,7 @@ class ClawHubService {
   async downloadSkill(slug: string): Promise<Blob | null> {
     try {
       const resp = await this.fetchWithTimeout(
-        `${CLAWHUB_BASE_URL}/api/v1/download/${encodeURIComponent(slug)}`,
+        `${getServerUrl()}/clawhub/proxy/api/v1/download/${encodeURIComponent(slug)}`,
         {
           method: 'GET',
           headers: this.buildHeaders(),
@@ -262,7 +263,7 @@ class ClawHubService {
 
   /** 通用请求，支持 429 指数退避重试 */
   private async request<T>(path: string, init: RequestInit): Promise<T | null> {
-    const url = `${CLAWHUB_BASE_URL}${path}`
+    const url = `${getServerUrl()}/clawhub/proxy${path}`
     const headers = this.buildHeaders()
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {

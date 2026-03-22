@@ -9,12 +9,13 @@
 
 import type { ClawHubUser } from '@/types'
 import { clawHubService } from './clawHubService'
+import { getServerUrl as _getServerUrl } from '@/utils/env'
 
 const CLAWHUB_AUTH_URL = 'https://clawhub.ai/auth/github'
 const TOKEN_KEY = 'clawhub_auth_token'
 
 function getServerUrl(): string {
-  return localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+  return localStorage.getItem('duncrew_server_url') || _getServerUrl()
 }
 
 class ClawHubAuthService {

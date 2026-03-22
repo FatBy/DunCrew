@@ -10,6 +10,7 @@
  */
 
 import type { SessionMeta, ChatMessage, TaskCheckpoint } from '@/types'
+import { getServerUrl } from '@/utils/env'
 
 // ============================================
 // 类型定义
@@ -37,7 +38,7 @@ export interface SessionWithMessages {
 // ============================================
 
 class SessionPersistenceService {
-  private serverUrl: string = 'http://localhost:3001'
+  private serverUrl: string = getServerUrl()
 
   /** 更新后端地址 */
   setServerUrl(url: string): void {

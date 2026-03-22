@@ -32,12 +32,30 @@ __pycache__/
 *.pyo
 .venv/
 
+# Local embedding models (bge-large-zh-v1.5, ~650MB)
+models/
+
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/binaries/
 src-tauri/gen/
 
+# Electron build output
+dist-electron/
+
+# Temp scripts
+fix_app.js
+fix_app.py
+fix_urls.js
+fix_urls.py
+fix_urls2.js
+debug_urls.js
+
 # Misc
 *.pptx
 vibe_images/
+.specs/
+fix_urls.py
+fix_urls2.js
+debug_urls.js
 .specs/

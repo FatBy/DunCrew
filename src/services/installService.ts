@@ -8,6 +8,7 @@
  */
 
 import { searchOnlineSkills, type RegistrySkillResult, type RegistryMCPResult } from './onlineSearchService'
+import { getServerUrl as _getServerUrl } from '@/utils/env'
 
 // 安装结果类型
 export interface InstallResult {
@@ -18,7 +19,7 @@ export interface InstallResult {
 
 // 获取服务器 URL
 function getServerUrl(): string {
-  return localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+  return localStorage.getItem('duncrew_server_url') || _getServerUrl()
 }
 
 /**
@@ -39,6 +40,7 @@ export async function installSkill(skill: RegistrySkillResult): Promise<InstallR
       body: JSON.stringify({
         name: skill.name,
         source: skill.downloadUrl,
+        skillSource: 'community',
       }),
     })
     

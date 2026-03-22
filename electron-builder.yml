@@ -1,0 +1,77 @@
+appId: com.duncrew.app
+productName: DunCrew
+copyright: Copyright © 2024 DunCrew Team
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - "!node_modules"
+
+extraResources:
+  - from: build/duncrew-server.exe
+    to: duncrew-server.exe
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: src-tauri/icons/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: src-tauri/icons/icon.ico
+  uninstallerIcon: src-tauri/icons/icon.ico
+  installerHeaderIcon: src-tauri/icons/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: DunCrew
+  installerLanguages:
+    - zh_CN
+    - en_US
+appId: com.duncrew.app
+productName: DunCrew
+copyright: Copyright 2024-2025 DunCrew
+
+directories:
+  output: release
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - "!node_modules"
+
+extraResources:
+  - from: build/duncrew-server.exe
+    to: duncrew-server.exe
+  - from: skills/
+    to: skills/
+  - from: SOUL.md
+    to: SOUL.md
+
+win:
+  target: nsis
+  icon: src-tauri/icons/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerLanguages:
+    - 2052
+    - 1033
+  language: 2052
+
+mac:
+  target: dmg
+  icon: src-tauri/icons/icon.icns
+
+linux:
+  target: AppImage
+  icon: src-tauri/icons/icon.png

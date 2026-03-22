@@ -41,7 +41,8 @@ const dotColorMap: Record<string, string> = {
 }
 
 export function Dock() {
-  const { currentView, setView } = useStore()
+  const currentView = useStore((s) => s.currentView)
+  const setView = useStore((s) => s.setView)
   const isChatOpen = useStore((s) => s.isChatOpen)
   const setChatOpen = useStore((s) => s.setChatOpen)
   const t = useT()

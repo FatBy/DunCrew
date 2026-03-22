@@ -30,7 +30,7 @@ export function ConversationSidebar({ className }: ConversationSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
   
   const nexusList = useMemo(() => 
-    [...nexuses.values()].filter(n => n.constructionProgress >= 1),
+    [...nexuses.values()].filter(n => n.constructionProgress >= 1 || (Date.now() - n.createdAt >= 3000)),
     [nexuses]
   )
   

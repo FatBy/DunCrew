@@ -4,11 +4,30 @@ import { createInitialScoring } from '@/types'
 import type { WorldTheme } from '@/rendering/types'
 import { localServerService } from '@/services/localServerService'
 
+/** 建造动画总时长 (ms) */
+const CONSTRUCTION_DURATION_MS = 3000
+
+/**
+ * 基于 createdAt 时间戳计算建造进度 (0~1)
+ * 无论 tick 循环是否运行、页面是否刷新，进度始终正确
+ */
+export function getConstructionProgress(nexus: NexusEntity): number {
+  // constructionProgress === 1 说明已标记完成，直接返回
+  if (nexus.constructionProgress >= 1) return 1
+  // 如果 constructionProgress 已经是 1 (旧数据)
+  const elapsed = Date.now() - nexus.createdAt
+  if (elapsed >= CONSTRUCTION_DURATION_MS) return 1
+  return Math.min(1, elapsed / CONSTRUCTION_DURATION_MS)
+}
+
 // 后端数据键名
 const DATA_KEY_NEXUSES = 'nexuses_state'
 
 // localStorage key for Nexus persistence (备份/缓存)
 const NEXUS_STORAGE_KEY = 'duncrew_nexuses'
+
+// 区分"首次加载"和"运行时新增"：首次加载时新 Nexus 直接显示，运行时新增播放建造动画
+let _initialLoadDone = false
 
 // ---- 持久化函数 (后端 + localStorage 双写) ----
 
@@ -265,7 +284,7 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
         scoring,
         visualDNA,
         label: serverNexus.label || serverNexus.name || serverNexus.id,
-        constructionProgress: existing?.constructionProgress ?? 1,
+        constructionProgress: existing?.constructionProgress ?? (_initialLoadDone ? 0 : 1),
         createdAt: existing?.createdAt || Date.now(),
         // 统一使用 boundSkillIds (后端字段名为 skillDependencies)
         boundSkillIds: (serverNexus as any).skillDependencies || serverNexus.boundSkillIds || [],
@@ -276,33 +295,49 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
         version: serverNexus.version,
         location: serverNexus.location,
         path: serverNexus.path,
+        projectPath: (serverNexus as any).projectPath || existing?.projectPath,
         // Phase 5: 目标函数驱动 (Objective-Driven Execution)
         objective: serverNexus.objective,
         metrics: serverNexus.metrics,
         strategy: serverNexus.strategy,
+        skillsConfirmed: (serverNexus as any).skillsConfirmed || existing?.skillsConfirmed || false,
       })
     }
     saveNexusesToStorage(next)
     return { nexuses: next }
   }),
 
-  tickConstructionAnimations: (deltaMs) => set((state) => {
-    let changed = false
+  tickConstructionAnimations: (_deltaMs) => set((state) => {
+    // V2: 基于 createdAt 时间戳判定建造完成，不再依赖逐帧递增
+    // 此函数只负责将已超时的 Nexus 标记为 constructionProgress=1 并持久化
+    const now = Date.now()
     let anyCompleted = false
+    let hasBuilding = false
     const next = new Map(state.nexuses)
+
     for (const [id, nexus] of next) {
       if (nexus.constructionProgress < 1) {
-        changed = true
-        const progress = Math.min(1, nexus.constructionProgress + deltaMs / 3000)
-        next.set(id, { ...nexus, constructionProgress: progress })
-        if (progress >= 1) anyCompleted = true
+        const elapsed = now - nexus.createdAt
+        if (elapsed >= CONSTRUCTION_DURATION_MS) {
+          // 时间已到，标记为完成
+          next.set(id, { ...nexus, constructionProgress: 1 })
+          anyCompleted = true
+        } else {
+          hasBuilding = true
+        }
       }
     }
-    // 仅在有建造完成时保存到 localStorage（避免频繁写入）
+
     if (anyCompleted) {
       saveNexusesToStorage(next)
+      return { nexuses: next }
     }
-    return changed ? { nexuses: next } : state
+    // 仍有建造中但未完成的 → 需要触发重渲染让 UI 显示实时进度
+    // 返回新 Map 引用来触发 Zustand 通知
+    if (hasBuilding) {
+      return { nexuses: new Map(state.nexuses) }
+    }
+    return state
   }),
 
   // ---- Camera Actions ----
@@ -450,10 +485,12 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
               triggers: serverNexus.triggers || existing.triggers,
               version: serverNexus.version || existing.version,
               path: serverNexus.path || existing.path,
+              projectPath: (serverNexus as any).projectPath || existing.projectPath,
               location: serverNexus.location || existing.location,
               objective: serverNexus.objective || existing.objective,
               metrics: serverNexus.metrics || existing.metrics,
               strategy: serverNexus.strategy || existing.strategy,
+              skillsConfirmed: (serverNexus as any).skillsConfirmed || existing.skillsConfirmed || false,
               // 始终保留本地 scoring 和位置
               scoring: preservedScoring!,
               position: existing.position,
@@ -489,6 +526,8 @@ export const createWorldSlice: StateCreator<WorldSlice> = (set, get) => ({
         localServerService.setData(DATA_KEY_NEXUSES, arr).catch(() => {})
       }
     }
+    // 标记首次加载完成，后续 setNexusesFromServer 中新 Nexus 将触发建造动画
+    _initialLoadDone = true
   },
   
   syncAgentsAsNexuses: (agents, _skills) => set((state) => {

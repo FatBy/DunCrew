@@ -13,6 +13,7 @@
 import type { MemorySearchResult } from '@/types'
 import { SEARCH_CONFIG } from '@/types'
 import { localEmbed, cosineSimilarity } from './llmService'
+import { getServerUrl } from '@/utils/env'
 
 // ============================================
 // 类型定义
@@ -121,7 +122,7 @@ function mmrRerank(
 // ============================================
 
 class MemoryStoreService {
-  private serverUrl: string = 'http://localhost:3001'
+  private serverUrl: string = getServerUrl()
 
   /** 更新后端地址 */
   setServerUrl(url: string): void {

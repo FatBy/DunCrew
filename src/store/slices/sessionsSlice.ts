@@ -225,11 +225,11 @@ export const createSessionsSlice: StateCreator<SessionsSlice> = (set, get) => ({
         executionSteps: [...existingSteps, step].slice(-50), // 最多保留 50 步
       }
     })
-    // 批量持久化：每 5 步或超过 10 秒持久化一次
+    // 批量持久化：首步 + 每 5 步或超过 10 秒持久化一次
     const task = newExecutions.find(t => t.id === taskId)
     const stepCount = task?.executionSteps?.length || 0
     const timeSinceLastPersist = Date.now() - _lastPersistTime
-    if (stepCount % 5 === 0 || timeSinceLastPersist > 10000) {
+    if (stepCount <= 1 || stepCount % 5 === 0 || timeSinceLastPersist > 10000) {
       persistTaskHistory(newExecutions)
     }
     return { activeExecutions: newExecutions }
@@ -247,6 +247,11 @@ export const createSessionsSlice: StateCreator<SessionsSlice> = (set, get) => ({
         ),
       }
     })
+    // 节流持久化：高频更新（如 streaming delta），每 10 秒持久化一次
+    const timeSinceLastPersist = Date.now() - _lastPersistTime
+    if (timeSinceLastPersist > 10000) {
+      persistTaskHistory(newExecutions)
+    }
     return { activeExecutions: newExecutions }
   }),
 

@@ -241,6 +241,13 @@ const plugin = {
             dynamicParts.push("\n" + rewriteReq);
             api.logger.info("[DunCrew] SOP rewrite request injected");
           }
+
+          // ── Golden Path hint injection ──
+          const goldenPathHint = nexusManager.buildGoldenPathHint(activeNexusId);
+          if (goldenPathHint) {
+            dynamicParts.push("\n" + goldenPathHint);
+            api.logger.info("[DunCrew] Golden Path hint injected");
+          }
         }
       }
 
@@ -269,6 +276,15 @@ const plugin = {
         if (geneHints) {
           dynamicParts.push("\n" + geneHints);
           api.logger.info("[DunCrew] Gene Pool hints injected into context");
+        }
+
+        // ── Pre-check hints: inject on first prompt when Nexus is active ──
+        if (promptBuildCount === 1 && activeNexusId) {
+          const preCheckHints = genePool.buildPreCheckHints(activeNexusId);
+          if (preCheckHints) {
+            dynamicParts.push("\n" + preCheckHints);
+            api.logger.info("[DunCrew] Pre-check hints injected from Gene Pool");
+          }
         }
       }
 
@@ -652,6 +668,27 @@ const plugin = {
           );
         } catch (err) {
           api.logger.warn(`[DunCrew] SOP fitness update failed: ${err}`);
+        }
+      }
+
+      // ── Golden Path: distill after sufficient successes ──
+      if (activeNexusId && isSuccess && cfg.enableSOPEvolution) {
+        try {
+          const existing = nexusManager.loadGoldenPath(activeNexusId);
+          const DISTILL_COOLDOWN_MS = 600_000; // 10 minutes minimum between distillations
+          const shouldDistill = !existing
+            || (Date.now() - existing.lastDistilledAt > DISTILL_COOLDOWN_MS);
+
+          if (shouldDistill) {
+            const goldenPath = nexusManager.distillGoldenPath(activeNexusId);
+            if (goldenPath) {
+              api.logger.info(
+                `[DunCrew] Golden Path distilled for ${activeNexusId}: ${goldenPath.recommendedToolChain.join(" -> ")} (confidence: ${Math.round(goldenPath.confidence * 100)}%)`
+              );
+            }
+          }
+        } catch (err) {
+          api.logger.warn(`[DunCrew] Golden Path distillation failed: ${err}`);
         }
       }
     });

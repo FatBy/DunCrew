@@ -90,7 +90,7 @@ export const createClawHubSlice: StateCreator<ClawHubSlice> = (set) => ({
     try {
       const result = await clawHubService.searchSkills(query)
       set({
-        clawHubSearchResults: result.skills,
+        clawHubSearchResults: result?.skills ?? [],
         clawHubSearchLoading: false,
       })
     } catch (error) {

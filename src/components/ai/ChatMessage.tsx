@@ -1,12 +1,13 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { User, Bot, AlertCircle, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, MessageSquare, Cloud, Search, FileText, Terminal, FolderOpen } from 'lucide-react'
+import { User, Bot, AlertCircle, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, MessageSquare, Cloud, Search, FileText, Terminal } from 'lucide-react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { cn } from '@/utils/cn'
 import type { ChatMessage as ChatMessageType, ExecutionStatus } from '@/types'
 import { MarkdownRenderer } from './markdown/MarkdownRenderer'
 import { DocumentView, isLongFormContent } from './markdown/DocumentView'
 import { parseSuggestions, SuggestionChips } from './SuggestionChips'
+import { FileCard } from '@/components/shared/FileCard'
 
 // 检测输出类型
 function detectOutputType(output: string): 'weather' | 'search' | 'file' | 'file_created' | 'command' | 'plain' {
@@ -166,8 +167,6 @@ interface FileCreatedData {
 }
 
 function FileCreatedOutput({ content }: { content: string }) {
-  const [opening, setOpening] = useState(false)
-  
   // 解析数据
   const data: FileCreatedData = useMemo(() => {
     try {
@@ -192,29 +191,6 @@ function FileCreatedOutput({ content }: { content: string }) {
     }
   }, [content])
   
-  const handleOpenFile = async () => {
-    if (!data.filePath) return
-    setOpening(true)
-    
-    try {
-      const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
-      const response = await fetch(`${serverUrl}/api/tools/execute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'openInExplorer',
-          args: { path: data.filePath }
-        })
-      })
-      
-      if (!response.ok) throw new Error('打开失败')
-    } catch (error) {
-      console.error('打开文件失败:', error)
-    } finally {
-      setOpening(false)
-    }
-  }
-  
   return (
     <div className="space-y-2 p-4">
       <div className="flex items-center gap-2 text-emerald-400">
@@ -222,41 +198,16 @@ function FileCreatedOutput({ content }: { content: string }) {
         <span className="text-sm font-medium">文件已创建</span>
       </div>
       
-      {/* 文件信息卡片 */}
-      <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 space-y-2">
-        <div className="flex items-center gap-2">
-          <FileText className="w-4 h-4 text-emerald-400/60" />
-          <span className="text-sm font-mono text-stone-700">{data.fileName}</span>
-          {data.fileSize !== undefined && (
-            <span className="text-xs text-stone-400 ml-auto">{data.fileSize} 字节</span>
-          )}
-        </div>
-        
-        {data.filePath && (
-          <div className="flex items-start gap-2">
-            <span className="text-xs text-stone-400 flex-shrink-0 mt-0.5">路径</span>
-            <span 
-              className="text-xs font-mono text-stone-400 break-all" 
-              title={data.filePath}
-            >
-              {data.filePath}
-            </span>
+      {data.filePath ? (
+        <FileCard filePath={data.filePath} fileName={data.fileName} fileSize={data.fileSize} />
+      ) : (
+        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-emerald-400/60" />
+            <span className="text-sm font-mono text-stone-700">{data.fileName}</span>
           </div>
-        )}
-        
-        <div className="text-xs text-emerald-400/80">{data.message}</div>
-      </div>
-      
-      {/* 操作按钮 - 直接打开文件 */}
-      {data.filePath && (
-        <button
-          onClick={handleOpenFile}
-          disabled={opening}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 transition-colors disabled:opacity-50"
-        >
-          <FolderOpen className="w-3.5 h-3.5" />
-          {opening ? '打开中...' : '打开文件'}
-        </button>
+          <div className="text-xs text-emerald-400/80">{data.message}</div>
+        </div>
       )}
     </div>
   )
@@ -485,59 +436,6 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
 }
 
 // 文件创建卡片 (基于结构化数据，用于消息附件)
-function FileCreatedCard({ file }: { file: { filePath: string; fileName: string; message: string; fileSize?: number } }) {
-  const [opening, setOpening] = useState(false)
-
-  const handleOpenFile = async () => {
-    if (!file.filePath) return
-    setOpening(true)
-    try {
-      const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
-      await fetch(`${serverUrl}/api/tools/execute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'openInExplorer', args: { path: file.filePath } })
-      })
-    } catch (error) {
-      console.error('打开文件失败:', error)
-    } finally {
-      setOpening(false)
-    }
-  }
-
-  return (
-    <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 space-y-2">
-      <div className="flex items-center gap-2">
-        <FileText className="w-4 h-4 text-emerald-400/60" />
-        <span className="text-sm font-mono text-stone-700">{file.fileName}</span>
-        {file.fileSize !== undefined && (
-          <span className="text-xs text-stone-400 ml-auto">{file.fileSize} 字节</span>
-        )}
-      </div>
-
-      {file.filePath && (
-        <div className="flex items-start gap-2">
-          <span className="text-xs text-stone-400 flex-shrink-0 mt-0.5">路径</span>
-          <span className="text-xs font-mono text-stone-400 break-all" title={file.filePath}>
-            {file.filePath}
-          </span>
-        </div>
-      )}
-
-      {file.filePath && (
-        <button
-          onClick={handleOpenFile}
-          disabled={opening}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 transition-colors disabled:opacity-50"
-        >
-          <FolderOpen className="w-3.5 h-3.5" />
-          {opening ? '打开中...' : '打开文件'}
-        </button>
-      )}
-    </div>
-  )
-}
-
 interface ChatMessageProps {
   message: ChatMessageType
   containerWidth?: 'main' | 'nexus'
@@ -648,7 +546,7 @@ export function ChatMessage({ message, containerWidth = 'main' }: ChatMessagePro
             </span>
           </div>
           {message.createdFiles.map((file, i) => (
-            <FileCreatedCard key={`${file.filePath}-${i}`} file={file} />
+            <FileCard key={`${file.filePath}-${i}`} filePath={file.filePath} fileName={file.fileName} fileSize={file.fileSize} />
           ))}
         </div>
       )}
@@ -671,10 +569,25 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
         <Bot className="w-4 h-4 text-amber-500 animate-pulse" />
       </div>
       <div className="flex-1 flex flex-col items-start">
-        <span className="text-stone-400 text-xs font-bold mb-1 ml-1">Assistant</span>
+        <span className="text-stone-400 text-xs font-bold mb-1 ml-1 flex items-center gap-1.5">
+          Assistant
+          <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+        </span>
         <div className="bg-stone-50 border border-stone-100 rounded-2xl rounded-tl-sm px-5 py-3.5 text-[13px] text-stone-700 leading-relaxed shadow-sm">
-          <MarkdownRenderer content={content} />
-          <span className="inline-block w-1.5 h-3.5 bg-amber-400/60 ml-0.5 animate-pulse" />
+          {content ? (
+            <>
+              <MarkdownRenderer content={content} />
+              <span className="inline-block w-1.5 h-3.5 bg-amber-400/60 ml-0.5 animate-pulse" />
+            </>
+          ) : (
+            <span className="flex items-center gap-2 text-stone-400">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-300 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400" />
+              </span>
+              <span className="animate-pulse">思考中...</span>
+            </span>
+          )}
         </div>
       </div>
     </motion.div>

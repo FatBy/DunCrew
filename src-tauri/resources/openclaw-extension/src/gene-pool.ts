@@ -1,5 +1,6 @@
 /**
  * Extension Gene Pool -- Lightweight file-based Gene Pool for OpenClaw extension.
+ * V2: Thompson Sampling + 策略抽象化 + 注入精简 + 崩溃过滤
  *
  * Handles:
  * - Gene loading/saving from stateDir/genes/
@@ -15,6 +16,7 @@ import {
   extractSignals,
   rankGenes,
   signalOverlap,
+  classifyErrorType,
 } from "./signal-matcher.js";
 
 // ============================================
@@ -23,9 +25,9 @@ import {
 
 const MAX_GENE_HINTS = 3;
 const MAX_HINT_LENGTH = 2000;
-const DUPLICATE_OVERLAP_THRESHOLD = 0.7;
-const HARVEST_MIN_CONFIDENCE = 0.4;
-const CONFIDENCE_CAP = 0.95;
+const DUPLICATE_OVERLAP_THRESHOLD = 0.85;
+const HARVEST_MIN_CONFIDENCE = 0.3;
+const CONFIDENCE_CAP = 1.0;
 
 // ============================================
 // Session trace types
@@ -38,6 +40,101 @@ export interface SessionToolTrace {
   result: string;
   durationMs: number;
   order: number;
+  /** V2: 碱基类型 */
+  baseType?: "E" | "P" | "V" | "X";
+  /** V2: P 碱基推理摘要 */
+  reasoningSummary?: string;
+}
+
+// ============================================
+// V2: Thompson Sampling
+// ============================================
+
+function betaSample(alpha: number, beta: number): number {
+  const mean = alpha / (alpha + beta);
+  const variance = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1));
+  const std = Math.sqrt(variance);
+  const u1 = Math.random();
+  const u2 = Math.random();
+  const normal = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  return Math.max(0, Math.min(1, mean + std * normal));
+}
+
+function thompsonSelect(matches: GeneMatch[], count: number): GeneMatch[] {
+  if (matches.length <= count) return matches;
+  const scored = matches.map((m) => ({
+    match: m,
+    sample: betaSample(
+      m.gene.metadata.successCount + 1,
+      (m.gene.metadata.useCount - m.gene.metadata.successCount) + 1
+    ) * m.score,
+  }));
+  scored.sort((a, b) => b.sample - a.sample);
+  return scored.slice(0, count).map((s) => s.match);
+}
+
+// ============================================
+// V2: Base Type Classifier (E/P/V/X)
+// ============================================
+
+const READ_TOOLS = new Set(["readFile", "listDir", "searchText", "searchFiles", "readMultipleFiles"]);
+const WRITE_TOOLS = new Set(["writeFile", "appendFile", "deleteFile", "renameFile"]);
+const VERIFY_CMD_PATTERNS = [
+  /tsc\b.*--noEmit/i, /npm\s+(test|run\s+test|run\s+lint)/i,
+  /pytest|jest|vitest|mocha/i, /eslint|prettier.*--check/i,
+  /cargo\s+(check|test|clippy)/i,
+];
+
+interface BaseCtx {
+  successfulResources: Set<string>;
+  recentWrites: Array<{ resource: string; order: number }>;
+  lastEntry: SessionToolTrace | null;
+}
+
+function extractResource(toolName: string, params: Record<string, unknown>): string | null {
+  const p = params.path || params.filePath || params.file || params.directory;
+  if (typeof p === "string") return p;
+  if (toolName === "runCmd") {
+    const cmd = String(params.command || params.cmd || "");
+    const m = cmd.match(/(?:^|\s)((?:\.\/|\/|[a-zA-Z]:\\)[\w\-./\\]+)/);
+    return m ? m[1] : `cmd:${cmd.slice(0, 50)}`;
+  }
+  return null;
+}
+
+function classifyBaseType(
+  toolName: string, params: Record<string, unknown>,
+  status: "success" | "error", ctx: BaseCtx
+): "E" | "V" | "X" {
+  const resource = extractResource(toolName, params);
+
+  // V: write-then-read same resource
+  if (READ_TOOLS.has(toolName) && resource && ctx.recentWrites.some(w => w.resource === resource)) return "V";
+  // V: retry after failure
+  if (ctx.lastEntry && ctx.lastEntry.name === toolName && ctx.lastEntry.status === "error") return "V";
+  // V: compile/test after write
+  if (toolName === "runCmd" && VERIFY_CMD_PATTERNS.some(p => p.test(String(params.command || params.cmd || ""))) && ctx.recentWrites.length > 0) return "V";
+
+  // X: read operation on never-successfully-accessed resource
+  if (READ_TOOLS.has(toolName) && resource && !ctx.successfulResources.has(resource)) return "X";
+  // X: listDir early in session
+  if (toolName === "listDir" && (ctx.lastEntry === null || (ctx.lastEntry.order <= 3))) return "X";
+
+  return "E";
+}
+
+function createBaseCtx(): BaseCtx {
+  return { successfulResources: new Set(), recentWrites: [], lastEntry: null };
+}
+
+function updateBaseCtx(ctx: BaseCtx, entry: SessionToolTrace): void {
+  const resource = extractResource(entry.name, entry.params);
+  if (entry.status === "success" && resource) ctx.successfulResources.add(resource);
+  if (WRITE_TOOLS.has(entry.name) && entry.status === "success" && resource) {
+    ctx.recentWrites.push({ resource, order: entry.order });
+    if (ctx.recentWrites.length > 10) ctx.recentWrites.shift();
+  }
+  ctx.lastEntry = entry;
 }
 
 // ============================================
@@ -49,6 +146,7 @@ export class ExtensionGenePool {
   private genesDir: string;
   private pendingHints: string[] = [];
   private sessionTrace: SessionToolTrace[] = [];
+  private baseCtx: BaseCtx = createBaseCtx();
 
   constructor(dataDir: string) {
     this.genesDir = join(dataDir, "genes");
@@ -102,7 +200,8 @@ export class ExtensionGenePool {
     if (this.genes.length === 0) return [];
     const signals = extractSignals(toolName, errorMsg);
     const matches = rankGenes(signals, this.genes);
-    return matches.slice(0, MAX_GENE_HINTS);
+    // V2: Thompson Sampling
+    return thompsonSelect(matches, MAX_GENE_HINTS);
   }
 
   buildGeneHint(matches: GeneMatch[]): string {
@@ -110,16 +209,23 @@ export class ExtensionGenePool {
 
     const hints = matches.map((m, i) => {
       const confidence = Math.round(m.gene.metadata.confidence * 100);
-      const stepsText = m.gene.strategy
-        .map((s, j) => `   ${j + 1}. ${s}`)
-        .join("\n");
-      return `Fix ${i + 1} (confidence ${confidence}%, signals: ${m.matchedSignals.join(", ")}):\n${stepsText}`;
+      // V2: Only output strategy core, skip raw error data
+      const strategyText = m.gene.strategy
+        .filter((s) => !s.startsWith("Error encountered:") && !s.startsWith("Recovery result:"))
+        .join("; ");
+
+      let hint = `${i + 1}. [${confidence}%] ${strategyText}`;
+
+      // V2: Anti-pattern warning
+      if (m.gene.antiPatterns && m.gene.antiPatterns.length > 0) {
+        hint += `\n   ⚠ Not applicable when: ${m.gene.antiPatterns[0]}`;
+      }
+
+      return hint;
     });
 
-    let text = `\n[Gene Pool - Historical Repair Experience]\nFound ${matches.length} relevant repair genes:\n${hints.join("\n")}`;
-    text += "\nApply these if the error matches; use your judgment if the context differs.";
+    let text = `\n[Gene Pool] Historical repair experience:\n${hints.join("\n")}\nApply if the error matches; use your judgment if context differs.`;
 
-    // Truncate if too long
     if (text.length > MAX_HINT_LENGTH) {
       text = text.slice(0, MAX_HINT_LENGTH) + "\n...(truncated)";
     }
@@ -177,14 +283,26 @@ export class ExtensionGenePool {
         ? event.result
         : JSON.stringify(event.result || "").slice(0, 1000);
 
-    this.sessionTrace.push({
+    const status: "success" | "error" = hasError ? "error" : "success";
+    const params = event.params || {};
+
+    // V2: Base type classification
+    const baseType = classifyBaseType(name, params, status, this.baseCtx);
+
+    const entry: SessionToolTrace = {
       name,
-      params: event.params || {},
-      status: hasError ? "error" : "success",
+      params,
+      status,
       result: hasError ? (event.error || "") : resultStr,
       durationMs: event.durationMs || 0,
       order: this.sessionTrace.length,
-    });
+      baseType,
+    };
+
+    this.sessionTrace.push(entry);
+
+    // V2: Update base classifier context
+    updateBaseCtx(this.baseCtx, entry);
   }
 
   /**
@@ -193,6 +311,7 @@ export class ExtensionGenePool {
   resetSession(): void {
     this.sessionTrace = [];
     this.pendingHints = [];
+    this.baseCtx = createBaseCtx();
   }
 
   /**
@@ -200,6 +319,16 @@ export class ExtensionGenePool {
    */
   getSessionTrace(): SessionToolTrace[] {
     return [...this.sessionTrace];
+  }
+
+  /**
+   * V2: Get base sequence string for analysis.
+   */
+  getBaseSequence(): string {
+    return this.sessionTrace
+      .filter(t => t.baseType)
+      .map(t => t.baseType)
+      .join("-");
   }
 
   // ============================================
@@ -219,6 +348,12 @@ export class ExtensionGenePool {
       const failedTool = sorted[i];
       if (failedTool.status !== "error") continue;
 
+      // V2: Skip plugin crash errors — not useful as repair genes
+      const errorMsg = failedTool.result || "";
+      if (/plugin exited|exit code|3221225794|segfault|stack overflow/i.test(errorMsg)) {
+        continue;
+      }
+
       // Find same-name success call after this failure
       for (let j = i + 1; j < sorted.length; j++) {
         const recoveryTool = sorted[j];
@@ -226,7 +361,6 @@ export class ExtensionGenePool {
         if (recoveryTool.status !== "success") continue;
 
         // Found error->success pair
-        const errorMsg = failedTool.result || "";
         const signals = extractSignals(failedTool.name, errorMsg);
 
         // Check for duplicate genes
@@ -250,11 +384,16 @@ export class ExtensionGenePool {
         const strategy = this.buildStrategy(failedTool, recoveryTool, sorted.slice(i + 1, j));
         if (strategy.length === 0) break;
 
+        // V2: Auto-generate preconditions
+        const errorType = classifyErrorType(errorMsg);
+        const preconditions = [`${failedTool.name} returned a ${errorType} type error`];
+
         const gene: Gene = {
           id: `gene-${Date.now()}-${harvested.length}`,
           category: "repair",
           signals_match: signals,
           strategy,
+          preconditions,
           source: {
             traceId: `trace-${sorted[0].order}`,
             nexusId,
@@ -282,63 +421,134 @@ export class ExtensionGenePool {
   }
 
   /**
-   * Build repair strategy by comparing failed and successful tool calls.
+   * V2: Build abstract repair strategy (no concrete param values).
    */
   private buildStrategy(
     failed: SessionToolTrace,
     success: SessionToolTrace,
     intermediate: SessionToolTrace[]
   ): string[] {
-    const steps: string[] = [];
+    const strategy: string[] = [];
+    const failedArgs = failed.params || {};
+    const successArgs = success.params || {};
 
-    // 1. Describe the error
-    const errorSnippet = failed.result.slice(0, 200);
-    steps.push(`Error encountered: ${errorSnippet}`);
+    // 1. Analyze parameter change patterns (abstract, no concrete values)
+    const paramPatterns: string[] = [];
+    for (const key of Object.keys(successArgs)) {
+      const failedVal = failedArgs[key];
+      const successVal = successArgs[key];
+      const failedStr = JSON.stringify(failedVal ?? "");
+      const successStr = JSON.stringify(successVal);
 
-    // 2. Parameter diff
-    const paramDiffs = this.diffParams(failed.params, success.params);
-    if (paramDiffs.length > 0) {
-      steps.push(`Parameter changes: ${paramDiffs.join("; ")}`);
-    }
+      if (failedStr === successStr) continue;
 
-    // 3. Intermediate tool calls (repair actions taken)
-    const interToolNames = intermediate
-      .filter((t) => t.name !== failed.name)
-      .map((t) => t.name);
-    if (interToolNames.length > 0) {
-      const unique = [...new Set(interToolNames)];
-      steps.push(`Intermediate tools used: ${unique.join(", ")}`);
-    }
-
-    // 4. Success summary
-    const successSnippet = success.result.slice(0, 200);
-    if (successSnippet) {
-      steps.push(`Recovery result: ${successSnippet}`);
-    }
-
-    return steps;
-  }
-
-  /**
-   * Compare two parameter sets and describe differences.
-   */
-  private diffParams(
-    paramsA: Record<string, unknown>,
-    paramsB: Record<string, unknown>
-  ): string[] {
-    const diffs: string[] = [];
-    const allKeys = new Set([...Object.keys(paramsA), ...Object.keys(paramsB)]);
-
-    for (const key of allKeys) {
-      const valA = JSON.stringify(paramsA[key] ?? null);
-      const valB = JSON.stringify(paramsB[key] ?? null);
-      if (valA !== valB) {
-        const aShort = valA.length > 60 ? valA.slice(0, 60) + "..." : valA;
-        const bShort = valB.length > 60 ? valB.slice(0, 60) + "..." : valB;
-        diffs.push(`${key}: ${aShort} -> ${bShort}`);
+      if (!failedVal || failedStr === '""' || failedStr === "null") {
+        paramPatterns.push(`parameter "${key}" was empty — need to obtain correct ${key} first`);
+      } else if (typeof failedVal === "string" && typeof successVal === "string") {
+        if (failedVal.includes("/") || failedVal.includes("\\") || successVal.includes("/") || successVal.includes("\\")) {
+          paramPatterns.push(`parameter "${key}" path was corrected — verify correct path before retry`);
+        } else {
+          paramPatterns.push(`parameter "${key}" value was corrected — check format and content`);
+        }
+      } else {
+        paramPatterns.push(`parameter "${key}" was modified — check type and format`);
       }
     }
 
-    return diffs.slice(0, 5); // Limit to 5 diffs
+    // 2. Generate repair strategy
+    const errorType = classifyErrorType(failed.result || "");
+    const toolName = failed.name;
+
+    if (paramPatterns.length > 0) {
+      strategy.push(`${toolName} failed (${errorType}): ${paramPatterns.join("; ")}`);
+    }
+
+    // 3. Record repair path
+    if (intermediate.length > 0) {
+      const successfulIntermediates = intermediate.filter((t) => t.status === "success" && t.name !== failed.name);
+      const uniqueTools = [...new Set(successfulIntermediates.map((t) => t.name))];
+      if (uniqueTools.length > 0) {
+        strategy.push(`Repair path: use ${uniqueTools.join(" → ")} to gather info, then retry ${toolName} with correct params`);
+      }
+    }
+
+    // 4. Fallback strategy based on error type
+    if (strategy.length === 0) {
+      const fallbackStrategies: Record<string, string> = {
+        missing_resource: `${toolName} target not found — use listDir to verify path exists`,
+        missing_input: `${toolName} missing required parameter — ensure all required params are non-empty`,
+        permission: `${toolName} access denied — check path is within allowed working directory`,
+        bad_input: `${toolName} bad parameter format — check parameter types and format`,
+        parse_error: `${toolName} parse error — check input data format`,
+        encoding_error: `${toolName} encoding error — try specifying a different encoding`,
+        transient: `${toolName} transient error — retry directly, likely to succeed`,
+        unknown: `${toolName} failed then succeeded on retry — possibly transient`,
+      };
+      strategy.push(fallbackStrategies[errorType] || fallbackStrategies.unknown);
+    }
+
+    return strategy;
+  }
+
+  // ============================================
+  // Pre-check hints from Gene Pool
+  // ============================================
+
+  /**
+   * Build pre-check hints from historical failure genes.
+   * Extracts concrete, actionable checks based on known failure patterns
+   * relevant to the given nexusId (or global genes if no nexusId).
+   * Only includes high-confidence genes (>= 0.5).
+   */
+  buildPreCheckHints(nexusId?: string): string | null {
+    // Filter genes relevant to this nexus (or all repair genes if no nexusId)
+    const relevantGenes = this.genes.filter(g => {
+      if (g.category !== "repair") return false;
+      if (g.metadata.confidence < 0.5) return false;
+      if (nexusId && g.source.nexusId && g.source.nexusId !== nexusId) return false;
+      return true;
+    });
+
+    if (relevantGenes.length === 0) return null;
+
+    // Sort by confidence desc, then by useCount desc
+    relevantGenes.sort((a, b) => {
+      if (b.metadata.confidence !== a.metadata.confidence) {
+        return b.metadata.confidence - a.metadata.confidence;
+      }
+      return b.metadata.useCount - a.metadata.useCount;
+    });
+
+    // Extract unique error patterns and their repair actions
+    const checks: string[] = [];
+    const seenTools = new Set<string>();
+
+    for (const gene of relevantGenes.slice(0, 5)) {
+      // Extract the failing tool from signals
+      const toolSignals = gene.signals_match.filter(s => !s.startsWith("/") && !s.includes(" "));
+      const failingTool = toolSignals[0] || "unknown";
+
+      if (seenTools.has(failingTool)) continue;
+      seenTools.add(failingTool);
+
+      // V2: Use strategy directly (already abstracted)
+      const strategyText = gene.strategy
+        .filter(s => !s.startsWith("Error encountered:") && !s.startsWith("Recovery result:"))
+        .join("; ");
+
+      checks.push(
+        `- ${failingTool}: ${strategyText} (confidence: ${Math.round(gene.metadata.confidence * 100)}%)`
+      );
+    }
+
+    if (checks.length === 0) return null;
+
+    const parts: string[] = [];
+    parts.push("[Pre-Check — Known Failure Patterns]");
+    parts.push("Based on Gene Pool data, these tools have known failure patterns:");
+    parts.push(...checks);
+    parts.push("Take preventive action for these before proceeding.");
+
+    return parts.join("\n");
   }
 }

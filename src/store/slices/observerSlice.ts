@@ -30,7 +30,8 @@ const RULE_ENGINE = {
 }
 
 // 后端 API
-const SERVER_URL = 'http://localhost:3001'
+import { getServerUrl } from '@/utils/env'
+const SERVER_URL = getServerUrl()
 
 // ============================================
 // Slice 类型定义

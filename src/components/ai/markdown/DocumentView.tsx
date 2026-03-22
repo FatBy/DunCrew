@@ -16,7 +16,7 @@ function slugify(text: string): string {
 /** 从 Markdown 内容中提取标题 */
 export function extractHeadings(content: string): HeadingItem[] {
   const headings: HeadingItem[] = []
-  const seen = new Map<string, number>()
+  const usedIds = new Set<string>()
   const regex = /^(#{1,3})\s+(.+)$/gm
   let match: RegExpExecArray | null
 
@@ -25,12 +25,15 @@ export function extractHeadings(content: string): HeadingItem[] {
     const text = match[2].replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').trim()
     let id = slugify(text)
 
-    // 处理重复标题
-    const count = seen.get(id) || 0
-    if (count > 0) {
-      id = `${id}-${count}`
+    // 确保 id 唯一：如果已存在，递增后缀直到找到未使用的
+    if (usedIds.has(id)) {
+      let counter = 1
+      while (usedIds.has(`${id}-${counter}`)) {
+        counter++
+      }
+      id = `${id}-${counter}`
     }
-    seen.set(id, count + 1)
+    usedIds.add(id)
 
     headings.push({ id, text, level })
   }

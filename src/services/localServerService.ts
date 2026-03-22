@@ -13,11 +13,16 @@
  * - 每次只获取新产生的内容，避免全量传输
  */
 
+import { getServerUrl } from '@/utils/env'
+
 // 自动推断本地服务地址
 function getDefaultServerUrl(): string {
+  // 桌面应用和开发模式由 env.ts 统一管理
+  const envUrl = getServerUrl()
+  if (envUrl) return envUrl
+
   const hostname = window.location.hostname
   if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    // 本地开发：直连 3001 端口
     return 'http://localhost:3001'
   }
   // 远程访问：走 Vite 代理，使用相对路径

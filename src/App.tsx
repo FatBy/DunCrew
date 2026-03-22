@@ -22,7 +22,7 @@ import { simpleVisualDNA } from '@/store/slices/worldSlice'
 import { createInitialScoring } from '@/types'
 import { restoreLLMConfigFromServer } from '@/services/llmService'
 import { persistTaskHistory } from '@/store/slices/sessionsSlice'
-import { getCachedMBTIResult } from '@/services/mbtiAnalyzer'
+import { getCachedMBTIResult, getCachedAxes } from '@/services/mbtiAnalyzer'
 
 /**
  * 一次性迁移: 将 localStorage 中旧 ddos_ 前缀的数据移动到 duncrew_ 前缀
@@ -82,7 +82,13 @@ function restoreLocalCacheToStore(storeActions: any) {
   // MBTI (先恢复缓存结果，立即显示 avatar，不等检测)
   const cachedMBTI = getCachedMBTIResult()
   if (cachedMBTI) {
-    useStore.setState({ soulMBTI: cachedMBTI })
+    const cachedAxes = getCachedAxes()
+    useStore.setState({
+      soulMBTI: cachedMBTI,
+      soulMBTIBase: cachedMBTI,
+      soulMBTIExpressed: cachedMBTI,
+      ...(cachedAxes ? { soulMBTIAxes: cachedAxes } : {}),
+    })
     restored = true
   }
 

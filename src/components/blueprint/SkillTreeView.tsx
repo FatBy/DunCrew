@@ -8,14 +8,13 @@
  */
 
 import { useEffect, useMemo, useRef, useState, useLayoutEffect, useCallback } from 'react'
-import { Network, Sparkles, X, Loader2 } from 'lucide-react'
-import { AnimatePresence } from 'framer-motion'
+import { Network, Sparkles, X, Loader2, RefreshCw, Info } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '@/store'
-import { chat } from '@/services/llmService'
-import { skillStatsService } from '@/services/skillStatsService'
 import { SkillDetailCard } from '@/components/houses/skill/SkillDetailCard'
 import { SkillDetailsDrawer } from '@/components/houses/skill/SkillDetailsDrawer'
 import type { SkillNode } from '@/types'
+import type { StructuredSkillAnalysis } from '@/store/slices/channelsSlice'
 
 // ── 粒子数据结构 ──
 interface Particle {
@@ -61,23 +60,23 @@ function fallbackSummary(skills: SkillNode[]): string {
   return `已挂载 ${active.length}/${skills.length} 项活跃技能，能力就绪。`
 }
 
-// 构建 LLM prompt
-function buildSkillPrompt(skills: SkillNode[], scoringInfo: string, statsInfo: string): string {
-  const list = skills.map(s => {
-    const st = s.unlocked || s.status === 'active' ? '活跃' : '未激活'
-    return `- ${s.name} [${s.category || '通用'}] (${st})${s.description ? ': ' + s.description.slice(0, 60) : ''}`
-  }).join('\n')
+// 域覆盖颜色映射
+function coverageColor(coverage: string): string {
+  switch (coverage) {
+    case 'strong': return 'bg-emerald-400'
+    case 'moderate': return 'bg-amber-400'
+    case 'weak': return 'bg-orange-400'
+    default: return 'bg-stone-300'
+  }
+}
 
-  return [
-    '以下是 Agent 当前挂载的技能列表：',
-    list,
-    '',
-    scoringInfo ? `执行数据：${scoringInfo}` : '',
-    statsInfo ? `使用统计：${statsInfo}` : '',
-    '',
-    '请用一句简洁中文（30-60字）总结这个 Agent 能做什么和不能做什么。',
-    '直接输出总结，不要加任何前缀、标点符号列表或解释。',
-  ].filter(Boolean).join('\n')
+function coverageLabel(coverage: string): string {
+  switch (coverage) {
+    case 'strong': return '强'
+    case 'moderate': return '中'
+    case 'weak': return '弱'
+    default: return '缺失'
+  }
 }
 
 export function SkillTreeView() {
@@ -98,79 +97,26 @@ export function SkillTreeView() {
   const [tooltip, setTooltip] = useState<{ name: string; desc?: string; x: number; y: number } | null>(null)
   const [selectedSkill, setSelectedSkill] = useState<ParticleScreenPos | null>(null)
   const [showSummaryPopup, setShowSummaryPopup] = useState(false)
+  const [showScoreTooltip, setShowScoreTooltip] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
-  // ── LLM 摘要 ──
-  const [llmSummary, setLlmSummary] = useState<string | null>(null)
-  const [summaryLoading, setSummaryLoading] = useState(false)
+  // ── LLM 摘要（从 store 读取持久化数据） ──
+  const skillAnalysis = useStore((s) => s.skillAnalysis)
+  const shouldRefresh = useStore((s) => s.shouldRefreshSkillAnalysis)
+  const generateAnalysis = useStore((s) => s.generateSkillAnalysis)
 
-  // 稳定的 skill 指纹（仅 id+status 变化时重新请求）
-  const skillKey = useMemo(() => {
-    if (skills.length === 0) return ''
-    return skills.map(s => `${s.id}:${s.status || ''}:${s.unlocked ? 1 : 0}`).sort().join(',')
-  }, [skills])
-
-  // 调用 LLM 生成摘要
+  // 自动触发分析（仅在需要刷新时）
   useEffect(() => {
-    if (!skillKey || skills.length === 0) {
-      setLlmSummary(null)
-      return
+    if (skills.length > 0 && shouldRefresh()) {
+      generateAnalysis()
     }
+  }, [skills.length, shouldRefresh, generateAnalysis])
 
-    // sessionStorage 缓存
-    const cacheKey = `duncrew-skill-llm-summary-${skillKey.length}-${skillKey.slice(0, 80)}`
-    const cached = sessionStorage.getItem(cacheKey)
-    if (cached) {
-      setLlmSummary(cached)
-      return
-    }
-
-    let cancelled = false
-    setSummaryLoading(true)
-
-    // 收集执行数据
-    const nexusArr = Array.from(nexuses.values())
-    const totalRuns = nexusArr.reduce((s, n) => s + (n.scoring?.totalRuns ?? 0), 0)
-    const totalSuccess = nexusArr.reduce((s, n) => s + (n.scoring?.successCount ?? 0), 0)
-    const totalFail = nexusArr.reduce((s, n) => s + (n.scoring?.failureCount ?? 0), 0)
-    const scoringInfo = totalRuns > 0
-      ? `共执行 ${totalRuns} 次，成功 ${totalSuccess} 次，失败 ${totalFail} 次`
-      : ''
-
-    // 收集使用统计
-    const allStats = skillStatsService.getAllStats()
-    const topUsed = allStats
-      .filter(s => s.callCount > 0)
-      .sort((a, b) => b.callCount - a.callCount)
-      .slice(0, 5)
-    const statsInfo = topUsed.length > 0
-      ? topUsed.map(s => `${s.skillId}(调用${s.callCount}次,成功${s.successCount},失败${s.failureCount})`).join('; ')
-      : ''
-
-    const prompt = buildSkillPrompt(skills, scoringInfo, statsInfo)
-
-    chat([
-      {
-        role: 'system',
-        content: '你是 DunCrew 的技能分析引擎。用自然语言简洁总结 Agent 的能力和限制。只输出一句话总结。',
-      },
-      { role: 'user', content: prompt },
-    ]).then(result => {
-      if (!cancelled && result) {
-        const cleaned = result.trim().replace(/^["「]|["」]$/g, '')
-        setLlmSummary(cleaned)
-        setSummaryLoading(false)
-        sessionStorage.setItem(cacheKey, cleaned)
-      }
-    }).catch(() => {
-      if (!cancelled) setSummaryLoading(false)
-    })
-
-    return () => { cancelled = true }
-  }, [skillKey, skills, nexuses])
-
-  // 最终显示的摘要
-  const displaySummary = llmSummary || fallbackSummary(skills)
+  const summaryLoading = skillAnalysis.loading
+  const structuredAnalysis: StructuredSkillAnalysis | null = skillAnalysis.structured
+  const displaySummary = structuredAnalysis?.oneLiner
+    || skillAnalysis.summary
+    || fallbackSummary(skills)
 
   // ── 容器尺寸监听 ──
   useLayoutEffect(() => {
@@ -222,7 +168,13 @@ export function SkillTreeView() {
     return nearest
   }, [])
 
+  // 节流：mousemove 碰撞检测间隔（避免每像素都遍历 161 个粒子）
+  const lastMoveRef = useRef(0)
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const now = performance.now()
+    if (now - lastMoveRef.current < 32) return  // ~30fps 检测即可
+    lastMoveRef.current = now
+
     const hit = findNearest(e.clientX, e.clientY)
     const canvas = canvasRef.current
     if (canvas) canvas.style.cursor = hit ? 'pointer' : 'default'
@@ -441,7 +393,8 @@ export function SkillTreeView() {
   const selectedOpenClaw = useMemo(() => {
     if (!selectedSkill) return null
     return openClawSkills.find(s =>
-      s.name?.toLowerCase() === selectedSkill.name?.toLowerCase()
+      s.name === selectedSkill.id
+      || s.name?.toLowerCase() === selectedSkill.name?.toLowerCase()
       || s.toolName === selectedSkill.id
     ) || null
   }, [selectedSkill, openClawSkills])
@@ -485,10 +438,11 @@ export function SkillTreeView() {
           />
         </div>
 
-        {/* Canvas 粒子层 */}
+        {/* Canvas 粒子层 — will-change 提示 GPU 保留合成层 */}
         <canvas
           ref={canvasRef}
           className="absolute inset-0 w-full h-full z-[5]"
+          style={{ willChange: 'transform' }}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onClick={handleClick}
@@ -499,11 +453,10 @@ export function SkillTreeView() {
           className="absolute z-20 flex flex-col items-center pointer-events-none"
           style={{ left: cx, top: cy, transform: 'translate(-50%, -50%)' }}
         >
-          {/* 极光光晕 */}
-          <div className="absolute w-[520px] h-[520px] rounded-full animate-pulse pointer-events-none"
+          {/* 极光光晕 — 用预扩散渐变替代 filter:blur(60px)，避免 GPU 每帧重算高斯模糊 */}
+          <div className="absolute w-[520px] h-[520px] rounded-full pointer-events-none"
             style={{
-              background: 'radial-gradient(ellipse at center, rgba(217,70,239,0.2) 0%, rgba(99,102,241,0.15) 35%, rgba(34,211,238,0.1) 60%, transparent 80%)',
-              filter: 'blur(60px)',
+              background: 'radial-gradient(ellipse at center, rgba(217,70,239,0.08) 0%, rgba(99,102,241,0.06) 25%, rgba(34,211,238,0.04) 45%, transparent 70%)',
               transform: 'translate(-50%, -50%)',
               left: '50%',
               top: '50%',
@@ -544,23 +497,69 @@ export function SkillTreeView() {
               </p>
             </div>
 
-            <div className="absolute rounded-full animate-ping opacity-10"
+            {/* 脉冲环 — animate-pulse 替代 animate-ping（ping 在大元素上每帧触发 layout） */}
+            <div className="absolute rounded-full opacity-10 animate-pulse"
               style={{ inset: -16, border: '2px solid rgba(139,92,246,0.3)' }}
             />
           </div>
 
-          {/* 评分胶囊 */}
-          <div className="mt-4 px-5 py-1.5 bg-slate-900/80 backdrop-blur-sm border border-slate-700/50 rounded-full shadow-lg">
-            <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">
-              SCORE {avgScore}
-            </span>
+          {/* 评分胶囊 — 点击弹出说明气泡 */}
+          <div className="mt-4 relative">
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowScoreTooltip(prev => !prev) }}
+              className="px-5 py-1.5 bg-slate-900/80 backdrop-blur-sm border border-slate-700/50 rounded-full shadow-lg hover:border-cyan-500/50 transition-colors pointer-events-auto"
+            >
+              <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">
+                SCORE {avgScore}
+              </span>
+            </button>
+
+            {/* SCORE 说明气泡 */}
+            {showScoreTooltip && (
+              <div
+                className="absolute top-full mt-2 left-1/2 -translate-x-1/2 w-72 bg-white/95 backdrop-blur-xl border border-stone-200 rounded-xl shadow-lg z-[120] p-4 pointer-events-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-cyan-500" />
+                    <span className="text-xs font-black text-stone-700">评分说明</span>
+                  </div>
+                  <button onClick={() => setShowScoreTooltip(false)} className="w-5 h-5 rounded-md bg-stone-100 hover:bg-rose-50 flex items-center justify-center transition-colors">
+                    <X className="w-3 h-3 text-stone-400" />
+                  </button>
+                </div>
+                <div className="space-y-2 text-[11px] text-stone-500 leading-relaxed">
+                  <p><strong className="text-stone-700">SCORE</strong> 是所有 Nexus 的平均执行表现分（0-100）</p>
+                  <div className="space-y-1">
+                    <p>• 任务<strong className="text-emerald-600">成功</strong>：+3 分（连胜额外加分，复杂任务额外加分）</p>
+                    <p>• 任务<strong className="text-red-500">失败</strong>：-5 分（连败加重扣分）</p>
+                    <p>• 初始分数：50 分</p>
+                  </div>
+                  <div className="pt-1.5 border-t border-stone-100 text-[10px] text-stone-400">
+                    <p>分数越高代表 Agent 执行任务的稳定性越强</p>
+                    {(() => {
+                      const nexusArr = Array.from(nexuses.values())
+                      const totalRuns = nexusArr.reduce((s, n) => s + (n.scoring?.totalRuns ?? 0), 0)
+                      const totalSuccess = nexusArr.reduce((s, n) => s + (n.scoring?.successCount ?? 0), 0)
+                      return totalRuns > 0 ? (
+                        <p className="mt-1">累计执行 {totalRuns} 次，成功 {totalSuccess} 次（{Math.round(totalSuccess / totalRuns * 100)}%）</p>
+                      ) : (
+                        <p className="mt-1">暂无执行记录</p>
+                      )
+                    })()}
+                  </div>
+                </div>
+                <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-l border-t border-stone-200 rotate-45" />
+              </div>
+            )}
           </div>
         </div>
 
         {/* ── hover Tooltip ── */}
         {tooltip && !selectedSkill && (
           <div
-            className="fixed px-3 py-1.5 bg-white/95 backdrop-blur-xl border border-stone-200 rounded-lg shadow-lg z-50 pointer-events-none"
+            className="fixed px-3 py-1.5 bg-white border border-stone-200 rounded-lg shadow-lg z-50 pointer-events-none"
             style={{ left: tooltip.x, top: tooltip.y - 48, transform: 'translateX(-50%)' }}
           >
             <p className="text-xs font-bold text-stone-800 whitespace-nowrap">{tooltip.name}</p>
@@ -604,37 +603,131 @@ export function SkillTreeView() {
           </div>
         )}
 
-        {/* ── 核心摘要完整弹窗（点击核心球体展开） ── */}
-        {showSummaryPopup && displaySummary && (
-          <div
-            className="absolute z-[110] w-80 bg-white/95 backdrop-blur-xl border border-stone-200 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] overflow-hidden"
-            style={{ left: Math.max(12, cx - 160), top: cy + 150 }}
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100 bg-stone-50/50">
-              <div className="flex items-center gap-2">
-                <Network className="w-4 h-4 text-cyan-500" />
-                <span className="text-xs font-black text-stone-700">Agent 能力总结</span>
-              </div>
-              <button
+        {/* ── 结构化分析弹窗（居中大气泡，点击核心球体展开） ── */}
+        <AnimatePresence>
+          {showSummaryPopup && (
+            <div className="absolute inset-0 z-[100] flex items-center justify-center pointer-events-auto">
+              {/* 遮罩 */}
+              <div
+                className="absolute inset-0 bg-black/10 backdrop-blur-[2px]"
                 onClick={() => setShowSummaryPopup(false)}
-                className="w-6 h-6 rounded-lg bg-stone-100 hover:bg-rose-50 flex items-center justify-center transition-colors"
+              />
+              {/* 弹窗主体 */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                className="relative w-[420px] max-h-[70vh] bg-white/95 backdrop-blur-xl border border-stone-200 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.15)] overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
               >
-                <X className="w-3 h-3 text-stone-500" />
-              </button>
+                {/* 标题栏 */}
+                <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100 bg-gradient-to-r from-cyan-50/50 to-purple-50/50">
+                  <div className="flex items-center gap-2">
+                    <Network className="w-4 h-4 text-cyan-500" />
+                    <span className="text-sm font-black text-stone-700">Agent 能力画像</span>
+                    <span className="text-[10px] text-stone-400 bg-stone-100 px-2 py-0.5 rounded-full">
+                      {skills.length} 项技能
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => generateAnalysis('full')}
+                      disabled={summaryLoading}
+                      className="w-7 h-7 rounded-lg bg-stone-100 hover:bg-cyan-50 flex items-center justify-center transition-colors disabled:opacity-50"
+                      title="重新分析"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 text-stone-500 ${summaryLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button
+                      onClick={() => setShowSummaryPopup(false)}
+                      className="w-7 h-7 rounded-lg bg-stone-100 hover:bg-rose-50 flex items-center justify-center transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5 text-stone-500" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 内容区 */}
+                <div className="px-5 py-4 overflow-y-auto max-h-[calc(70vh-120px)]">
+                  {summaryLoading ? (
+                    <div className="flex flex-col items-center justify-center py-10 gap-3">
+                      <Loader2 className="w-6 h-6 text-cyan-400 animate-spin" />
+                      <p className="text-xs text-stone-400">正在分析技能矩阵...</p>
+                    </div>
+                  ) : structuredAnalysis ? (
+                    <div className="space-y-4">
+                      {/* 核心优势 */}
+                      {structuredAnalysis.coreStrengths && (
+                        <div>
+                          <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1.5">✦ 核心优势</h4>
+                          <p className="text-xs text-stone-600 leading-relaxed">{structuredAnalysis.coreStrengths}</p>
+                        </div>
+                      )}
+
+                      {/* 能力域覆盖 */}
+                      <div>
+                        <h4 className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">能力域覆盖</h4>
+                        <div className="grid grid-cols-2 gap-2">
+                          {structuredAnalysis.domains.map(domain => (
+                            <div key={domain.name} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-stone-50 border border-stone-100">
+                              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${coverageColor(domain.coverage)}`} />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-xs font-bold text-stone-700 truncate">{domain.name}</p>
+                                  <span className="text-[10px] text-stone-400 ml-1 flex-shrink-0">{domain.skillCount} 项</span>
+                                </div>
+                                <p className="text-[10px] text-stone-400">
+                                  {coverageLabel(domain.coverage)}
+                                  {domain.highlights.length > 0 && ` · ${domain.highlights.slice(0, 2).join(', ')}`}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 薄弱领域 */}
+                      {structuredAnalysis.weaknesses && (
+                        <div>
+                          <h4 className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1.5">⚠ 薄弱领域</h4>
+                          <p className="text-xs text-stone-600 leading-relaxed">{structuredAnalysis.weaknesses}</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-xs text-stone-400">{displaySummary}</p>
+                      <button
+                        onClick={() => generateAnalysis('full')}
+                        className="mt-3 px-4 py-1.5 text-xs text-cyan-500 bg-cyan-50 rounded-lg hover:bg-cyan-100 transition-colors"
+                      >
+                        生成结构化分析
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* 底栏 */}
+                <div className="px-5 py-3 border-t border-stone-100 bg-stone-50/50 flex items-center justify-between">
+                  <span className="text-[10px] text-stone-400">
+                    {skills.length} 项技能 / {activeCount} 项活跃
+                  </span>
+                  <div className="flex items-center gap-3">
+                    {avgScore > 0 && (
+                      <span className="text-[10px] text-cyan-500 font-bold">SCORE {avgScore}</span>
+                    )}
+                    {skillAnalysis.timestamp > 0 && (
+                      <span className="text-[10px] text-stone-300">
+                        {new Date(skillAnalysis.timestamp).toLocaleDateString('zh-CN')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
             </div>
-            <div className="px-4 py-3">
-              <p className="text-xs text-stone-600 leading-relaxed">{displaySummary}</p>
-              <div className="flex items-center gap-3 mt-3 pt-2 border-t border-stone-100">
-                <span className="text-[10px] text-stone-400">
-                  {skills.length} 项技能 / {activeCount} 项活跃
-                </span>
-                {avgScore > 0 && (
-                  <span className="text-[10px] text-cyan-500 font-bold">SCORE {avgScore}</span>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+          )}
+        </AnimatePresence>
       </div>
     </div>
   )

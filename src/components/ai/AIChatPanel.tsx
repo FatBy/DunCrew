@@ -9,6 +9,7 @@ import { useStore } from '@/store'
 import { isLLMConfigured } from '@/services/llmService'
 import { getQuickCommands } from '@/services/contextBuilder'
 import { ChatMessage, StreamingMessage } from './ChatMessage'
+import { AgentProgressTicker } from './AgentProgressTicker'
 import { ChatErrorBoundary } from './ChatErrorBoundary'
 import { AddMCPModal } from './AddMCPModal'
 import { AddSkillModal } from './AddSkillModal'
@@ -16,6 +17,7 @@ import { CreateNexusModal, NexusInitialData } from '@/components/world/CreateNex
 import { autoInstallSkills } from '@/services/installService'
 import { ConversationSidebar } from './ConversationSidebar'
 import { useT } from '@/i18n'
+import { getServerUrl as _getServerUrl } from '@/utils/env'
 
 export function AIChatPanel() {
   const t = useT()
@@ -102,7 +104,7 @@ export function AIChatPanel() {
   }, [input])
 
   const getServerUrl = () => {
-    return localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+    return localStorage.getItem('duncrew_server_url') || _getServerUrl()
   }
 
   const MAX_UPLOAD_SIZE = 10 * 1024 * 1024 // 10MB，与后端 MAX_FILE_SIZE 一致
@@ -307,7 +309,7 @@ export function AIChatPanel() {
               installSummary = `，已安装 ${installed.length} 个技能`
               // 刷新前端技能列表
               try {
-                const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+                const serverUrl = localStorage.getItem('duncrew_server_url') || _getServerUrl()
                 const res = await fetch(`${serverUrl}/skills`)
                 if (res.ok) {
                   const skills = await res.json()
@@ -632,8 +634,13 @@ export function AIChatPanel() {
                     {chatMessages.filter(m => m.role !== 'system').map((msg) => (
                       <ChatMessage key={msg.id} message={msg} containerWidth="main" />
                     ))}
-                    {chatStreaming && chatStreamContent && (
-                      <StreamingMessage content={chatStreamContent} />
+                    {chatStreaming && (
+                      <>
+                        <AgentProgressTicker />
+                        {chatStreamContent && (
+                          <StreamingMessage content={chatStreamContent} />
+                        )}
+                      </>
                     )}
                     {chatError && (
                       <div className="px-5 py-4 bg-red-500/10 border border-red-500/20 rounded-xl text-base font-mono text-red-400">

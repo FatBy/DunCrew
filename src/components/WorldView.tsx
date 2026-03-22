@@ -35,11 +35,29 @@ function CanvasWorldView() {
   // 主题调色板
   const canvasPalette = useStore((s) => s.canvasPalette)
 
-  // 新增：Soul 数据订阅
-  const soulIdentity = useStore((s) => s.soulIdentity)
-  const soulCoreTruths = useStore((s) => s.soulCoreTruths)
-  const soulDimensions = useStore((s) => s.soulDimensions)
-  const skills = useStore((s) => s.skills)
+  // Soul 数据：通过 ref 传递避免频繁重渲染
+  // 这些数据仅用于计算 energyCoreState，变化不需要触发组件重渲染
+  const soulIdentityRef = useRef(useStore.getState().soulIdentity)
+  const soulCoreTruthsRef = useRef(useStore.getState().soulCoreTruths)
+  const soulDimensionsRef = useRef(useStore.getState().soulDimensions)
+  const skillsRef = useRef(useStore.getState().skills)
+
+  // 通过 subscribe 同步 ref，不触发重渲染
+  useEffect(() => {
+    const unsub = useStore.subscribe((state) => {
+      soulIdentityRef.current = state.soulIdentity
+      soulCoreTruthsRef.current = state.soulCoreTruths
+      soulDimensionsRef.current = state.soulDimensions
+      skillsRef.current = state.skills
+    })
+    return unsub
+  }, [])
+
+  // 保留变量名兼容下方 useMemo
+  const soulIdentity = soulIdentityRef.current
+  const soulCoreTruths = soulCoreTruthsRef.current
+  const soulDimensions = soulDimensionsRef.current
+  const skills = skillsRef.current
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<GameCanvas | null>(null)
@@ -112,15 +130,24 @@ function CanvasWorldView() {
     engineRef.current?.setPalette(canvasPalette)
   }, [canvasPalette])
 
-  // 建造动画 tick (持续推进 constructionProgress)
+  // House 打开时暂停/恢复 GameCanvas 渲染引擎
   useEffect(() => {
-    let lastTime = performance.now()
+    const engine = engineRef.current
+    if (!engine) return
+    if (isHouseOpen) {
+      engine.pause()
+    } else {
+      engine.resume()
+    }
+  }, [isHouseOpen])
+
+  // 建造动画 tick (V2: 始终运行，不受 House 打开状态影响)
+  // tick 现在只负责标记完成 + 触发重渲染，不做高频递增
+  useEffect(() => {
     let animId: number
     
-    const tick = (now: number) => {
-      const deltaMs = now - lastTime
-      lastTime = now
-      tickConstructionAnimations(deltaMs)
+    const tick = () => {
+      tickConstructionAnimations(0)
       animId = requestAnimationFrame(tick)
     }
     

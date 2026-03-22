@@ -97,14 +97,18 @@ export const IncubatorPod: React.FC<IncubatorPodProps> = ({ data, isSelected, on
   const isWorking = data.status === 'working'
   const percent = Math.round((data.xp / data.maxXp) * 100)
 
+  // 仅在 working 状态时启动计时器，使用 1s 间隔代替 100ms 减少重渲染频率
   useEffect(() => {
-    if (isWorking) {
-      const startTime = Date.now() - Math.random() * 5000
-      const timer = setInterval(() => {
-        setElapsed(Number(((Date.now() - startTime) / 1000).toFixed(1)))
-      }, 100)
-      return () => clearInterval(timer)
+    if (!isWorking) {
+      setElapsed(0)
+      return
     }
+    const startTime = Date.now() - Math.random() * 5000
+    setElapsed(Number(((Date.now() - startTime) / 1000).toFixed(0)))
+    const timer = setInterval(() => {
+      setElapsed(Number(((Date.now() - startTime) / 1000).toFixed(0)))
+    }, 1000)
+    return () => clearInterval(timer)
   }, [isWorking])
 
   return (

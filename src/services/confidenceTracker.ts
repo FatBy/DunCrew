@@ -5,14 +5,18 @@
  *
  * 信号来源：
  * - Environment Assertion (+0.15): Critic 验证通过
- * - Human Positive (+0.15): 用户正面反馈/审批通过
- * - Human Negative (-0.15): 用户负面反馈/审批拒绝
- * - System Failure (-0.2): 工具执行失败
+ * - Human Positive (+0.20): 用户正面反馈/审批通过
+ * - Human Negative (-0.20): 用户负面反馈/审批拒绝
+ * - System Failure (-0.15): 系统/工具执行失败
  * - Gene Match (+0.05): 与高置信基因匹配
+ * - Repeated Success (+0.10): 同类工具重复成功
  *
  * 晋升条件：
- * - confidence >= 0.7
- * - signals >= 3
+ * - confidence >= 0.65
+ * - signals >= 2
+ *
+ * 追踪粒度：按 nexusId + toolName 聚合（而非按 callId），支持跨循环信号积累
+ * 持久化：localStorage，页面刷新不丢失
  *
  * L0 衰减：半衰期 30 天
  */
@@ -20,6 +24,9 @@
 import type { ConfidenceSignal, L1MemoryEntry } from '@/types'
 import { CONFIDENCE_SIGNALS, L0_PROMOTION_CONFIG } from '@/types'
 import { memoryStore } from './memoryStore'
+import { chat, isLLMConfigured } from './llmService'
+
+const TRACKER_STORAGE_KEY = 'duncrew_confidence_tracker'
 
 // ============================================
 // ConfidenceTrackerService
@@ -30,6 +37,43 @@ class ConfidenceTrackerService {
   private trackedEntries = new Map<string, L1MemoryEntry>()
   /** L0 衰减定时器 */
   private decayTimer: ReturnType<typeof setInterval> | null = null
+  /** 批量操作时跳过中间持久化 */
+  private _skipPersist = false
+
+  constructor() {
+    this.loadFromStorage()
+  }
+
+  // ═══ 持久化 ═══
+
+  /** 从 localStorage 恢复追踪状态 */
+  private loadFromStorage(): void {
+    try {
+      const raw = localStorage.getItem(TRACKER_STORAGE_KEY)
+      if (!raw) return
+      const entries: L1MemoryEntry[] = JSON.parse(raw)
+      for (const entry of entries) {
+        this.trackedEntries.set(entry.id, entry)
+      }
+      console.log(`[ConfidenceTracker] Restored ${entries.length} entries from storage`)
+    } catch {
+      console.warn('[ConfidenceTracker] Failed to load from storage')
+    }
+  }
+
+  /** 持久化追踪状态到 localStorage */
+  private saveToStorage(): void {
+    if (this._skipPersist) return
+    try {
+      const entries = Array.from(this.trackedEntries.values())
+      const trimmed = entries
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 500)
+      localStorage.setItem(TRACKER_STORAGE_KEY, JSON.stringify(trimmed))
+    } catch {
+      console.warn('[ConfidenceTracker] Failed to save to storage')
+    }
+  }
 
   // ═══ 条目管理 ═══
 
@@ -49,6 +93,7 @@ class ConfidenceTrackerService {
     }
 
     this.trackedEntries.set(memoryId, entry)
+    this.saveToStorage()
   }
 
   /** 获取追踪条目 */
@@ -72,6 +117,7 @@ class ConfidenceTrackerService {
     entry.signals.push(signal)
     entry.confidence = Math.max(0, Math.min(1, entry.confidence + signal.delta))
     entry.updatedAt = Date.now()
+    this.saveToStorage()
   }
 
   /** 环境验证信号 (Critic 验证结果) */
@@ -114,6 +160,16 @@ class ConfidenceTrackerService {
     })
   }
 
+  /** 同类工具重复成功信号 */
+  addRepeatedSuccessSignal(memoryId: string): void {
+    this.addSignal(memoryId, {
+      type: 'environment',
+      delta: CONFIDENCE_SIGNALS.REPEATED_SUCCESS,
+      source: 'repeated_success',
+      timestamp: Date.now(),
+    })
+  }
+
   // ═══ 晋升评估 ═══
 
   /**
@@ -130,36 +186,115 @@ class ConfidenceTrackerService {
 
   /**
    * 将高置信度 L1 记忆晋升到 L0 全局记忆
-   * L0 = 写入 memoryStore 时不带 nexusId
+   * V2: 聚合同 Nexus 的多条 L1 记忆，调用 LLM 生成语义摘要后写入
    */
   async promoteToL0(entries: L1MemoryEntry[]): Promise<number> {
-    let promoted = 0
+    if (entries.length === 0) return 0
 
+    // 按 nexusId 分组
+    const byNexus = new Map<string, L1MemoryEntry[]>()
     for (const entry of entries) {
       if (entry.promotedToL0) continue
+      const group = byNexus.get(entry.nexusId) || []
+      group.push(entry)
+      byNexus.set(entry.nexusId, group)
+    }
+
+    let promoted = 0
+
+    for (const [nexusId, groupEntries] of byNexus) {
+      const rawContents = groupEntries.map(e => e.content).join('\n')
+      const avgConfidence = groupEntries.reduce((sum, e) => sum + e.confidence, 0) / groupEntries.length
+
+      // 尝试用 LLM 做语义提炼
+      let summarizedContent: string
+      if (isLLMConfigured()) {
+        try {
+          const summaryResult = await chat([
+            {
+              role: 'system',
+              content: [
+                '你是一个记忆提炼助手。请将以下多条工具执行记录提炼为一条简洁的核心记忆。',
+                '要求：',
+                '- 用一两句话概括用户做了什么、关注什么、得到了什么关键结果',
+                '- 提取有价值的事实和结论，忽略执行细节（命令、参数、字节数等）',
+                '- 使用自然语言，像人类笔记一样',
+                '- 只输出提炼后的记忆内容，不要解释',
+              ].join('\n'),
+            },
+            { role: 'user', content: rawContents.slice(0, 2000) },
+          ])
+          summarizedContent = summaryResult?.trim() || rawContents.slice(0, 300)
+        } catch (summarizeError) {
+          console.warn('[ConfidenceTracker] LLM summarize failed, using fallback:', summarizeError)
+          summarizedContent = this.fallbackSummarize(groupEntries)
+        }
+      } else {
+        summarizedContent = this.fallbackSummarize(groupEntries)
+      }
 
       const ok = await memoryStore.write({
         source: 'memory',
-        content: `[L0 Promoted] ${entry.content}`,
-        tags: ['l0_promoted', `from_nexus:${entry.nexusId}`],
+        content: summarizedContent,
+        tags: ['l0_promoted', `from_nexus:${nexusId}`],
         metadata: {
-          originalId: entry.id,
-          sourceNexusId: entry.nexusId,
-          confidence: entry.confidence,
-          signalCount: entry.signals.length,
+          sourceNexusId: nexusId,
+          sourceEntryIds: groupEntries.map(e => e.id),
+          confidence: avgConfidence,
+          signalCount: groupEntries.reduce((sum, e) => sum + e.signals.length, 0),
           promotedAt: Date.now(),
+          entryCount: groupEntries.length,
         },
       })
 
       if (ok) {
-        entry.promotedToL0 = true
-        entry.updatedAt = Date.now()
-        promoted++
-        console.log(`[ConfidenceTracker] Promoted to L0: ${entry.id} (confidence=${entry.confidence.toFixed(2)}, signals=${entry.signals.length})`)
+        for (const entry of groupEntries) {
+          entry.promotedToL0 = true
+          entry.updatedAt = Date.now()
+        }
+        promoted += groupEntries.length
+        console.log(`[ConfidenceTracker] Promoted ${groupEntries.length} L1 → L0 for Nexus ${nexusId}: "${summarizedContent.slice(0, 80)}..."`)
       }
     }
 
+    if (promoted > 0) {
+      this.saveToStorage()
+    }
+
     return promoted
+  }
+
+  /**
+   * 本地 fallback 提炼：不依赖 LLM，从多条 L1 记忆中提取关键信息
+   */
+  private fallbackSummarize(entries: L1MemoryEntry[]): string {
+    const toolNames = new Set<string>()
+    const targets = new Set<string>()
+
+    for (const entry of entries) {
+      const colonIndex = entry.content.indexOf(':')
+      if (colonIndex > 0 && colonIndex < 30) {
+        toolNames.add(entry.content.slice(0, colonIndex).trim())
+      }
+      const pathMatch = entry.content.match(/(?:[\w./\\-]+\.[\w]{1,6})/g)
+      if (pathMatch) {
+        for (const path of pathMatch.slice(0, 3)) {
+          targets.add(path)
+        }
+      }
+    }
+
+    const successCount = entries.filter(e => e.confidence >= 0.5).length
+    const toolList = Array.from(toolNames).slice(0, 5).join('、')
+    const targetList = Array.from(targets).slice(0, 3).join('、')
+
+    let summary = `使用 ${toolList} 执行了 ${entries.length} 项操作`
+    if (targetList) {
+      summary += `，涉及 ${targetList}`
+    }
+    summary += `，${successCount}/${entries.length} 项成功`
+
+    return summary
   }
 
   // ═══ L0 衰减 ═══
@@ -200,6 +335,8 @@ class ConfidenceTrackerService {
     if (toRemove.length > 0) {
       console.log(`[ConfidenceTracker] Decay cleanup: removed ${toRemove.length} stale entries`)
     }
+
+    this.saveToStorage()
   }
 
   /** 启动周期性衰减 (每 6 小时) */
@@ -221,8 +358,8 @@ class ConfidenceTrackerService {
   // ═══ 批量操作 ═══
 
   /**
-   * 为最近一轮的工具执行结果批量创建追踪条目并添加初始信号
-   * 在 ReAct 循环结束时调用
+   * 按 nexusId + toolName 聚合追踪（而非按 callId）
+   * 同一个 Nexus 下多次成功使用同一个工具 → 给同一个条目追加信号
    */
   trackToolResults(
     nexusId: string,
@@ -230,22 +367,39 @@ class ConfidenceTrackerService {
   ): string[] {
     const trackedIds: string[] = []
 
-    for (const tr of toolResults) {
-      const memoryId = `l1-${nexusId}-${tr.callId}`
-      const content = `${tr.toolName}: ${(tr.result || '').slice(0, 200)}`
+    // 批量操作期间跳过中间持久化
+    this._skipPersist = true
+    try {
+      for (const tr of toolResults) {
+        const memoryId = `l1-${nexusId}-${tr.toolName}`
+        const existingEntry = this.trackedEntries.get(memoryId)
 
-      this.trackEntry(memoryId, nexusId, content)
+        if (existingEntry) {
+          if (tr.status === 'success') {
+            this.addRepeatedSuccessSignal(memoryId)
+          } else {
+            this.addFailureSignal(memoryId)
+          }
+          existingEntry.content = `${tr.toolName}: ${(tr.result || '').slice(0, 200)}`
+          existingEntry.updatedAt = Date.now()
+        } else {
+          const content = `${tr.toolName}: ${(tr.result || '').slice(0, 200)}`
+          this.trackEntry(memoryId, nexusId, content)
 
-      // 根据执行状态添加初始信号
-      if (tr.status === 'success') {
-        this.addEnvironmentSignal(memoryId, true)
-      } else {
-        this.addFailureSignal(memoryId)
+          if (tr.status === 'success') {
+            this.addEnvironmentSignal(memoryId, true)
+          } else {
+            this.addFailureSignal(memoryId)
+          }
+        }
+
+        trackedIds.push(memoryId)
       }
-
-      trackedIds.push(memoryId)
+    } finally {
+      this._skipPersist = false
     }
 
+    this.saveToStorage()
     return trackedIds
   }
 
@@ -264,6 +418,7 @@ class ConfidenceTrackerService {
   clear(): void {
     this.trackedEntries.clear()
     this.stopDecayLoop()
+    localStorage.removeItem(TRACKER_STORAGE_KEY)
   }
 }
 

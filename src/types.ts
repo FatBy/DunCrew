@@ -344,6 +344,9 @@ export interface ChannelsSnapshot {
   channels: Record<string, Channel>
 }
 
+// 技能来源
+export type SkillSource = 'builtin' | 'community' | 'user'
+
 // OpenClaw Skill (SKILL.md 文件系统)
 export interface OpenClawSkill {
   name: string
@@ -373,6 +376,7 @@ export interface OpenClawSkill {
   }
   install?: OpenClawInstallSpec[]
   tags?: string[]
+  source?: SkillSource           // 技能来源: builtin(系统内置) | community(社区下载) | user(用户自建)
   clawHub?: {
     slug?: string
     version?: string
@@ -691,6 +695,10 @@ export interface ExecTrace {
   retryCount?: number          // 重试次数
   skillIds?: string[]          // 触发的技能 ID
   activeNexusId?: string       // 执行时的活跃 Nexus
+  /** V2: 碱基序列字符串，如 "X-P-E-V-E" */
+  baseSequence?: string
+  /** V2: 碱基分布统计 */
+  baseDistribution?: { E: number; P: number; V: number; X: number }
 }
 
 export interface ExecTraceToolCall {
@@ -700,6 +708,10 @@ export interface ExecTraceToolCall {
   result?: string
   latency: number
   order: number
+  /** V2: 碱基类型标注 — E(Execute)/P(Plan)/V(Verify)/X(Explore) */
+  baseType?: 'E' | 'P' | 'V' | 'X'
+  /** V2: P 碱基的推理文本摘要（仅 baseType='P' 时有值） */
+  reasoningSummary?: string
 }
 
 // P0: 动态工具信息
@@ -761,6 +773,8 @@ export interface NexusEntity {
   version?: string                // Nexus 版本
   location?: 'local' | 'bundled'  // 来源
   path?: string                   // 本地路径
+  projectPath?: string            // 关联的项目根目录 (绝对路径)
+  skillsConfirmed?: boolean       // 技能配置是否已经过用户确认
   // Phase 5: 目标函数驱动 (Objective-Driven Execution)
   objective?: string              // 核心目标函数 (任务终点定义)
   metrics?: string[]              // 验收标准 (布尔型检查点)
@@ -921,11 +935,8 @@ export type GeneCategory =
   | 'repair'      // 修复基因 (error→success 模式)
   | 'optimize'    // 优化基因
   | 'pattern'     // 通用模式
-  | 'capability'  // Nexus 能力基因 (描述 Nexus 能做什么)
-  | 'artifact'    // Nexus 产出物基因 (描述 Nexus 产出了什么)
-  | 'activity'    // Nexus 活动基因 (描述 Nexus 做过什么)
 
-// Nexus 能力信息 (capability 基因专用)
+// Nexus 能力信息
 export interface NexusCapabilityInfo {
   nexusId: string           // nexus 唯一标识
   nexusName: string         // 显示名称
@@ -934,7 +945,7 @@ export interface NexusCapabilityInfo {
   dirPath: string           // nexuses/xxx/
 }
 
-// Nexus 产出物信息 (artifact 基因专用)
+// Nexus 产出物信息
 export interface NexusArtifactInfo {
   nexusId: string           // 产出此文件的 Nexus
   path: string              // 文件路径
@@ -945,27 +956,19 @@ export interface NexusArtifactInfo {
   linkedArtifacts?: string[] // 关联的其他产出物 ID
 }
 
-// Nexus 活动信息 (activity 基因专用)
-export interface NexusActivityInfo {
-  nexusId: string           // 执行此活动的 Nexus
-  nexusName: string         // Nexus 显示名称
-  summary: string           // 活动摘要 "生成了8集科幻动漫剧情大纲"
-  toolsUsed: string[]       // 使用的工具
-  artifactsCreated: string[] // 创建的产出物 ID
-  duration: number          // 耗时 (ms)
-  status: 'success' | 'failed'
-}
-
-// 基因: 一条可复用的修复/优化模式 或 Nexus 通讯信息
+// 基因: 一条可复用的修复/优化模式
 export interface Gene {
-  id: string                      // gene-{timestamp}
+  id: string                      // gene-{timestamp} 或 seed-{name}
   category: GeneCategory
   signals_match: string[]         // 触发信号 (支持 /regex/flags 和子串匹配)
-  strategy: string[]              // 修复策略步骤 (自然语言)
+  strategy: string[]              // 修复策略步骤 (自然语言，V2: 抽象模式而非具体参数值)
+  preconditions?: string[]        // V2: 前置条件 — 什么情况下该激活此基因
+  antiPatterns?: string[]         // V2: 反模式 — 什么情况下不该使用此基因
   source: {
     traceId?: string              // 来源 trace ID
     nexusId?: string              // 产生此基因的 Nexus
     createdAt: number
+    isSeed?: boolean              // V2: 是否为内置种子基因
   }
   metadata: {
     confidence: number            // 0-1 置信度
@@ -973,10 +976,6 @@ export interface Gene {
     successCount: number          // 使用后成功次数
     lastUsedAt?: number
   }
-  // Nexus 通讯扩展字段 (根据 category 使用)
-  nexusCapability?: NexusCapabilityInfo  // capability 基因
-  artifactInfo?: NexusArtifactInfo       // artifact 基因
-  activityInfo?: NexusActivityInfo       // activity 基因
 }
 
 // 基因匹配结果
@@ -1708,15 +1707,13 @@ export const CHILD_LIMITS = {
 
 export interface MemorySearchResult {
   id: string
-  path: string
-  startLine: number
-  endLine: number
   score: number                     // 0-1
   snippet: string
   content?: string                  // 完整内容 (后端返回)
   source: string                    // 'memory' | 'exec_trace' | 'gene' | 'nexus_xp' | 'session' | 'l1_memory'
   nexusId?: string
   createdAt?: number                // Unix 毫秒时间戳
+  confidence?: number               // 后端返回的置信度 (0-1)
   tags?: string[]
   metadata?: Record<string, unknown>
 }
@@ -1859,16 +1856,17 @@ export interface L1MemoryEntry {
 // 置信度信号分值
 export const CONFIDENCE_SIGNALS = {
   ENVIRONMENT_ASSERTION: 0.15,   // Critic 验证通过
-  HUMAN_POSITIVE: 0.15,          // 用户正面反馈
-  HUMAN_NEGATIVE: -0.15,         // 用户负面反馈
-  SYSTEM_FAILURE: -0.2,          // 系统/工具执行失败
+  HUMAN_POSITIVE: 0.20,          // 用户正面反馈 (提高权重)
+  HUMAN_NEGATIVE: -0.20,         // 用户负面反馈
+  SYSTEM_FAILURE: -0.15,         // 系统/工具执行失败 (降低惩罚)
   GENE_MATCH: 0.05,              // 与高置信基因匹配
+  REPEATED_SUCCESS: 0.10,        // 同类工具重复成功 (新增)
 } as const
 
 // L0 晋升配置
 export const L0_PROMOTION_CONFIG = {
-  PROMOTION_THRESHOLD: 0.7,      // 置信度 >= 0.7 才能提升
-  MIN_SIGNALS_FOR_PROMOTION: 3,  // 至少 3 个信号
+  PROMOTION_THRESHOLD: 0.65,     // 置信度 >= 0.65 (从 0.7 降低)
+  MIN_SIGNALS_FOR_PROMOTION: 2,  // 至少 2 个信号 (从 3 降低)
   DECAY_HALF_LIFE_DAYS: 30,      // L0 记忆半衰期
-  INITIAL_CONFIDENCE: 0.3,       // 新条目初始置信度
+  INITIAL_CONFIDENCE: 0.35,      // 新条目初始置信度 (从 0.3 提高)
 } as const

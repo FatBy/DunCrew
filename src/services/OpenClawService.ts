@@ -5,6 +5,7 @@ import type {
   TaskItem, ExecutionStep
 } from '@/types'
 import type { ParsedSoul } from '@/utils/soulParser'
+import { getServerUrl } from '@/utils/env'
 
 // Gateway skills.status 返回类型 (映射用，无需完整字段)
 interface SkillStatusEntry {
@@ -1248,7 +1249,7 @@ class OpenClawService {
     const nexusId = this.storeActions?.activeNexusId
     if (!nexusId) return
 
-    const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+    const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
 
     // 写入经验记录到本地后端（如可用，静默失败）
     try {

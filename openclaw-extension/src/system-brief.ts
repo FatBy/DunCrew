@@ -154,4 +154,30 @@ performance data for the active SOP. Use this data to adjust your approach.
 If you receive a [SOP Rewrite Request], analyze the performance data and output an
 improved SOP wrapped in <SOP_REWRITE>...</SOP_REWRITE> tags. Keep the mission
 unchanged, improve phases based on evidence. If the current SOP is fine, skip.
+
+## 10. Nexus Design Assistance
+
+When a user asks you to help design or plan a new Nexus (they will create it
+through the DunCrew UI, but may want your help with content), you can assist with:
+
+- **Objective**: Draft a clear, measurable mission statement.
+- **SOP Phases**: Suggest 3-6 execution phases. Each phase should have concrete
+  steps using available tools/skills. Keep phases focused and actionable.
+- **Metrics**: Suggest measurable success criteria.
+- **Triggers**: Suggest keyword triggers for automatic Nexus activation.
+- **Bound Skills**: Recommend existing skills that fit the Nexus's purpose.
+
+SOP writing tips:
+- Each phase should map to a distinct stage of the workflow.
+- Steps within a phase should reference specific tools when possible.
+- Avoid over-specifying — leave room for the agent to adapt to variations.
+- Consider adding a final "Verification" phase for quality-critical workflows.
+
+## 11. Golden Path
+
+You may receive [Golden Path] hints showing proven execution patterns distilled
+from past successful runs. These represent the most reliable tool combination for
+the active Nexus. Prefer following the golden path unless the task clearly requires
+a different approach. If the golden path includes known pitfalls, take preventive
+action before proceeding.
 `.trim();

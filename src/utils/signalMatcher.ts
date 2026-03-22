@@ -85,7 +85,58 @@ export function extractSignals(toolName: string, errorMessage: string): string[]
     signals.push(structuredSig)
   }
 
+  // 5. 提取错误消息中的特征指纹 (提高基因区分度)
+  //    让同一工具的不同错误场景产生不同信号，避免所有同类错误都被视为重复基因
+  const errorFingerprint = extractErrorFingerprint(lowerError)
+  if (errorFingerprint && !signals.includes(errorFingerprint)) {
+    signals.push(errorFingerprint)
+  } else if (!errorFingerprint) {
+    // V2 兜底: 当所有正则都 miss 时，用 errorType 作为指纹
+    // 确保每个错误至少有一个区分信号
+    const fallbackFingerprint = `fp:${errorType}`
+    if (!signals.includes(fallbackFingerprint)) {
+      signals.push(fallbackFingerprint)
+    }
+  }
+
   return signals
+}
+
+/**
+ * 从错误消息中提取特征指纹
+ * 让同一工具的不同错误场景产生不同的信号，避免所有 readFile 错误都被视为重复基因
+ */
+function extractErrorFingerprint(lowerError: string): string | null {
+  // 提取文件路径片段 (最后一级目录+文件名)
+  const pathMatch = lowerError.match(/(?:path|file|dir(?:ectory)?)[:\s]+["']?([^\s"']+)/i)
+  if (pathMatch) {
+    const pathParts = pathMatch[1].replace(/\\/g, '/').split('/')
+    const lastParts = pathParts.slice(-2).join('/')
+    if (lastParts.length > 3 && lastParts.length < 60) {
+      return `path:${lastParts.toLowerCase()}`
+    }
+  }
+
+  // 提取 HTTP 状态码
+  const httpMatch = lowerError.match(/\b(4\d{2}|5\d{2})\b/)
+  if (httpMatch) {
+    return `http:${httpMatch[1]}`
+  }
+
+  // 提取命令名 (runCmd 场景)
+  const cmdMatch = lowerError.match(/(?:command|cmd)[:\s]+["']?(\S+)/i)
+  if (cmdMatch && cmdMatch[1].length < 30) {
+    return `cmd:${cmdMatch[1].toLowerCase()}`
+  }
+
+  // 提取关键错误短语 (取前几个有意义的词作为摘要)
+  const cleanError = lowerError.replace(/[^a-z0-9\s]/g, ' ').trim()
+  const words = cleanError.split(/\s+/).filter(w => w.length > 2).slice(0, 5)
+  if (words.length >= 2) {
+    return `err:${words.join('_')}`
+  }
+
+  return null
 }
 
 /**

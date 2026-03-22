@@ -1,13 +1,34 @@
 import type { StateCreator } from 'zustand'
-import type { Channel, ChannelType, ChannelsSnapshot, SkillNode, OpenClawSkill, SkillsSnapshot, TaskItem, AbilitySnapshot } from '@/types'
+import type { Channel, ChannelType, ChannelsSnapshot, SkillNode, OpenClawSkill, SkillsSnapshot, AbilitySnapshot } from '@/types'
 import { channelsToSkills, openClawSkillsToNodes } from '@/utils/dataMapper'
 import { chat, isLLMConfigured } from '@/services/llmService'
 import { skillStatsService } from '@/services/skillStatsService'
+import { ABILITY_DOMAIN_CONFIGS } from '@/services/skillStatsService'
+import { mapAllSkills, groupByDomain } from '@/utils/skillsHouseMapper'
 import { localServerService } from '@/services/localServerService'
 
 // LocalStorage 键名
 const SKILL_ANALYSIS_KEY = 'duncrew_skill_analysis'
 const SKILL_ENV_DATA_KEY = 'skill_env_values'
+
+// ============================================
+// 结构化技能分析
+// ============================================
+
+export interface StructuredSkillAnalysis {
+  domains: Array<{
+    name: string
+    coverage: 'strong' | 'moderate' | 'weak' | 'missing'
+    skillCount: number
+    highlights: string[]
+  }>
+  coreStrengths: string
+  weaknesses: string
+  oneLiner: string
+}
+
+// 分层更新级别
+export type AnalysisRefreshLevel = 'none' | 'local_only' | 'incremental' | 'full'
 
 // 技能分析状态
 export interface SkillAnalysis {
@@ -17,10 +38,16 @@ export interface SkillAnalysis {
   error: string | null
   timestamp: number
   skillCountAtGen: number
+  structured: StructuredSkillAnalysis | null
+  skillFingerprint: string
 }
 
 function emptySkillAnalysis(): SkillAnalysis {
-  return { summary: '', weaknesses: '', loading: false, error: null, timestamp: 0, skillCountAtGen: 0 }
+  return {
+    summary: '', weaknesses: '', loading: false, error: null,
+    timestamp: 0, skillCountAtGen: 0,
+    structured: null, skillFingerprint: '',
+  }
 }
 
 function loadSkillAnalysis(): SkillAnalysis {
@@ -39,6 +66,126 @@ function persistSkillAnalysis(analysis: SkillAnalysis) {
     const { loading: _, ...rest } = analysis
     localStorage.setItem(SKILL_ANALYSIS_KEY, JSON.stringify(rest))
   } catch { /* ignore */ }
+}
+
+/** 生成技能指纹（排序后的名称列表） */
+function computeSkillFingerprint(skills: OpenClawSkill[]): string {
+  return skills.map(s => s.name).sort().join(',')
+}
+
+/** 本地计算域覆盖（零 token，复用技工学院分类逻辑） */
+function computeLocalDomains(
+  skills: OpenClawSkill[],
+  envValues: Record<string, Record<string, string>>,
+): StructuredSkillAnalysis['domains'] {
+  const allModels = mapAllSkills(skills, envValues)
+  const domainGroups = groupByDomain(allModels)
+  const existingDomainIds = new Set(domainGroups.map(g => g.id))
+
+  const domains: StructuredSkillAnalysis['domains'] = domainGroups.map(group => ({
+    name: group.name,
+    coverage: group.skills.length >= 10 ? 'strong' as const
+      : group.skills.length >= 3 ? 'moderate' as const
+      : 'weak' as const,
+    skillCount: group.skills.length,
+    highlights: group.skills
+      .sort((a, b) => b.usageCount - a.usageCount)
+      .slice(0, 3)
+      .map(s => s.name),
+  }))
+
+  for (const config of ABILITY_DOMAIN_CONFIGS) {
+    if (!existingDomainIds.has(config.id)) {
+      domains.push({
+        name: config.name,
+        coverage: 'missing',
+        skillCount: 0,
+        highlights: [],
+      })
+    }
+  }
+
+  return domains
+}
+
+/** 判断分析刷新级别 */
+function getAnalysisRefreshLevel(
+  analysis: SkillAnalysis,
+  currentSkills: OpenClawSkill[],
+): AnalysisRefreshLevel {
+  if (currentSkills.length === 0) return 'none'
+  if (analysis.timestamp === 0) return 'full'
+
+  const currentFingerprint = computeSkillFingerprint(currentSkills)
+  if (currentFingerprint === analysis.skillFingerprint) return 'local_only'
+
+  const oldNames = new Set(analysis.skillFingerprint.split(',').filter(Boolean))
+  const newNames = new Set(currentSkills.map(s => s.name))
+  const added = [...newNames].filter(n => !oldNames.has(n))
+  const removed = [...oldNames].filter(n => !newNames.has(n))
+  const totalSize = Math.max(oldNames.size, newNames.size, 1)
+  const changeRatio = (added.length + removed.length) / totalSize
+
+  if (changeRatio > 0.3) return 'full'
+  return 'incremental'
+}
+
+/** 构建全量分析 prompt */
+function buildFullAnalysisMessages(
+  skills: OpenClawSkill[],
+  domainSummary: string,
+  statsInfo: string,
+): Array<{ role: 'system' | 'user'; content: string }> {
+  return [
+    {
+      role: 'system',
+      content: '你是 DunCrew 技能分析引擎。基于 Agent 的技能列表和使用数据，输出结构化能力画像。只输出纯 JSON，不要加 markdown 代码块。',
+    },
+    {
+      role: 'user',
+      content: [
+        `Agent 共挂载 ${skills.length} 项技能，按能力域分布：`,
+        domainSummary,
+        '',
+        statsInfo,
+        '',
+        '完整能力域参考：开发编程、创意生成（图像/音频/视频）、系统操作（文件/命令）、知识检索（搜索/文档）、社交通讯、安全认证、日常工具。',
+        '',
+        '请输出纯 JSON：',
+        '{"coreStrengths":"2句话描述核心优势","weaknesses":"1句话描述薄弱领域(无则空字符串)","oneLiner":"一句话总结(30-50字，用于核心球体展示)"}',
+      ].filter(Boolean).join('\n'),
+    },
+  ]
+}
+
+/** 构建增量更新 prompt */
+function buildIncrementalMessages(
+  oldAnalysis: StructuredSkillAnalysis,
+  added: string[],
+  removed: string[],
+): Array<{ role: 'system' | 'user'; content: string }> {
+  return [
+    {
+      role: 'system',
+      content: '你是 DunCrew 技能分析引擎。基于上次分析结果和技能变化，更新能力画像。只输出纯 JSON，不要加 markdown 代码块。',
+    },
+    {
+      role: 'user',
+      content: [
+        '上次分析结果：',
+        `- 核心优势：${oldAnalysis.coreStrengths}`,
+        `- 薄弱领域：${oldAnalysis.weaknesses}`,
+        `- 一句话总结：${oldAnalysis.oneLiner}`,
+        '',
+        '自上次分析以来的变化：',
+        added.length > 0 ? `- 新增技能 (${added.length} 项)：${added.slice(0, 20).join(', ')}${added.length > 20 ? '...' : ''}` : '- 无新增技能',
+        removed.length > 0 ? `- 移除技能 (${removed.length} 项)：${removed.slice(0, 20).join(', ')}${removed.length > 20 ? '...' : ''}` : '- 无移除技能',
+        '',
+        '请基于这些变化更新分析，输出纯 JSON：',
+        '{"coreStrengths":"2句话描述核心优势","weaknesses":"1句话描述薄弱领域(无则空字符串)","oneLiner":"一句话总结(30-50字)"}',
+      ].join('\n'),
+    },
+  ]
 }
 
 const initialSkillAnalysis = loadSkillAnalysis()
@@ -80,8 +227,9 @@ export interface ChannelsSlice {
   setOpenClawSkills: (skills: OpenClawSkill[]) => void
   
   // Actions - 技能分析
-  generateSkillAnalysis: () => Promise<void>
+  generateSkillAnalysis: (forceLevel?: AnalysisRefreshLevel) => Promise<void>
   shouldRefreshSkillAnalysis: () => boolean
+  getAnalysisRefreshLevel: () => AnalysisRefreshLevel
   
   // Actions - 技能统计刷新
   refreshSkillSnapshot: () => void
@@ -189,86 +337,113 @@ export const createChannelsSlice: StateCreator<ChannelsSlice> = (set, get) => ({
   setChannelsLoading: (loading) => set({ channelsLoading: loading }),
 
   // 技能分析
-  shouldRefreshSkillAnalysis: () => {
+  getAnalysisRefreshLevel: () => {
     const { skillAnalysis, openClawSkills } = get()
-    if (openClawSkills.length === 0) return false
-    // 首次加载
-    if (skillAnalysis.timestamp === 0) return true
-    // 技能数量变化 >=5
-    return Math.abs(openClawSkills.length - skillAnalysis.skillCountAtGen) >= 5
+    return getAnalysisRefreshLevel(skillAnalysis, openClawSkills)
   },
 
-  generateSkillAnalysis: async () => {
-    if (!isLLMConfigured()) return
+  shouldRefreshSkillAnalysis: () => {
+    const level = get().getAnalysisRefreshLevel()
+    return level !== 'none'
+  },
 
-    const { skillAnalysis, openClawSkills } = get()
+  generateSkillAnalysis: async (forceLevel?: AnalysisRefreshLevel) => {
+    const { skillAnalysis, openClawSkills, skillEnvValues } = get()
     if (skillAnalysis.loading) return
     if (openClawSkills.length === 0) return
 
-    set({ skillAnalysis: { ...get().skillAnalysis, loading: true, error: null } })
+    const level = forceLevel || getAnalysisRefreshLevel(skillAnalysis, openClawSkills)
+    if (level === 'none') return
+
+    // Layer 1: 本地计算域覆盖（零 token，始终执行）
+    const localDomains = computeLocalDomains(openClawSkills, skillEnvValues)
+
+    if (level === 'local_only') {
+      const updated: SkillAnalysis = {
+        ...skillAnalysis,
+        structured: skillAnalysis.structured
+          ? { ...skillAnalysis.structured, domains: localDomains }
+          : null,
+      }
+      persistSkillAnalysis(updated)
+      set({ skillAnalysis: updated })
+      return
+    }
+
+    // Layer 2 & 3: 需要调 LLM
+    if (!isLLMConfigured()) return
+
+    set({ skillAnalysis: { ...skillAnalysis, loading: true, error: null } })
 
     try {
-      // 收集技能列表
-      const skillList = openClawSkills.slice(0, 30).map(s =>
-        `- [${s.name}] ${s.description || '(无描述)'}${s.status !== 'active' ? ` (${s.status})` : ''}`
-      ).join('\n')
+      // 收集使用统计
+      const allStats = skillStatsService.getAllStats()
+      const topUsed = allStats
+        .filter(s => s.callCount > 0)
+        .sort((a, b) => b.callCount - a.callCount)
+        .slice(0, 8)
+      const statsInfo = topUsed.length > 0
+        ? '高频技能：' + topUsed.map(s => {
+            const total = s.successCount + s.failureCount
+            const rate = total > 0 ? Math.round(s.successCount / total * 100) : 0
+            return `${s.skillId}(${s.callCount}次,成功率${rate}%)`
+          }).join('; ')
+        : ''
 
-      // 跨 slice 访问任务执行历史
-      const fullState = get() as unknown as { activeExecutions?: TaskItem[] }
-      const activeExecutions: TaskItem[] = fullState.activeExecutions || []
-      const recentTasks = activeExecutions
-        .filter(t => t.status === 'done' || t.status === 'terminated')
-        .slice(-15)
+      let messages: Array<{ role: 'system' | 'user'; content: string }>
 
-      let taskHistory = ''
-      if (recentTasks.length > 0) {
-        taskHistory = '\n\n最近任务执行记录 (' + recentTasks.length + ' 条):\n' +
-          recentTasks.map(t => {
-            const status = t.status === 'done' ? (t.executionError ? '完成(有错误)' : '成功') : '已终止'
-            const tools = t.executionSteps
-              ?.filter(s => s.type === 'tool_call' && s.toolName)
-              .map(s => s.toolName)
-              .filter((v, i, a) => a.indexOf(v) === i)
-              .join(', ') || '无'
-            return `- [${status}] ${t.title} | 工具: ${tools}`
-          }).join('\n')
+      if (level === 'incremental' && skillAnalysis.structured) {
+        // 增量更新：旧结果 + diff
+        const oldNames = new Set(skillAnalysis.skillFingerprint.split(',').filter(Boolean))
+        const newNames = new Set(openClawSkills.map(s => s.name))
+        const added = [...newNames].filter(n => !oldNames.has(n))
+        const removed = [...oldNames].filter(n => !newNames.has(n))
+        messages = buildIncrementalMessages(skillAnalysis.structured, added, removed)
+      } else {
+        // 全量重建：按域聚合后给 LLM
+        const domainSummary = localDomains
+          .filter(d => d.skillCount > 0)
+          .map(d => `- ${d.name}: ${d.skillCount} 项（${d.coverage === 'strong' ? '强' : d.coverage === 'moderate' ? '中' : '弱'}）代表：${d.highlights.slice(0, 3).join(', ')}`)
+          .join('\n')
+        messages = buildFullAnalysisMessages(openClawSkills, domainSummary, statsInfo)
       }
-
-      const messages = [
-        {
-          role: 'system' as const,
-          content: '你是 DunCrew 技能分析师。基于 Agent 当前的技能列表和任务执行历史，总结能力画像。输出纯 JSON（无 markdown）：{"summary":"...","weaknesses":"..."}。summary 用 2-3 句中文叙事描述 Agent 擅长什么；weaknesses 用 1 句描述缺失或薄弱的能力域（如无明显短板则返回空字符串）。',
-        },
-        {
-          role: 'user' as const,
-          content: `当前技能列表 (${openClawSkills.length} 个):\n${skillList}${taskHistory}\n\n请分析 Agent 的能力画像。`,
-        },
-      ]
 
       const raw = await chat(messages)
 
       // 解析 JSON 响应
-      let summary = raw
-      let weaknesses = ''
+      let coreStrengths = ''
+      let weaknessesText = ''
+      let oneLiner = ''
+
       try {
-        // 尝试提取 JSON（可能被 markdown 包裹）
         const jsonMatch = raw.match(/\{[\s\S]*\}/)
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0])
-          summary = parsed.summary || raw
-          weaknesses = parsed.weaknesses || ''
+          coreStrengths = parsed.coreStrengths || ''
+          weaknessesText = parsed.weaknesses || ''
+          oneLiner = parsed.oneLiner || ''
         }
       } catch {
-        // JSON 解析失败，直接用原始文本作为 summary
+        // JSON 解析失败，用原始文本降级
+        oneLiner = raw.trim().replace(/^["「]|["」]$/g, '')
+      }
+
+      const structured: StructuredSkillAnalysis = {
+        domains: localDomains,
+        coreStrengths,
+        weaknesses: weaknessesText,
+        oneLiner,
       }
 
       const newAnalysis: SkillAnalysis = {
-        summary,
-        weaknesses,
+        summary: oneLiner || coreStrengths,
+        weaknesses: weaknessesText,
         loading: false,
         error: null,
         timestamp: Date.now(),
         skillCountAtGen: openClawSkills.length,
+        structured,
+        skillFingerprint: computeSkillFingerprint(openClawSkills),
       }
       persistSkillAnalysis(newAnalysis)
       set({ skillAnalysis: newAnalysis })

@@ -136,6 +136,17 @@ import base64
 import io
 import sqlite3
 
+# V4: 混合搜索引擎 (可选依赖)
+try:
+    from hybrid_search import (
+        HybridSearchEngine, EmbeddingEngine,
+        ensure_vector_table, index_memory_vectors,
+    )
+    HAS_HYBRID_SEARCH = True
+except ImportError:
+    HAS_HYBRID_SEARCH = False
+    print("[Warning] hybrid_search module not available, falling back to FTS5-only search")
+
 VERSION = "4.1.0"
 
 # 🏠 应用根目录 (兼容 PyInstaller frozen 模式)
@@ -242,6 +253,11 @@ def init_sqlite_db(db_path: Path) -> sqlite3.Connection:
         print("[SQLite] Added 'confidence' column to memory table")
 
     conn.commit()
+
+    # V4: 创建向量存储表 (混合搜索)
+    if HAS_HYBRID_SEARCH:
+        ensure_vector_table(conn)
+
     print(f"[SQLite] Database initialized at {db_path}")
     return conn
 
@@ -249,6 +265,29 @@ def init_sqlite_db(db_path: Path) -> sqlite3.Connection:
 # 全局数据库连接 (线程安全 WAL 模式)
 _db_conn: sqlite3.Connection | None = None
 _db_lock = threading.Lock()
+
+# V4: 混合搜索引擎全局实例 (懒初始化)
+_hybrid_engine: 'HybridSearchEngine | None' = None
+_embedding_engine: 'EmbeddingEngine | None' = None
+
+def get_hybrid_engine() -> 'HybridSearchEngine | None':
+    """获取混合搜索引擎 (懒初始化, 模型不存在时返回 None)"""
+    global _hybrid_engine, _embedding_engine
+    if not HAS_HYBRID_SEARCH:
+        return None
+    if _hybrid_engine is not None:
+        return _hybrid_engine
+
+    bge_model_path = str(APP_DIR / "models" / "models--BAAI--bge-large-zh-v1.5"
+                         / "snapshots" / "79e7739b6ab944e86d6171e44d24c997fc1e0116")
+    _embedding_engine = EmbeddingEngine(bge_model_path)
+
+    _hybrid_engine = HybridSearchEngine(
+        embedding_engine=_embedding_engine,
+        reranker_engine=None,
+        llm_call_fn=None,
+    )
+    return _hybrid_engine
 
 # 🛡️ 安全配置
 DANGEROUS_COMMANDS = {'rm -rf /', 'format', 'mkfs', 'dd if=/dev/zero'}
@@ -647,7 +686,7 @@ class ToolRegistry:
                     continue
                 seen_dirs.add(dir_key)
 
-                print(f"[ToolRegistry] ⚠️ DEPRECATED: {manifest_path} has no SKILL.md, please migrate to SKILL.md format")
+                print(f"[ToolRegistry] [WARN] DEPRECATED: {manifest_path} has no SKILL.md, please migrate to SKILL.md format")
 
                 try:
                     spec = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -1396,6 +1435,148 @@ class BrowserManager:
 _browser_manager = BrowserManager()
 
 
+# ============================================
+# 本地 Embedding 模型管理器 (bge-large-zh-v1.5)
+# ============================================
+
+class EmbeddingManager:
+    """本地 Embedding 模型管理器
+    
+    懒加载 bge-large-zh-v1.5 模型，提供 OpenAI 兼容的 embedding 接口。
+    仿照 BrowserManager 的 idle 超时回收模式。
+    """
+    MODEL_NAME = 'BAAI/bge-large-zh-v1.5'
+    IDLE_TIMEOUT = 600  # 10 分钟空闲后卸载模型
+    DIMENSION = 1024
+
+    def __init__(self):
+        self._model = None
+        self._lock = threading.Lock()
+        self._encode_semaphore = threading.Semaphore(2)  # 限制并发编码数
+        self._last_used = 0.0
+        self._loading = False
+        self._idle_timer = None
+        self._available = None  # None=未检测
+
+    def is_available(self) -> bool:
+        """检测 sentence-transformers + torch 是否已安装"""
+        if self._available is None:
+            try:
+                import torch  # noqa: F401
+                import sentence_transformers  # noqa: F401
+                self._available = True
+            except ImportError:
+                self._available = False
+        return self._available
+
+    def get_status(self) -> dict:
+        return {
+            'available': self.is_available(),
+            'model_loaded': self._model is not None,
+            'model_name': self.MODEL_NAME.split('/')[-1],
+            'loading': self._loading,
+            'dimension': self.DIMENSION,
+        }
+
+    def _detect_hf_mirror(self):
+        """自动检测 HuggingFace 中国镜像可达性"""
+        if os.environ.get('HF_ENDPOINT') or os.environ.get('HF_MIRROR'):
+            return  # 用户已配置
+        try:
+            import urllib.request
+            req = urllib.request.Request('https://hf-mirror.com', method='HEAD')
+            urllib.request.urlopen(req, timeout=3)
+            os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+            print('[Embedding] Using HuggingFace mirror: hf-mirror.com', file=sys.stderr)
+        except Exception:
+            pass  # 直接使用官方源
+
+    def _ensure_model(self):
+        """懒加载模型 (double-check locking)"""
+        if self._model is not None:
+            return
+        with self._lock:
+            if self._model is not None:
+                return
+            if not self.is_available():
+                raise RuntimeError('torch and sentence-transformers not installed')
+            
+            self._loading = True
+            try:
+                self._detect_hf_mirror()
+                
+                from sentence_transformers import SentenceTransformer
+                
+                # 模型缓存路径 — 放在项目目录下
+                cache_dir = None
+                if hasattr(ClawdDataHandler, 'project_path') and ClawdDataHandler.project_path:
+                    cache_dir = str(ClawdDataHandler.project_path / 'models')
+                elif hasattr(ClawdDataHandler, 'clawd_path') and ClawdDataHandler.clawd_path:
+                    cache_dir = str(ClawdDataHandler.clawd_path / 'models')
+                if cache_dir:
+                    os.makedirs(cache_dir, exist_ok=True)
+                
+                print(f'[Embedding] Loading model {self.MODEL_NAME} (CPU)...', file=sys.stderr)
+                self._model = SentenceTransformer(
+                    self.MODEL_NAME,
+                    device='cpu',
+                    cache_folder=cache_dir,
+                )
+                print(f'[Embedding] Model loaded successfully (dim={self.DIMENSION})', file=sys.stderr)
+            finally:
+                self._loading = False
+            
+            self._schedule_idle_check()
+
+    def encode(self, texts: list) -> list:
+        """批量编码文本为向量"""
+        self._ensure_model()
+        self._last_used = time.time()
+        
+        self._encode_semaphore.acquire()
+        try:
+            vectors = self._model.encode(texts, normalize_embeddings=True)
+            return vectors.tolist()
+        finally:
+            self._encode_semaphore.release()
+            self._schedule_idle_check()
+
+    def _schedule_idle_check(self):
+        if self._idle_timer:
+            self._idle_timer.cancel()
+        self._idle_timer = threading.Timer(self.IDLE_TIMEOUT, self._check_idle)
+        self._idle_timer.daemon = True
+        self._idle_timer.start()
+
+    def _check_idle(self):
+        if self._model is None:
+            return
+        elapsed = time.time() - self._last_used
+        if elapsed >= self.IDLE_TIMEOUT:
+            print(f'[Embedding] Idle for {int(elapsed)}s, unloading model to free memory', file=sys.stderr)
+            self.unload()
+        else:
+            self._schedule_idle_check()
+
+    def unload(self):
+        with self._lock:
+            if self._model is not None:
+                del self._model
+                self._model = None
+                import gc
+                gc.collect()
+                print('[Embedding] Model unloaded', file=sys.stderr)
+
+    def shutdown(self):
+        if self._idle_timer:
+            self._idle_timer.cancel()
+        self.unload()
+
+
+# 全局 Embedding 管理器单例
+_embedding_manager = EmbeddingManager()
+
+
 class ClawdDataHandler(BaseHTTPRequestHandler):
     clawd_path = None
     project_path = None  # 项目目录，用于加载内置技能
@@ -1412,7 +1593,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
     def send_cors_headers(self):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
     
     def send_json(self, data, status=200):
         self.send_response(status)
@@ -1490,6 +1671,8 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             self.handle_registry_skills_search(query)
         elif path == '/api/registry/mcp':
             self.handle_registry_mcp_search(query)
+        elif path == '/api/embedding/status':
+            self.send_json(_embedding_manager.get_status())
         elif path.startswith('/skills/') and path.endswith('/raw'):
             skill_name = path[8:-4]  # strip '/skills/' and '/raw'
             self.handle_skill_raw(skill_name)
@@ -1520,6 +1703,15 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         elif path.startswith('/api/nexus/') and path.endswith('/scoring'):
             nexus_id = path[11:-8]  # strip '/api/nexus/' and '/scoring'
             self.handle_scoring_get(nexus_id)
+        # ClawHub OAuth 认证
+        elif path == '/auth/clawhub/token':
+            state = query.get('state', [''])[0]
+            self.handle_clawhub_token_poll(state)
+        elif path == '/auth/clawhub/callback':
+            self.handle_clawhub_oauth_callback(query)
+        # ClawHub API 代理 (解决浏览器 CORS/代理问题)
+        elif path.startswith('/clawhub/proxy/'):
+            self.handle_clawhub_proxy('GET', path, query)
         elif path.startswith('/data/'):
             # 前端数据读取 API
             key = path[6:]  # strip '/data/'
@@ -1550,8 +1742,11 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             self.send_error_json('Invalid JSON', 400)
             return
         
+        # 本地 Embedding 端点 (OpenAI 兼容)
+        if path == '/v1/embeddings':
+            self.handle_embeddings(data)
         # 🌟 新增：工具执行接口
-        if path == '/api/tools/execute':
+        elif path == '/api/tools/execute':
             self.handle_tool_execution(data)
         elif path == '/api/files/upload':
             self.handle_file_upload(data)
@@ -1576,6 +1771,9 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             self.handle_skill_install(data)
         elif path == '/skills/uninstall':
             self.handle_skill_uninstall(data)
+        # ClawHub API 代理 (解决浏览器 CORS/代理问题)
+        elif path.startswith('/clawhub/proxy/'):
+            self.handle_clawhub_proxy('POST', path, query, data)
         elif path == '/clawhub/install':
             self.handle_clawhub_install(data)
         elif path == '/clawhub/publish':
@@ -1828,6 +2026,17 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
 
     # ---- Memory ----
 
+    @staticmethod
+    def safe_parse_tags(raw_tags):
+        """安全解析 tags JSON 字符串，确保返回 list"""
+        if not raw_tags:
+            return []
+        try:
+            parsed = json.loads(raw_tags)
+            return parsed if isinstance(parsed, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
     def handle_memory_write(self, data: dict):
         """POST /api/memory/write - 写入单条记忆"""
         db = self._get_db()
@@ -1844,6 +2053,15 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             db.execute("INSERT INTO memory (id, source, content, nexus_id, tags, metadata, created_at, confidence) VALUES (?,?,?,?,?,?,?,?)",
                        (mem_id, source, content, nexus_id, tags, metadata, now, confidence))
             db.commit()
+
+        # V4: 异步生成向量索引
+        if HAS_HYBRID_SEARCH and _embedding_engine:
+            threading.Thread(
+                target=index_memory_vectors,
+                args=(db, mem_id, content, _embedding_engine, _db_lock),
+                daemon=True,
+            ).start()
+
         self.send_json({'status': 'ok', 'id': mem_id})
 
     def handle_memory_write_batch(self, data: dict):
@@ -1852,25 +2070,54 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         entries = data.get('entries', [])
         count = 0
         now = int(time.time() * 1000)
+        written_ids: list[tuple[str, str]] = []  # (mem_id, content) for async indexing
         with _db_lock:
             for entry in entries:
                 mem_id = f"mem-{uuid.uuid4().hex[:12]}"
+                content = entry.get('content', '')
                 db.execute("INSERT INTO memory (id, source, content, nexus_id, tags, metadata, created_at) VALUES (?,?,?,?,?,?,?)",
-                           (mem_id, entry.get('source', 'ephemeral'), entry.get('content', ''),
+                           (mem_id, entry.get('source', 'ephemeral'), content,
                             entry.get('nexusId'), json.dumps(entry.get('tags', []), ensure_ascii=False),
                             json.dumps(entry.get('metadata', {}), ensure_ascii=False), now))
+                written_ids.append((mem_id, content))
                 count += 1
             db.commit()
+
+        # V4: 异步批量向量索引
+        if HAS_HYBRID_SEARCH and _embedding_engine:
+            for mid, content in written_ids:
+                if content:
+                    threading.Thread(
+                        target=index_memory_vectors,
+                        args=(db, mid, content, _embedding_engine, _db_lock),
+                        daemon=True,
+                    ).start()
+
         self.send_json({'status': 'ok', 'count': count})
 
     def handle_memory_search(self, query: dict):
-        """GET /api/memory/search?q=xxx&source=xxx&nexusId=xxx&limit=20"""
+        """GET /api/memory/search?q=xxx&source=xxx&nexusId=xxx&limit=20&hybrid=1"""
         db = self._get_db()
         q = query.get('q', [''])[0]
         source = query.get('source', [None])[0]
         nexus_id = query.get('nexusId', [None])[0]
         limit = int(query.get('limit', ['20'])[0])
-        
+        use_hybrid = query.get('hybrid', ['1'])[0] == '1'
+
+        # V4: 优先使用混合搜索
+        engine = get_hybrid_engine()
+        if q and use_hybrid and engine:
+            try:
+                results = engine.search(
+                    conn=db, query=q, nexus_id=nexus_id, limit=limit,
+                    use_expansion=True, use_reranker=False,
+                )
+                self.send_json(results)
+                return
+            except Exception as error:
+                print(f"[HybridSearch] Fallback to FTS5: {error}")
+
+        # 降级: 原有 FTS5 逻辑
         if q:
             # FTS5 搜索
             fts_sql = """
@@ -1913,8 +2160,10 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         results = [{
             'id': r['id'], 'source': r['source'], 'content': r['content'],
             'snippet': r['content'],
-            'nexusId': r['nexus_id'], 'tags': json.loads(r['tags'] or '[]'),
+            'nexusId': r['nexus_id'],
+            'tags': self.safe_parse_tags(r['tags']),
             'metadata': json.loads(r['metadata'] or '{}'), 'createdAt': r['created_at'],
+            'confidence': r['confidence'] if 'confidence' in r.keys() else 0.5,
             'score': abs(r['rank']) if 'rank' in r.keys() else 1.0,
         } for r in rows]
         self.send_json(results)
@@ -1938,8 +2187,11 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         results = [{
             'id': r['id'], 'source': r['source'], 'content': r['content'],
             'snippet': r['content'],
-            'nexusId': r['nexus_id'], 'tags': json.loads(r['tags'] or '[]'),
-            'createdAt': r['created_at'], 'score': 1.0,
+            'nexusId': r['nexus_id'],
+            'tags': self.safe_parse_tags(r['tags']),
+            'createdAt': r['created_at'],
+            'confidence': r['confidence'] if 'confidence' in r.keys() else 0.5,
+            'score': 1.0,
         } for r in rows]
         self.send_json(results)
 
@@ -2185,7 +2437,8 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             if not path:
                 return False, "readFile 缺少 path 参数"
             try:
-                file_path = self._resolve_path(path, allow_outside=args.get('allowOutside', False))
+                # 读操作默认允许绝对路径（安全的只读操作）
+                file_path = self._resolve_path(path, allow_outside=True)
                 if not file_path.exists():
                     return False, f"文件不存在: {path}。建议: 先用 listDir 确认路径"
                 if not file_path.is_file():
@@ -2266,7 +2519,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             path = args.get('path', '')
             content = args.get('content', '')
             try:
-                file_path = self._resolve_path(path)
+                file_path = self._resolve_path(path, allow_outside=True)
                 # Check 1: 文件存在性
                 exists = file_path.exists()
                 checks.append({
@@ -2337,7 +2590,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         elif tool_name == 'appendFile':
             path = args.get('path', '')
             try:
-                file_path = self._resolve_path(path)
+                file_path = self._resolve_path(path, allow_outside=True)
                 exists = file_path.exists()
                 checks.append({
                     'name': '文件存在性',
@@ -2773,7 +3026,8 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
     def _tool_read_file(self, args: dict) -> str:
         """读取文件内容"""
         path = args.get('path', '')
-        file_path = self._resolve_path(path, allow_outside=args.get('allowOutside', False))
+        # 读操作默认允许绝对路径（安全的只读操作）
+        file_path = self._resolve_path(path, allow_outside=True)
         
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
@@ -2794,17 +3048,8 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         if not file_path_str:
             raise ValueError("filePath is required")
         
-        # 支持绝对路径（上传的临时文件）和相对路径
-        if os.path.isabs(file_path_str):
-            file_path = Path(file_path_str).resolve()
-            # 安全检查：只允许访问 clawd 工作目录下的文件
-            allowed_root = self.clawd_path.resolve()
-            try:
-                file_path.relative_to(allowed_root)
-            except ValueError:
-                raise PermissionError(f"Access denied: path outside allowed directory")
-        else:
-            file_path = self._resolve_path(file_path_str, allow_outside=True)
+        # 支持绝对路径和相对路径
+        file_path = self._resolve_path(file_path_str, allow_outside=True)
         
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path_str}")
@@ -2887,7 +3132,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         path = args.get('path', '')
         content = args.get('content', '')
         
-        file_path = self._resolve_path(path)
+        file_path = self._resolve_path(path, allow_outside=True)
         
         # === Nexus 涌现去重网关 ===
         if 'nexuses/' in path and path.endswith('NEXUS.md'):
@@ -2954,6 +3199,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         if not path:
             raise ValueError("路径参数不能为空")
         
+        mode = args.get('mode', 'reveal')  # 'reveal' = 高亮文件, 'open' = 用默认应用打开
         file_path = Path(path)
         if not file_path.exists():
             raise FileNotFoundError(f"文件不存在: {path}")
@@ -2963,16 +3209,24 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         system = platform.system()
         
         try:
-            if system == 'Windows':
-                # Windows: 使用 explorer /select 高亮文件
-                subprocess.run(['explorer', '/select,', str(file_path.resolve())], check=False)
-            elif system == 'Darwin':  # macOS
-                subprocess.run(['open', '-R', str(file_path.resolve())], check=True)
-            else:  # Linux
-                # 打开父目录
-                subprocess.run(['xdg-open', str(file_path.parent.resolve())], check=True)
-            
-            return f"已在文件管理器中打开: {file_path.name}"
+            if mode == 'open':
+                # 用默认应用打开文件
+                if system == 'Windows':
+                    os.startfile(str(file_path.resolve()))
+                elif system == 'Darwin':
+                    subprocess.run(['open', str(file_path.resolve())], check=True)
+                else:
+                    subprocess.run(['xdg-open', str(file_path.resolve())], check=True)
+                return f"已打开文件: {file_path.name}"
+            else:
+                # reveal: 在文件管理器中高亮文件
+                if system == 'Windows':
+                    subprocess.run(['explorer', '/select,', str(file_path.resolve())], check=False)
+                elif system == 'Darwin':
+                    subprocess.run(['open', '-R', str(file_path.resolve())], check=True)
+                else:
+                    subprocess.run(['xdg-open', str(file_path.parent.resolve())], check=True)
+                return f"已在文件管理器中打开: {file_path.name}"
         except Exception as e:
             raise RuntimeError(f"无法打开文件管理器: {str(e)}")
     
@@ -3033,7 +3287,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         path = args.get('path', '')
         content = args.get('content', '')
         
-        file_path = self._resolve_path(path)
+        file_path = self._resolve_path(path, allow_outside=True)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         
         with open(file_path, 'a', encoding='utf-8') as f:
@@ -3044,7 +3298,8 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
     def _tool_list_dir(self, args: dict) -> str:
         """列出目录内容"""
         path = args.get('path', '.')
-        dir_path = self._resolve_path(path)
+        # 目录列出也是只读操作，允许绝对路径
+        dir_path = self._resolve_path(path, allow_outside=True)
         
         if not dir_path.exists():
             raise FileNotFoundError(f"Directory not found: {path}")
@@ -3177,7 +3432,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
                 return f"无法查询 {location} 的天气: {str(e)}"
     
     def _tool_web_search(self, args: dict) -> str:
-        """网页搜索 (多源: Bing CN → DuckDuckGo，自动切换)"""
+        """网页搜索 (多源: SearXNG → Bing CN → DuckDuckGo，自动切换)"""
         import urllib.request
         import urllib.parse
         import re
@@ -3188,6 +3443,57 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         
         encoded_query = urllib.parse.quote(query)
         ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+        
+        # ---- 搜索源0: SearXNG (聚合搜索，优先使用) ----
+        # 优先级: 环境变量自定义 → 本地 Docker 实例 → 公共实例
+        searxng_candidates = []
+        env_searxng = os.environ.get('SEARXNG_URL', '').strip()
+        if env_searxng:
+            searxng_candidates.append(env_searxng)
+        searxng_candidates.append('http://localhost:8888')       # 本地 Docker
+        searxng_candidates.append('https://searx.be')            # 公共实例 (欧洲)
+        searxng_candidates.append('https://search.bus-hit.me')   # 公共实例 (备用)
+        # 去重并保持顺序
+        seen = set()
+        searxng_urls = []
+        for url in searxng_candidates:
+            if url not in seen:
+                seen.add(url)
+                searxng_urls.append(url)
+        
+        for searxng_url in searxng_urls:
+            try:
+                api_url = f"{searxng_url}/search?q={encoded_query}&format=json&language=zh-CN"
+                req = urllib.request.Request(api_url, headers={
+                    'Accept': 'application/json',
+                    'User-Agent': ua,
+                })
+                timeout = 6 if searxng_url.startswith('http://localhost') else 10
+                with urllib.request.urlopen(req, timeout=timeout) as response:
+                    data = json.loads(response.read().decode('utf-8'))
+                
+                results = []
+                for item in data.get('results', [])[:8]:
+                    title = item.get('title', '').strip()
+                    link = item.get('url', '').strip()
+                    snippet = (item.get('content', '') or '').strip()[:200]
+                    engine = item.get('engine', '')
+                    if title and link:
+                        entry = f"{len(results)+1}. {title}\n   {link}"
+                        if snippet:
+                            entry += f"\n   {snippet}"
+                        if engine:
+                            entry += f"\n   [来源: {engine}]"
+                        results.append(entry)
+                
+                if results:
+                    source_label = 'SearXNG' if 'localhost' in searxng_url else f'SearXNG ({searxng_url.split("//")[1].split("/")[0]})'
+                    return f"搜索 '{query}' 的结果 ({source_label}):\n\n" + "\n\n".join(results[:6])
+                else:
+                    print(f"[webSearch] SearXNG ({searxng_url}) returned 0 results", file=sys.stderr)
+            except Exception as e:
+                print(f"[webSearch] SearXNG ({searxng_url}) failed: {e}", file=sys.stderr)
+                continue
         
         # ---- 搜索源1: Bing CN (国内直连稳定) ----
         try:
@@ -3257,7 +3563,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[webSearch] Browser fallback failed: {e}", file=sys.stderr)
         
-        return f"搜索 '{query}' 失败: 所有搜索源均不可用（Bing/DuckDuckGo/Browser）"
+        return f"搜索 '{query}' 失败: 所有搜索源均不可用（SearXNG/Bing/DuckDuckGo/Browser）"
     
     def _tool_web_fetch(self, args: dict) -> str:
         """获取网页内容 (简化版，提取主要文本)"""
@@ -3357,6 +3663,14 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
                      json.dumps({'key': key, 'type': memory_type}), now_ms)
                 )
                 db.commit()
+
+            # V4: 异步生成向量索引
+            if HAS_HYBRID_SEARCH and _embedding_engine:
+                threading.Thread(
+                    target=index_memory_vectors,
+                    args=(db, mem_id, full_content, _embedding_engine, _db_lock),
+                    daemon=True,
+                ).start()
         except Exception as e:
             # SQLite 写入失败不影响主流程，MD 已写入
             print(f"[saveMemory] SQLite dual-write failed: {e}")
@@ -3364,14 +3678,35 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         return f"记忆已保存: {key} (类型: {memory_type})"
     
     def _tool_search_memory(self, args: dict) -> str:
-        """检索历史记忆 - SQLite FTS5 优先，MD 文件兜底"""
+        """检索历史记忆 - 混合搜索优先，FTS5 + MD 文件兜底"""
         query = args.get('query', '')
         nexus_id = args.get('nexusId', None)
         limit = int(args.get('limit', 5))
         
         if not query:
             raise ValueError("query 参数必填")
-        
+
+        # V4: 优先使用混合搜索
+        engine = get_hybrid_engine()
+        if engine:
+            try:
+                db = self._get_db()
+                results = engine.search(
+                    conn=db, query=query, nexus_id=nexus_id, limit=limit,
+                    use_expansion=False,  # 工具调用时不做 expansion，节省延迟
+                    use_reranker=False,
+                )
+                if results:
+                    lines = []
+                    for r in results:
+                        ts = time.strftime('%Y-%m-%d %H:%M',
+                                          time.localtime(r['createdAt'] / 1000)) if r.get('createdAt') else '未知'
+                        lines.append(f"[{ts}] (score:{r['score']:.3f}) {r['snippet'][:200]}")
+                    return f"找到 {len(results)} 条相关记忆:\n" + "\n".join(lines)
+            except Exception as error:
+                print(f"[searchMemory] Hybrid search failed, fallback: {error}")
+
+        # 降级: 原有 FTS5 + MD 搜索逻辑
         results = []
         
         # ---- 路径 1: SQLite FTS5 搜索 (高优先级) ----
@@ -3714,6 +4049,7 @@ curl -X POST http://localhost:3001/api/tools/execute \\
             'skillCount': skill_count,
             'tools': [t['name'] for t in self.registry.list_all()],
             'toolCount': len(self.registry.list_all()),
+            'embedding': _embedding_manager.get_status(),
             'timestamp': datetime.now().isoformat()
         })
     
@@ -3723,6 +4059,15 @@ curl -X POST http://localhost:3001/api/tools/execute \\
     
     def handle_file(self, filename):
         filepath = self.clawd_path / filename
+        allowed_root = self.clawd_path.resolve()
+        
+        # 回退: 若用户目录没有该文件，尝试项目目录
+        if not filepath.exists() and self.project_path:
+            project_filepath = self.project_path / filename
+            if project_filepath.exists() and project_filepath.is_file():
+                filepath = project_filepath
+                allowed_root = self.project_path.resolve()
+        
         if not filepath.exists():
             self.send_error_json(f'File not found: {filename}', 404)
             return
@@ -3732,7 +4077,7 @@ curl -X POST http://localhost:3001/api/tools/execute \\
             return
         
         try:
-            filepath.resolve().relative_to(self.clawd_path.resolve())
+            filepath.resolve().relative_to(allowed_root)
         except ValueError:
             self.send_error_json('Access denied', 403)
             return
@@ -3961,11 +4306,13 @@ curl -X POST http://localhost:3001/api/tools/execute \\
                 'xp': xp,
                 'location': 'local',
                 'path': str(nexus_dir),
+                'projectPath': frontmatter.get('project_path', ''),
                 'status': 'active',
                 # 目标函数驱动字段 (Objective-Driven Execution)
                 'objective': frontmatter.get('objective', ''),
                 'metrics': frontmatter.get('metrics', []),
                 'strategy': frontmatter.get('strategy', ''),
+                'skillsConfirmed': frontmatter.get('skills_confirmed', False),
             }
 
             # 附带 SQLite 中持久化的 scoring 数据
@@ -4113,6 +4460,7 @@ curl -X POST http://localhost:3001/api/tools/execute \\
             'recentExperiences': recent_experiences,
             'location': 'local',
             'path': str(nexus_dir),
+            'projectPath': frontmatter.get('project_path', ''),
             'status': 'active',
             # 目标函数驱动字段 (Objective-Driven Execution)
             'objective': frontmatter.get('objective', ''),
@@ -4192,24 +4540,29 @@ curl -X POST http://localhost:3001/api/tools/execute \\
         })
 
     def handle_nexus_update_meta(self, nexus_name: str, data: dict):
-        """POST /nexuses/{name}/meta - 更新 Nexus 元数据(名称等)"""
+        """POST /nexuses/{name}/meta - 更新 Nexus 元数据(名称、skills_confirmed 等)"""
         nexus_dir = self._resolve_nexus_dir(nexus_name, auto_create=True)
         if not nexus_dir:
             self.send_error_json(f"Nexus '{nexus_name}' not found", 404)
             return
         nexus_md = nexus_dir / 'NEXUS.md'
 
-        new_name = data.get('name', '').strip()
-        if not new_name:
-            self.send_error_json('Invalid: name is required', 400)
+        updates = {}
+        if 'name' in data and data['name']:
+            updates['name'] = str(data['name']).strip()
+        if 'skills_confirmed' in data:
+            updates['skills_confirmed'] = bool(data['skills_confirmed'])
+
+        if not updates:
+            self.send_error_json('No valid fields to update', 400)
             return
-            
-        update_nexus_frontmatter(nexus_md, {'name': new_name})
+
+        update_nexus_frontmatter(nexus_md, updates)
 
         self.send_json({
             'status': 'ok',
             'nexusId': nexus_name,
-            'name': new_name
+            **updates
         })
 
     def handle_add_experience(self, nexus_name: str, data: dict):
@@ -4866,6 +5219,197 @@ curl -X POST http://localhost:3001/api/tools/execute \\
 
         except Exception as e:
             self.send_error_json(f'Uninstall failed: {str(e)}', 500)
+
+    # ============================================
+    # 本地 Embedding 端点 (OpenAI 兼容)
+    # ============================================
+
+    def handle_embeddings(self, data: dict):
+        """处理 POST /v1/embeddings 请求 (OpenAI 兼容格式)"""
+        if not _embedding_manager.is_available():
+            self.send_response(501)
+            self.send_header('Content-Type', 'application/json')
+            self.send_cors_headers()
+            self.end_headers()
+            import json as _json
+            self.wfile.write(_json.dumps({
+                'error': {
+                    'message': 'Local embedding model requires torch and sentence-transformers. '
+                               'Install with: pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install sentence-transformers',
+                    'type': 'not_installed',
+                }
+            }).encode('utf-8'))
+            return
+
+        if _embedding_manager._loading:
+            self.send_response(503)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Retry-After', '10')
+            self.send_cors_headers()
+            self.end_headers()
+            import json as _json
+            self.wfile.write(_json.dumps({
+                'error': {
+                    'message': 'Embedding model is loading, please retry in a few seconds',
+                    'type': 'loading',
+                }
+            }).encode('utf-8'))
+            return
+
+        raw_input = data.get('input', '')
+        if isinstance(raw_input, str):
+            texts = [raw_input]
+        elif isinstance(raw_input, list):
+            texts = [str(t) for t in raw_input]
+        else:
+            self.send_error_json('input must be a string or array of strings', 400)
+            return
+
+        if not texts or all(not t.strip() for t in texts):
+            self.send_error_json('input is empty', 400)
+            return
+
+        try:
+            vectors = _embedding_manager.encode(texts)
+        except RuntimeError as e:
+            self.send_error_json(f'Embedding failed: {str(e)[:200]}', 500)
+            return
+        except Exception as e:
+            self.send_error_json(f'Embedding error: {str(e)[:200]}', 500)
+            return
+
+        # 估算 token 数 (粗略: 中文约1字=1token, 英文约4字符=1token)
+        total_chars = sum(len(t) for t in texts)
+        est_tokens = max(1, total_chars // 2)
+
+        result_data = []
+        for i, vec in enumerate(vectors):
+            result_data.append({
+                'object': 'embedding',
+                'index': i,
+                'embedding': vec,
+            })
+
+        self.send_json({
+            'object': 'list',
+            'data': result_data,
+            'model': _embedding_manager.MODEL_NAME.split('/')[-1],
+            'usage': {
+                'prompt_tokens': est_tokens,
+                'total_tokens': est_tokens,
+            }
+        })
+
+    # ============================================
+    # ClawHub OAuth 认证
+    # ============================================
+
+    _clawhub_pending_tokens: dict = {}  # state -> token
+
+    def handle_clawhub_token_poll(self, state: str):
+        """前端轮询获取 OAuth token"""
+        if not state:
+            self.send_error_json('Missing state parameter', 400)
+            return
+        token = self.__class__._clawhub_pending_tokens.get(state)
+        if token:
+            # Token 已到达，返回并清理
+            del self.__class__._clawhub_pending_tokens[state]
+            self.send_json({'token': token})
+        else:
+            self.send_json({'token': None, 'status': 'pending'})
+
+    def handle_clawhub_oauth_callback(self, query: dict):
+        """ClawHub OAuth 回调端点，接收 state + token"""
+        state = query.get('state', [''])[0]
+        token = query.get('token', [''])[0]
+        if not state or not token:
+            self.send_response(400)
+            self.send_header('Content-Type', 'text/html')
+            self.end_headers()
+            self.wfile.write(b'<html><body><h2>Missing state or token</h2></body></html>')
+            return
+        self.__class__._clawhub_pending_tokens[state] = token
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b'<html><body><h2>Authorization successful! You can close this window.</h2></body></html>')
+
+    # ============================================
+    # ClawHub API 透明代理 (解决浏览器 CORS/代理问题)
+    # ============================================
+
+    CLAWHUB_UPSTREAM = 'https://clawhub.ai'
+
+    def handle_clawhub_proxy(self, method: str, path: str, query: dict, data: dict = None):
+        """透明代理 ClawHub API 请求
+        
+        前端请求: GET/POST /clawhub/proxy/api/v1/...
+        后端转发: GET/POST https://clawhub.ai/api/v1/...
+        """
+        # 1. 提取上游路径
+        upstream_path = path[len('/clawhub/proxy'):]
+        
+        # 2. 安全校验：只允许 /api/v1/ 前缀，防止 SSRF
+        if not upstream_path.startswith('/api/v1/'):
+            self.send_error_json('Invalid ClawHub API path', 400)
+            return
+        
+        # 3. 重建 query string
+        from urllib.parse import urlencode as _urlencode
+        params = {k: v[0] for k, v in query.items()} if query else {}
+        qs = f'?{_urlencode(params)}' if params else ''
+        upstream_url = f'{self.CLAWHUB_UPSTREAM}{upstream_path}{qs}'
+        
+        # 4. 转发请求头
+        req_headers = {'Accept': 'application/json'}
+        auth = self.headers.get('Authorization')
+        if auth:
+            req_headers['Authorization'] = auth
+        
+        print(f'[ClawHub Proxy] {method} {upstream_url}', file=sys.stderr)
+        
+        try:
+            import requests as req_lib
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        except ImportError:
+            self.send_error_json('ClawHub proxy requires "requests" package: pip install requests', 500)
+            return
+        
+        try:
+            session = req_lib.Session()
+            
+            if method == 'GET':
+                resp = session.get(upstream_url, headers=req_headers, timeout=(10, 30), verify=False)
+            else:
+                req_headers['Content-Type'] = 'application/json'
+                resp = session.post(upstream_url, json=data, headers=req_headers, timeout=(10, 30), verify=False)
+            
+            if resp.ok:
+                try:
+                    self.send_json(resp.json())
+                except Exception:
+                    # 非 JSON 响应（如 download 返回二进制）
+                    self.send_response(resp.status_code)
+                    ct = resp.headers.get('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Type', ct)
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(resp.content)
+            else:
+                error_text = resp.text[:300]
+                print(f'[ClawHub Proxy] HTTP error: {resp.status_code} - {error_text}', file=sys.stderr)
+                self.send_error_json(f'ClawHub API error ({resp.status_code}): {error_text}', resp.status_code)
+        
+        except req_lib.exceptions.ConnectTimeout:
+            self.send_error_json('ClawHub API connect timeout', 504)
+        except req_lib.exceptions.ReadTimeout:
+            self.send_error_json('ClawHub API read timeout', 504)
+        except req_lib.exceptions.ConnectionError as e:
+            self.send_error_json(f'Failed to connect to ClawHub: {str(e)[:200]}', 502)
+        except Exception as e:
+            self.send_error_json(f'ClawHub proxy error: {str(e)[:200]}', 500)
 
     def handle_clawhub_install(self, data):
         """POST /clawhub/install - 从 ClawHub 下载并安装技能"""
@@ -5891,32 +6435,45 @@ def main():
     
     if not clawd_path.exists():
         print(f"Creating data directory: {clawd_path}")
-        clawd_path.mkdir(parents=True, exist_ok=True)
-        
-        # 创建默认 SOUL.md
-        soul_file = clawd_path / 'SOUL.md'
-        soul_file.write_text("""# DunCrew Native Soul
+    clawd_path.mkdir(parents=True, exist_ok=True)
+    
+    # 确保 SOUL.md 存在: 优先从项目目录复制，否则创建默认版本
+    soul_file = clawd_path / 'SOUL.md'
+    if not soul_file.exists():
+        project_soul = APP_DIR / 'SOUL.md'
+        if project_soul.exists():
+            # 从项目目录复制完整 SOUL.md
+            import shutil
+            shutil.copy2(str(project_soul), str(soul_file))
+            print(f"Copied SOUL.md from project directory: {project_soul}")
+        else:
+            # 创建默认 SOUL.md
+            soul_file.write_text("""# DunCrew Native Soul
 
 You are DunCrew, a local AI operating system running directly on the user's computer.
 
-## Core Principles
-- Be helpful and efficient
-- Protect user data and privacy
-- Execute tasks safely
-- Learn from interactions
+## Core Truths
 
-## Available Tools
-- readFile: Read file contents
-- writeFile: Write file contents
-- listDir: List directory contents
-- runCmd: Execute shell commands
+**Be the user's co-pilot.** You work alongside the user, not above or below them. Every action you take should empower the user to achieve their goals faster and better.
 
-## Safety Rules
-- Never delete system files
-- Ask before destructive operations
-- Keep execution logs
+**Earn trust through transparency.** Always explain what you're doing and why. If you're unsure, say so. Never pretend to know something you don't.
+
+**Be technically precise.** When executing tasks, prioritize correctness over speed. Double-check your work, validate outputs, and handle errors gracefully.
+
+## Boundaries
+- Never delete or modify files without explicit user confirmation for destructive operations
+- Never expose API keys, passwords, or sensitive data in outputs
+- Never execute commands that could harm the system without user approval
+- Always respect the user's preferences and working style
+- Keep execution logs for accountability and debugging
+
+## Vibe
+Concise, thorough, and technically precise. Not a sycophant - honest feedback is more valuable than false agreement. Good at breaking down complex problems into actionable steps.
+
+## Continuity
+You maintain state across conversations through the memory system. Use memories to build a deeper understanding of the user's projects, preferences, and working patterns over time.
 """, encoding='utf-8')
-        print(f"Created default SOUL.md")
+            print(f"Created default SOUL.md")
     
     logs_dir = clawd_path / 'logs'
     logs_dir.mkdir(exist_ok=True)
@@ -5987,8 +6544,11 @@ You are DunCrew, a local AI operating system running directly on the user's comp
     except KeyboardInterrupt:
         print("\nShutting down...")
         _browser_manager.shutdown()
+        _embedding_manager.shutdown()
         server.shutdown()
 
 
 if __name__ == '__main__':
+    main()
+    main()
     main()

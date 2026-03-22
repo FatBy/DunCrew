@@ -7,25 +7,27 @@
  * Phase 1: 基因存储/加载/匹配/注入
  * Phase 2: 自动收割 (failure→success 模式检测)
  * Phase 3: 跨 Nexus 基因共享与置信度排名
- * Phase 4: Nexus 通讯基因 (capability/artifact/activity)
+ * (Phase 4 已迁移至 nexusManager — capability/artifact 不属于基因范畴)
  */
 
-import type { Gene, GeneMatch, Capsule, ExecTraceToolCall, NexusCapabilityInfo, NexusArtifactInfo, NexusActivityInfo } from '@/types'
+import type { Gene, GeneMatch, Capsule, ExecTraceToolCall } from '@/types'
 import { extractSignals, rankGenes, signalOverlap, classifyErrorType } from '@/utils/signalMatcher'
 import { nexusRuleEngine } from './nexusRuleEngine'
+import { getServerUrl } from '@/utils/env'
 
-const SERVER_URL = 'http://localhost:3001'
+const SERVER_URL = getServerUrl()
 
 // 配置常量
 const MAX_GENE_HINTS = 3              // Reflexion 中最多注入的基因数
 const MAX_CAPSULE_HISTORY = 100       // 内存中保留的胶囊数
 const HARVEST_MIN_CONFIDENCE = 0.3    // 自动收割的初始置信度
-const DUPLICATE_OVERLAP_THRESHOLD = 0.7  // 信号重叠超过此阈值视为重复
+const DUPLICATE_OVERLAP_THRESHOLD = 0.85  // 信号重叠超过此阈值视为重复 (从 0.7 提高，让更多不同场景的基因能被创建)
 const CONFIDENCE_DECAY = 0.8          // 失败时置信度衰减系数 (默认)
 const CONFIDENCE_BOOST = 0.1          // 成功时置信度增量
 const CONFIDENCE_CAP = 1.0            // 置信度上限
 const RETIRED_THRESHOLD = 0.1         // 低于此置信度且使用次数 > 5 视为废弃
 const TIME_DECAY_HALFLIFE_DAYS = 60   // 时间衰减半衰期 (天)
+const MAX_REPAIR_GENES = 200            // Repair 基因上限，超过时淘汰低置信度废弃基因
 
 // 优化2: 按错误类型分级的置信度衰减系数
 const ERROR_TYPE_DECAY: Record<string, number> = {
@@ -34,6 +36,137 @@ const ERROR_TYPE_DECAY: Record<string, number> = {
   bad_input: 0.6,        // 参数错误 — 基因质量有问题，快速淘汰
   permission: 0.75,      // 权限问题 — 环境相关
   unknown: 0.8,          // 未知错误 — 默认衰减
+}
+
+// ============================================
+// V2: 内置种子基因 — 解决冷启动问题
+// 基于高频错误模式手动沉淀，用户无需任何操作
+// ============================================
+const SEED_GENES: Omit<Gene, 'metadata'>[] = [
+  {
+    id: 'seed-readfile-missing-path',
+    category: 'repair',
+    signals_match: ['readFile', 'readFile:missing_input', 'missing_input', 'empty', 'cannot be empty'],
+    strategy: ['readFile 的 path 参数为空。先用 listDir 探索项目目录结构，获取正确的文件路径后再重试。'],
+    preconditions: ['当前 session 中还没有成功的 listDir 调用'],
+    antiPatterns: ['已经用 listDir 探索过目录但仍然失败 — 此时问题不是路径未知，而是文件确实不存在'],
+    source: { createdAt: 0, isSeed: true },
+  },
+  {
+    id: 'seed-readfile-not-found',
+    category: 'repair',
+    signals_match: ['readFile', 'readFile:missing_resource', 'not found', 'enoent', 'no such file'],
+    strategy: ['文件路径不存在。用 listDir 确认目标目录的实际内容，检查文件名拼写和大小写是否正确，然后用正确路径重试。'],
+    preconditions: ['readFile 返回了文件不存在的错误'],
+    antiPatterns: ['错误是权限问题而非路径问题'],
+    source: { createdAt: 0, isSeed: true },
+  },
+  {
+    id: 'seed-readfile-permission',
+    category: 'repair',
+    signals_match: ['readFile', 'readFile:permission', 'permission', 'eacces', 'access denied', 'forbidden'],
+    strategy: ['文件访问被拒绝。检查路径是否在允许的工作目录内，避免读取系统目录或受保护的文件。尝试读取项目根目录下的文件。'],
+    preconditions: ['readFile 返回了权限相关的错误'],
+    antiPatterns: ['错误是文件不存在而非权限问题'],
+    source: { createdAt: 0, isSeed: true },
+  },
+  {
+    id: 'seed-writefile-permission',
+    category: 'repair',
+    signals_match: ['writeFile', 'writeFile:permission', 'permission', 'eacces', 'access denied'],
+    strategy: ['文件写入被拒绝。确保目标路径在项目工作目录内，不要写入系统目录。如果目标目录不存在，先创建目录。'],
+    preconditions: ['writeFile 返回了权限错误'],
+    source: { createdAt: 0, isSeed: true },
+  },
+  {
+    id: 'seed-runcmd-empty',
+    category: 'repair',
+    signals_match: ['runCmd', 'runCmd:missing_input', 'missing_input', 'empty', 'command cannot be empty'],
+    strategy: ['runCmd 的 command 参数为空。确保命令字符串非空且格式正确，包含完整的可执行命令。'],
+    preconditions: ['runCmd 因为空命令而失败'],
+    source: { createdAt: 0, isSeed: true },
+  },
+  {
+    id: 'seed-runcmd-not-found',
+    category: 'repair',
+    signals_match: ['runCmd', 'runCmd:missing_resource', 'not found', 'is not recognized', 'command not found'],
+    strategy: ['命令不存在或未安装。检查命令名拼写，确认该工具已安装。Windows 下注意使用正确的命令名（如 dir 而非 ls，findstr 而非 grep）。'],
+    preconditions: ['runCmd 因为命令不存在而失败'],
+    source: { createdAt: 0, isSeed: true },
+  },
+  {
+    id: 'seed-search-plugin-crash',
+    category: 'repair',
+    signals_match: ['search_files', 'failed', 'crash', 'exit code', 'plugin exited'],
+    strategy: ['search_files 插件崩溃。改用 readFile + listDir 组合手动搜索目标文件，或使用 runCmd 执行 findstr/grep 命令搜索。'],
+    preconditions: ['search_files 因为插件崩溃而失败（非参数错误）'],
+    antiPatterns: ['search_files 因为参数错误而失败 — 此时应修正参数而非换工具'],
+    source: { createdAt: 0, isSeed: true },
+  },
+  {
+    id: 'seed-encoding-error',
+    category: 'repair',
+    signals_match: ['readFile', 'readFile:encoding_error', 'encoding_error', 'codec', 'decode', 'utf-8', 'gbk'],
+    strategy: ['文件编码不匹配。尝试指定 encoding 参数为其他编码（如 latin-1 或 gbk）重新读取。Windows 系统下中文文件常用 GBK 编码。'],
+    preconditions: ['readFile 返回了编码相关的错误'],
+    source: { createdAt: 0, isSeed: true },
+  },
+  {
+    id: 'seed-path-separator',
+    category: 'repair',
+    signals_match: ['readFile', 'writeFile', 'readFile:missing_resource', 'not found', 'enoent'],
+    strategy: ['检查文件路径分隔符。Windows 下使用反斜杠 \\ 或正斜杠 / 均可，但避免混用。确保路径中没有多余的斜杠或空格。'],
+    preconditions: ['文件路径看起来正确但仍然找不到文件，且运行环境是 Windows'],
+    antiPatterns: ['路径明显为空或格式完全错误'],
+    source: { createdAt: 0, isSeed: true },
+  },
+  {
+    id: 'seed-transient-retry',
+    category: 'repair',
+    signals_match: ['transient', 'timeout', 'etimedout', 'econnrefused', 'econnreset', 'fetch failed'],
+    strategy: ['网络或连接超时，通常是临时性问题。等待几秒后直接重试相同操作，大概率会成功。'],
+    preconditions: ['错误消息包含超时或连接相关的关键词'],
+    antiPatterns: ['连续多次超时 — 此时可能是服务端问题，不应无限重试'],
+    source: { createdAt: 0, isSeed: true },
+  },
+]
+
+// ============================================
+// V2: Thompson Sampling — 基因选择优化
+// 用 Beta 分布采样替代确定性排序，平衡探索与利用
+// ============================================
+
+/**
+ * 从 Beta(alpha, beta) 分布近似采样
+ * 使用均值 + 正态扰动近似，无需引入额外依赖
+ */
+function betaSample(alpha: number, beta: number): number {
+  const mean = alpha / (alpha + beta)
+  const variance = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1))
+  const std = Math.sqrt(variance)
+  // Box-Muller 变换生成正态随机数，clamp 到 [0,1]
+  const u1 = Math.random()
+  const u2 = Math.random()
+  const normal = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)
+  return Math.max(0, Math.min(1, mean + std * normal))
+}
+
+/**
+ * Thompson Sampling 选择：对匹配基因做一次采样排序，取前 N
+ * 采样值 = Beta采样(successCount+1, failureCount+1) × 信号匹配分
+ */
+function thompsonSelect(matches: GeneMatch[], count: number): GeneMatch[] {
+  if (matches.length <= count) return matches
+
+  const scored = matches.map(m => ({
+    match: m,
+    sample: betaSample(
+      m.gene.metadata.successCount + 1,
+      (m.gene.metadata.useCount - m.gene.metadata.successCount) + 1
+    ) * m.score
+  }))
+  scored.sort((a, b) => b.sample - a.sample)
+  return scored.slice(0, count).map(s => s.match)
 }
 
 class GenePoolService {
@@ -62,6 +195,40 @@ class GenePoolService {
     } finally {
       this.loading = null
     }
+
+    // V2: 注入种子基因（仅当 repair 基因不足时）
+    this.injectSeedGenes()
+  }
+
+  /**
+   * V2: 注入内置种子基因
+   * 仅当 repair 基因数量 < 5 时注入，避免与用户积累的基因冲突
+   * 种子基因不会覆盖已有的同 ID 基因
+   */
+  private injectSeedGenes(): void {
+    const repairCount = this.genes.filter(g => g.category === 'repair').length
+    if (repairCount >= 5) return
+
+    let injected = 0
+    for (const seed of SEED_GENES) {
+      if (this.genes.some(g => g.id === seed.id)) continue
+
+      const gene: Gene = {
+        ...seed,
+        metadata: {
+          confidence: 0.75,
+          useCount: 0,
+          successCount: 0,
+        },
+      }
+      this.genes.push(gene)
+      this.saveGene(gene).catch(() => {})
+      injected++
+    }
+
+    if (injected > 0) {
+      console.log(`[GenePool] Injected ${injected} seed genes (repair pool had ${repairCount} genes)`)
+    }
   }
 
   /**
@@ -79,8 +246,11 @@ class GenePoolService {
       const res = await fetch(`${SERVER_URL}/api/genes/load`)
       if (res.ok) {
         const data = await res.json()
-        this.genes = Array.isArray(data) ? data : []
-        console.log(`[GenePool] Loaded ${this.genes.length} genes`)
+        const all = Array.isArray(data) ? data : []
+        // 过滤掉旧的 capability/artifact/activity 数据（已迁移至 nexusManager）
+        this.genes = all.filter((g: Gene) => g.category === 'repair')
+        const skipped = all.length - this.genes.length
+        console.log(`[GenePool] Loaded ${this.genes.length} repair genes${skipped > 0 ? ` (skipped ${skipped} non-repair)` : ''}`)
       }
     } catch {
       this.genes = []
@@ -173,7 +343,8 @@ class GenePoolService {
     const signals = extractSignals(toolName, errorMsg)
     const matches = rankGenes(signals, repairGenes)
 
-    return matches.slice(0, MAX_GENE_HINTS)
+    // V2: Thompson Sampling 替代确定性 top-N，平衡探索与利用
+    return thompsonSelect(matches, MAX_GENE_HINTS)
   }
 
   /**
@@ -220,25 +391,36 @@ class GenePoolService {
     // 重新排序
     matches.sort((a, b) => b.score - a.score)
 
-    return matches.slice(0, MAX_GENE_HINTS)
+    // V2: Thompson Sampling 替代确定性 top-N
+    return thompsonSelect(matches, MAX_GENE_HINTS)
   }
 
   /**
-   * 将匹配基因格式化为 Reflexion 注入的提示文本
+   * V2: 将匹配基因格式化为 Reflexion 注入的提示文本
+   * 只注入修复动作，不注入原始错误数据（Agent 已经知道错误了）
+   * 加入反模式提示，避免误用
    */
   buildGeneHint(matches: GeneMatch[]): string {
     if (matches.length === 0) return ''
 
     const hints = matches.map((m, i) => {
       const confidence = Math.round(m.gene.metadata.confidence * 100)
-      const stepsText = m.gene.strategy.map((s, j) => `   ${j + 1}. ${s}`).join('\n')
-      return `修复方案 ${i + 1} (置信度 ${confidence}%, 匹配信号: ${m.matchedSignals.join(', ')}):\n${stepsText}`
+      // V2: 只输出策略核心内容，不输出 "Error encountered:" 等冗余信息
+      const strategyText = m.gene.strategy
+        .filter(s => !s.startsWith('Error encountered:') && !s.startsWith('Recovery result:'))
+        .join('; ')
+
+      let hint = `${i + 1}. [${confidence}%] ${strategyText}`
+
+      // V2: 如果有反模式，附加警告
+      if (m.gene.antiPatterns && m.gene.antiPatterns.length > 0) {
+        hint += `\n   ⚠ 不适用于: ${m.gene.antiPatterns[0]}`
+      }
+
+      return hint
     })
 
-    return `\n\n[Gene Pool - 历史修复经验]
-系统在基因库中找到 ${matches.length} 条相关修复经验:
-${hints.join('\n')}
-请参考以上历史经验，但也要根据当前具体情况判断是否适用。`
+    return `\n[Gene Pool] 历史修复经验:\n${hints.join('\n')}\n根据当前情况判断是否适用。`
   }
 
   /**
@@ -328,6 +510,12 @@ ${hints.join('\n')}
       const failedTool = sorted[i]
       if (failedTool.status !== 'error') continue
 
+      // V2: 过滤插件崩溃类错误，不收割无意义基因
+      const errorMsg = failedTool.result || ''
+      if (/plugin exited|exit code|3221225794|segfault|stack overflow/i.test(errorMsg)) {
+        continue
+      }
+
       // 在后续调用中找同名成功调用
       for (let j = i + 1; j < sorted.length; j++) {
         const recoveryTool = sorted[j]
@@ -335,11 +523,10 @@ ${hints.join('\n')}
         if (recoveryTool.status !== 'success') continue
 
         // 找到 error→success 配对
-        const errorMsg = failedTool.result || ''
         const signals = extractSignals(failedTool.name, errorMsg)
 
-        // 检查重复: 与已有基因的信号重叠度
-        const isDuplicate = this.genes.some(existing => {
+        // 检查重复: 与已有 repair 基因的信号重叠度
+        const isDuplicate = this.genes.filter(g => g.category === 'repair').some(existing => {
           const overlap = signalOverlap(signals, existing.signals_match)
           if (overlap >= DUPLICATE_OVERLAP_THRESHOLD) {
             // 已有类似基因 → 增加其置信度
@@ -360,11 +547,16 @@ ${hints.join('\n')}
 
         if (strategy.length === 0) break
 
+        // V2: 自动生成前置条件
+        const errorType = classifyErrorType(failedTool.result || '')
+        const preconditions = [`${failedTool.name} 返回了 ${errorType} 类型的错误`]
+
         const gene: Gene = {
           id: `gene-${Date.now()}-${harvested.length}`,
           category: 'repair',
           signals_match: signals,
           strategy,
+          preconditions,
           source: {
             traceId: `trace-${sorted[0].order}`,
             nexusId,
@@ -388,10 +580,42 @@ ${hints.join('\n')}
       this.saveGene(gene).catch(() => {})
       console.log(`[GenePool] Harvested gene: ${gene.id} from ${gene.signals_match[0]} error`)
     }
+
+    // Repair 基因数量控制：超过上限时淘汰最低置信度的废弃基因
+    if (harvested.length > 0) {
+      this.pruneRetiredGenes()
+    }
   }
 
   /**
-   * 从失败/成功工具调用对比中生成修复策略
+   * 淘汰废弃的 repair 基因，防止无限增长
+   * 当 repair 基因数量超过 MAX_REPAIR_GENES 时，按有效置信度排序淘汰最低分的
+   */
+  private pruneRetiredGenes(): void {
+    const repairGenes = this.genes.filter(g => g.category === 'repair')
+    if (repairGenes.length <= MAX_REPAIR_GENES) return
+
+    // 按有效置信度排序 (考虑时间衰减)
+    const scored = repairGenes.map(g => ({
+      gene: g,
+      effectiveConfidence: g.metadata.confidence * this.timeDecayFactor(g.source.createdAt),
+    }))
+    scored.sort((a, b) => a.effectiveConfidence - b.effectiveConfidence)
+
+    // 淘汰最低分的基因，直到回到上限
+    const toRemove = scored.slice(0, repairGenes.length - MAX_REPAIR_GENES)
+    for (const { gene } of toRemove) {
+      const index = this.genes.indexOf(gene)
+      if (index >= 0) {
+        this.genes.splice(index, 1)
+        console.log(`[GenePool] Pruned retired gene: ${gene.id} (confidence: ${gene.metadata.confidence.toFixed(2)})`)
+      }
+    }
+  }
+
+  /**
+   * V2: 从失败/成功工具调用对比中生成抽象修复策略
+   * 不记录具体参数值，而是记录参数变化的模式和修复路径
    */
   private buildStrategyFromDiff(
     failed: ExecTraceToolCall,
@@ -399,33 +623,64 @@ ${hints.join('\n')}
     intermediate: ExecTraceToolCall[]
   ): string[] {
     const strategy: string[] = []
-
-    // 比较参数差异
     const failedArgs = failed.args || {}
     const successArgs = success.args || {}
 
+    // 1. 分析参数变化模式（抽象化，不记录具体值）
+    const paramPatterns: string[] = []
     for (const key of Object.keys(successArgs)) {
-      const fVal = JSON.stringify(failedArgs[key] ?? '')
-      const sVal = JSON.stringify(successArgs[key])
-      if (fVal !== sVal) {
-        strategy.push(`将 ${failed.name} 的参数 "${key}" 从 ${fVal} 改为 ${sVal}`)
+      const failedVal = failedArgs[key]
+      const successVal = successArgs[key]
+      const failedStr = JSON.stringify(failedVal ?? '')
+      const successStr = JSON.stringify(successVal)
+
+      if (failedStr === successStr) continue
+
+      // 判断变化模式
+      if (!failedVal || failedStr === '""' || failedStr === 'null') {
+        paramPatterns.push(`参数 "${key}" 从空值变为有效值 — 需要先获取正确的 ${key}`)
+      } else if (typeof failedVal === 'string' && typeof successVal === 'string') {
+        if (failedVal.includes('/') || failedVal.includes('\\') || successVal.includes('/') || successVal.includes('\\')) {
+          paramPatterns.push(`参数 "${key}" 的路径被修正 — 先确认正确路径再重试`)
+        } else {
+          paramPatterns.push(`参数 "${key}" 的值被修正 — 检查参数格式和内容是否正确`)
+        }
+      } else {
+        paramPatterns.push(`参数 "${key}" 被修改 — 检查参数类型和格式`)
       }
     }
 
-    // 记录中间使用的工具 (修复路径)
+    // 2. 生成修复策略（一句话总结）
+    const errorType = classifyErrorType(failed.result || '')
+    const toolName = failed.name
+
+    // 构建核心修复建议
+    if (paramPatterns.length > 0) {
+      strategy.push(`${toolName} 失败（${errorType}）: ${paramPatterns.join('；')}`)
+    }
+
+    // 3. 记录修复路径（中间使用的工具及其作用）
     if (intermediate.length > 0) {
-      const intermediateTools = intermediate
-        .filter(t => t.status === 'success')
-        .map(t => t.name)
-      const uniqueTools = [...new Set(intermediateTools)]
+      const successfulIntermediates = intermediate.filter(t => t.status === 'success' && t.name !== failed.name)
+      const uniqueTools = [...new Set(successfulIntermediates.map(t => t.name))]
       if (uniqueTools.length > 0) {
-        strategy.push(`修复过程中使用了以下工具: ${uniqueTools.join(' → ')}`)
+        strategy.push(`修复路径: 先用 ${uniqueTools.join(' → ')} 获取信息，然后用正确参数重试 ${toolName}`)
       }
     }
 
-    // 如果没有发现参数差异，记录通用策略
-    if (strategy.length === 0 && failed.result) {
-      strategy.push(`${failed.name} 失败后重新尝试成功，可能是临时性错误或环境问题`)
+    // 4. 如果没有发现参数差异，生成基于错误类型的通用策略
+    if (strategy.length === 0) {
+      const errorTypeStrategies: Record<string, string> = {
+        missing_resource: `${toolName} 找不到目标资源，先用 listDir 确认路径存在`,
+        missing_input: `${toolName} 缺少必要参数，确保所有必填参数非空`,
+        permission: `${toolName} 权限被拒绝，检查路径是否在允许的工作目录内`,
+        bad_input: `${toolName} 参数格式错误，检查参数类型和格式`,
+        parse_error: `${toolName} 解析错误，检查输入数据的格式是否正确`,
+        encoding_error: `${toolName} 编码错误，尝试指定其他编码格式`,
+        transient: `${toolName} 临时性错误，直接重试大概率成功`,
+        unknown: `${toolName} 失败后重新尝试成功，可能是临时性错误`,
+      }
+      strategy.push(errorTypeStrategies[errorType] || errorTypeStrategies.unknown)
     }
 
     return strategy
@@ -474,285 +729,9 @@ ${hints.join('\n')}
   }
 
   // ============================================
-  // Phase 4: Nexus 通讯基因
+  // Phase 4: [已迁移至 nexusManager]
+  // Nexus 通讯能力 (capability/artifact) 不再属于基因池
   // ============================================
-
-  /**
-   * 注册 Nexus 能力基因 (Capability Gene)
-   * 当 Nexus 被加载时调用，让其他 Nexus 能发现它的能力
-   */
-  registerNexusCapability(capability: NexusCapabilityInfo): void {
-    // 检查是否已存在该 Nexus 的能力基因
-    const existingIndex = this.genes.findIndex(
-      g => g.category === 'capability' && g.nexusCapability?.nexusId === capability.nexusId
-    )
-
-    // 提取能力信号
-    const signals = [
-      capability.nexusName,
-      ...capability.capabilities,
-      ...capability.description.split(/[,，、\s]+/).filter(s => s.length > 1)
-    ].map(s => s.toLowerCase())
-
-    const gene: Gene = {
-      id: existingIndex >= 0 ? this.genes[existingIndex].id : `gene-cap-${capability.nexusId}`,
-      category: 'capability',
-      signals_match: [...new Set(signals)],  // 去重
-      strategy: [`此 Nexus 专精: ${capability.capabilities.join(', ')}`],
-      source: {
-        nexusId: capability.nexusId,
-        createdAt: existingIndex >= 0 ? this.genes[existingIndex].source.createdAt : Date.now(),
-      },
-      metadata: {
-        confidence: existingIndex >= 0 ? this.genes[existingIndex].metadata.confidence : 0.8,
-        useCount: existingIndex >= 0 ? this.genes[existingIndex].metadata.useCount : 0,
-        successCount: existingIndex >= 0 ? this.genes[existingIndex].metadata.successCount : 0,
-      },
-      nexusCapability: capability,
-    }
-
-    if (existingIndex >= 0) {
-      this.genes[existingIndex] = gene
-    } else {
-      this.genes.push(gene)
-    }
-
-    this.saveGene(gene).catch(() => {})
-    console.log(`[GenePool] Registered capability gene for: ${capability.nexusName}`)
-  }
-
-  /**
-   * 注册 Nexus 产出物基因 (Artifact Gene)
-   * 当文件写入成功时调用，让其他 Nexus 能发现这个产出物
-   */
-  registerArtifact(artifact: NexusArtifactInfo, keywords?: string[]): void {
-    // 提取产出物信号
-    const signals = [
-      artifact.name,
-      artifact.type,
-      ...(keywords || []),
-      ...(artifact.description?.split(/[,，、\s]+/).filter(s => s.length > 1) || [])
-    ].map(s => s.toLowerCase())
-
-    const gene: Gene = {
-      id: `gene-art-${Date.now()}`,
-      category: 'artifact',
-      signals_match: [...new Set(signals)],
-      strategy: [`产出物路径: ${artifact.path}`, `类型: ${artifact.type}`],
-      source: {
-        nexusId: artifact.nexusId,
-        createdAt: Date.now(),
-      },
-      metadata: {
-        confidence: 0.9,  // 产出物基因初始置信度较高
-        useCount: 0,
-        successCount: 0,
-      },
-      artifactInfo: artifact,
-    }
-
-    this.genes.push(gene)
-    this.saveGene(gene).catch(() => {})
-    console.log(`[GenePool] Registered artifact gene: ${artifact.name} from ${artifact.nexusId}`)
-  }
-
-  /**
-   * 记录 Nexus 活动基因 (Activity Gene)
-   * 当 ReAct 循环完成时调用，记录 Nexus 做了什么
-   */
-  recordActivity(activity: NexusActivityInfo): void {
-    // 提取活动信号
-    const signals = [
-      activity.nexusName,
-      ...activity.summary.split(/[,，、\s]+/).filter(s => s.length > 1),
-      ...activity.toolsUsed,
-    ].map(s => s.toLowerCase())
-
-    const gene: Gene = {
-      id: `gene-act-${Date.now()}`,
-      category: 'activity',
-      signals_match: [...new Set(signals)],
-      strategy: [activity.summary],
-      source: {
-        nexusId: activity.nexusId,
-        createdAt: Date.now(),
-      },
-      metadata: {
-        confidence: activity.status === 'success' ? 0.85 : 0.4,
-        useCount: 0,
-        successCount: activity.status === 'success' ? 1 : 0,
-      },
-      activityInfo: activity,
-    }
-
-    this.genes.push(gene)
-    this.saveGene(gene).catch(() => {})
-    console.log(`[GenePool] Recorded activity gene: ${activity.summary.slice(0, 50)}...`)
-
-    // 限制活动基因数量 (只保留最近 50 条)
-    const activityGenes = this.genes.filter(g => g.category === 'activity')
-    if (activityGenes.length > 50) {
-      const toRemove = activityGenes.slice(0, activityGenes.length - 50)
-      this.genes = this.genes.filter(g => !toRemove.includes(g))
-    }
-  }
-
-  /**
-   * 查找相关的 Nexus 基因 (跨 Nexus 通讯核心)
-   * 根据用户查询的信号，找到相关的 Nexus 能力、产出物、活动
-   */
-  findNexusGenes(query: string, currentNexusId?: string): {
-    capabilities: GeneMatch[]
-    artifacts: GeneMatch[]
-    activities: GeneMatch[]
-  } {
-    const signals = query.toLowerCase().split(/[,，、\s]+/).filter(s => s.length > 1)
-    
-    const capabilities: GeneMatch[] = []
-    const artifacts: GeneMatch[] = []
-    const activities: GeneMatch[] = []
-
-    for (const gene of this.genes) {
-      // 计算信号匹配分数
-      const matchedSignals = signals.filter(s => 
-        gene.signals_match.some(gs => gs.includes(s) || s.includes(gs))
-      )
-      
-      if (matchedSignals.length === 0) continue
-
-      let score = matchedSignals.length / Math.max(signals.length, 1)
-      
-      // 跨 Nexus 加权
-      if (currentNexusId && gene.source.nexusId !== currentNexusId) {
-        // 其他 Nexus 的基因轻微降权 (但仍然可见)
-        score *= 0.9
-      }
-
-      // 高置信度加权
-      score *= (0.5 + gene.metadata.confidence * 0.5)
-
-      const match: GeneMatch = { gene, score, matchedSignals }
-
-      switch (gene.category) {
-        case 'capability':
-          capabilities.push(match)
-          break
-        case 'artifact':
-          artifacts.push(match)
-          break
-        case 'activity':
-          activities.push(match)
-          break
-      }
-    }
-
-    // 按分数排序
-    capabilities.sort((a, b) => b.score - a.score)
-    artifacts.sort((a, b) => b.score - a.score)
-    activities.sort((a, b) => b.score - a.score)
-
-    return {
-      capabilities: capabilities.slice(0, 5),
-      artifacts: artifacts.slice(0, 5),
-      activities: activities.slice(0, 5),
-    }
-  }
-
-  /**
-   * 构建 Nexus 通讯提示 (注入到动态上下文)
-   */
-  buildNexusCommunicationHint(query: string, currentNexusId?: string): string {
-    const { capabilities, artifacts, activities } = this.findNexusGenes(query, currentNexusId)
-
-    if (capabilities.length === 0 && artifacts.length === 0 && activities.length === 0) {
-      return ''
-    }
-
-    const hints: string[] = ['## 🌐 Nexus 协作资源']
-
-    // 能力发现
-    if (capabilities.length > 0) {
-      hints.push('\n### 可协作的 Nexus 节点')
-      for (const m of capabilities) {
-        const cap = m.gene.nexusCapability!
-        hints.push(`- **${cap.nexusName}** (${cap.nexusId})`)
-        hints.push(`  能力: ${cap.capabilities.join(', ')}`)
-        hints.push(`  路径: ${cap.dirPath}`)
-      }
-    }
-
-    // 产出物发现
-    if (artifacts.length > 0) {
-      hints.push('\n### 相关产出物')
-      for (const m of artifacts) {
-        const art = m.gene.artifactInfo!
-        hints.push(`- **${art.name}** (来自 ${art.nexusId})`)
-        hints.push(`  路径: ${art.path}`)
-        hints.push(`  类型: ${art.type}`)
-        if (art.description) {
-          hints.push(`  描述: ${art.description}`)
-        }
-      }
-    }
-
-    // 活动历史
-    if (activities.length > 0) {
-      hints.push('\n### 最近相关活动')
-      for (const m of activities.slice(0, 3)) {
-        const act = m.gene.activityInfo!
-        const timeAgo = this.formatTimeAgo(m.gene.source.createdAt)
-        hints.push(`- [${act.nexusName}] ${act.summary} (${timeAgo})`)
-      }
-    }
-
-    hints.push('\n如需访问其他 Nexus 的产出物，直接使用 readFile(路径) 读取。')
-
-    return hints.join('\n')
-  }
-
-  /**
-   * 格式化时间差
-   */
-  private formatTimeAgo(timestamp: number): string {
-    const diff = Date.now() - timestamp
-    const minutes = Math.floor(diff / 60000)
-    const hours = Math.floor(diff / 3600000)
-    const days = Math.floor(diff / 86400000)
-
-    if (days > 0) return `${days}天前`
-    if (hours > 0) return `${hours}小时前`
-    if (minutes > 0) return `${minutes}分钟前`
-    return '刚刚'
-  }
-
-  /**
-   * 获取所有已注册的 Nexus 能力列表
-   */
-  getAllNexusCapabilities(): NexusCapabilityInfo[] {
-    return this.genes
-      .filter(g => g.category === 'capability' && g.nexusCapability)
-      .map(g => g.nexusCapability!)
-  }
-
-  /**
-   * 获取指定 Nexus 的所有产出物
-   */
-  getNexusArtifacts(nexusId: string): NexusArtifactInfo[] {
-    return this.genes
-      .filter(g => g.category === 'artifact' && g.artifactInfo?.nexusId === nexusId)
-      .map(g => g.artifactInfo!)
-  }
-
-  /**
-   * 获取指定 Nexus 的最近活动
-   */
-  getNexusActivities(nexusId: string, limit: number = 10): NexusActivityInfo[] {
-    return this.genes
-      .filter(g => g.category === 'activity' && g.activityInfo?.nexusId === nexusId)
-      .sort((a, b) => b.source.createdAt - a.source.createdAt)
-      .slice(0, limit)
-      .map(g => g.activityInfo!)
-  }
 }
 
 // 单例导出

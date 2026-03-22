@@ -20,6 +20,8 @@ export default defineConfig({
     assetsDir: 'assets',
   },
   server: {
+    port: 5173,
+    strictPort: true,
     proxy: {
       // WebSocket 代理 - 转发到 OpenClaw Gateway
       '/ws': {

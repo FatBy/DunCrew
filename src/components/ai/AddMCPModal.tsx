@@ -6,6 +6,7 @@ import { searchMCPServers, type MatchResult, type MCPServerCandidate } from '@/s
 import { searchOnlineMCP, getAllOnlineMCP, type RegistryMCPResult } from '@/services/onlineSearchService'
 import { installMCP } from '@/services/installService'
 import { MatchResultCard } from './MatchResultCard'
+import { getServerUrl } from '@/utils/env'
 
 type TabType = 'local' | 'online'
 
@@ -56,7 +57,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
     setInstallStatus(null)
     setShowEnvInput(null)
     setLoading(true)
-    const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+    const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
     fetch(`${serverUrl}/mcp/servers`)
       .then(res => res.ok ? res.json() : null)
       .then(data => {

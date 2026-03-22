@@ -4,10 +4,12 @@ import {
   Play, Loader2, Brain, Wrench, Terminal,
   MessageSquare, AlertCircle, CheckCircle2, XCircle,
   Activity, ChevronDown, Clock, Pause, SkipForward, Zap, Code,
+  Search, FileText, RefreshCw, ShieldAlert, GitBranch, Eye, Sparkles,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { useStore } from '@/store'
-import type { TaskItem, ExecutionStep, SubTask, TaskPlan } from '@/types'
+import type { TaskItem, ExecutionStep, SubTask, TaskPlan, AgentPhase, AgentEventEnvelope } from '@/types'
+import { agentEventBus } from '@/services/agentEventBus'
 import { useState } from 'react'
 
 // --- 执行步骤图标 ---
@@ -243,12 +245,470 @@ function ToolArgsBlock({ args }: { args: Record<string, unknown> }) {
   )
 }
 
+// ============================================
+// 实时事件流 - 打字机式展示 Agent 正在做什么
+// ============================================
+
+interface LiveEvent {
+  id: string
+  icon: typeof Brain
+  iconColor: string
+  label: string
+  detail?: string
+  status: 'active' | 'done' | 'error'
+  timestamp: number
+  elapsedMs?: number
+}
+
+const TOOL_DISPLAY_MAP: Record<string, { icon: typeof Wrench; label: string }> = {
+  readFile:      { icon: FileText,  label: '读取文件' },
+  writeFile:     { icon: FileText,  label: '写入文件' },
+  appendFile:    { icon: FileText,  label: '追加文件' },
+  listDir:       { icon: Eye,       label: '浏览目录' },
+  searchFiles:   { icon: Search,    label: '搜索文件' },
+  runCmd:        { icon: Terminal,   label: '执行命令' },
+  webSearch:     { icon: Search,    label: '网络搜索' },
+  webFetch:      { icon: Search,    label: '抓取网页' },
+  saveMemory:    { icon: Brain,      label: '保存记忆' },
+  searchMemory:  { icon: Search,    label: '搜索记忆' },
+  generateSkill: { icon: Sparkles,  label: '生成技能' },
+}
+
+function getToolIcon(toolName: string): { icon: typeof Wrench; label: string } {
+  return TOOL_DISPLAY_MAP[toolName] || { icon: Wrench, label: toolName }
+}
+
+const PHASE_LABELS: Record<AgentPhase, { icon: typeof Brain; color: string; label: string }> = {
+  idle:             { icon: Clock,        color: 'stone',   label: '待命中' },
+  planning:         { icon: Brain,        color: 'purple',  label: '深度思考中' },
+  executing:        { icon: Wrench,       color: 'cyan',    label: '执行中' },
+  reflecting:       { icon: RefreshCw,    color: 'amber',   label: '反思中' },
+  compacting:       { icon: GitBranch,    color: 'blue',    label: '压缩上下文' },
+  waiting_approval: { icon: ShieldAlert,  color: 'yellow',  label: '等待确认' },
+  recovering:       { icon: RefreshCw,    color: 'orange',  label: '恢复中' },
+  done:             { icon: CheckCircle2, color: 'emerald', label: '完成' },
+  error:            { icon: XCircle,      color: 'red',     label: '出错' },
+  aborted:          { icon: XCircle,      color: 'gray',    label: '已终止' },
+}
+
+function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
+  const [events, setEvents] = useState<LiveEvent[]>([])
+  const [currentPhase, setCurrentPhase] = useState<AgentPhase>(() => {
+    // 挂载时立即读取 eventBus 当前状态，避免错过 run_start 事件
+    const state = agentEventBus.getState()
+    return state.phase || 'idle'
+  })
+  const [phaseElapsed, setPhaseElapsed] = useState(0)
+  const [thinkingPreview, setThinkingPreview] = useState('')
+  const phaseStartRef = useRef(Date.now())
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // 挂载时从 eventBus 当前状态初始化（解决时序问题）
+  useEffect(() => {
+    if (!isExecuting) return
+    const state = agentEventBus.getState()
+    if (state.runId && state.runId !== 'none' && state.phase !== 'idle') {
+      setCurrentPhase(state.phase)
+      phaseStartRef.current = Date.now()
+
+      const initialEvents: LiveEvent[] = []
+
+      // 添加当前阶段条目
+      const phaseDisplay = PHASE_LABELS[state.phase]
+      const terminalPhases: AgentPhase[] = ['done', 'error', 'aborted']
+      initialEvents.push({
+        id: `init-phase-${state.phase}`,
+        icon: phaseDisplay.icon,
+        iconColor: phaseDisplay.color,
+        label: phaseDisplay.label,
+        status: terminalPhases.includes(state.phase) ? 'done' : 'active',
+        timestamp: Date.now(),
+      })
+
+      // 从工具历史构建已完成的条目
+      for (const tool of state.toolHistory) {
+        const toolDisplay = getToolIcon(tool.toolName)
+        initialEvents.push({
+          id: `init-tool-${tool.callId}`,
+          icon: toolDisplay.icon,
+          iconColor: tool.status === 'success' ? 'emerald' : 'red',
+          label: `${toolDisplay.label} · ${(tool.durationMs / 1000).toFixed(1)}s`,
+          detail: tool.toolName,
+          status: tool.status === 'success' ? 'done' : 'error',
+          timestamp: tool.timestamp,
+        })
+      }
+
+      // 如果当前有正在执行的工具，添加 active 条目
+      if (state.currentTool) {
+        const toolDisplay = getToolIcon(state.currentTool.name)
+        initialEvents.push({
+          id: `init-current-${state.currentTool.callId}`,
+          icon: toolDisplay.icon,
+          iconColor: 'cyan',
+          label: toolDisplay.label,
+          detail: state.currentTool.name,
+          status: 'active',
+          timestamp: state.currentTool.startTime,
+        })
+      }
+
+      if (initialEvents.length > 0) {
+        setEvents(initialEvents)
+      }
+    }
+  }, [isExecuting])
+
+  // 阶段计时器
+  useEffect(() => {
+    const terminalPhases: AgentPhase[] = ['idle', 'done', 'error', 'aborted']
+    if (terminalPhases.includes(currentPhase) || !isExecuting) return
+    const timer = setInterval(() => {
+      setPhaseElapsed(Math.floor((Date.now() - phaseStartRef.current) / 1000))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [currentPhase, isExecuting])
+
+  // 订阅 agentEventBus
+  useEffect(() => {
+    if (!isExecuting) return
+
+    const unsubscribe = agentEventBus.subscribe((event: AgentEventEnvelope) => {
+      const entryId = `${event.stream}-${event.type}-${event.seq}`
+
+      switch (event.stream) {
+        case 'lifecycle':
+          if (event.type === 'phase_change') {
+            const newPhase = event.data.to as AgentPhase
+            setCurrentPhase(newPhase)
+            phaseStartRef.current = Date.now()
+            setPhaseElapsed(0)
+
+            const display = PHASE_LABELS[newPhase]
+            const terminalPhases: AgentPhase[] = ['done', 'error', 'aborted']
+            setEvents(prev => [
+              ...prev.map(e => e.status === 'active' ? { ...e, status: 'done' as const } : e),
+              {
+                id: entryId,
+                icon: display.icon,
+                iconColor: display.color,
+                label: display.label,
+                status: terminalPhases.includes(newPhase) ? 'done' : 'active',
+                timestamp: Date.now(),
+              },
+            ])
+          } else if (event.type === 'run_start') {
+            setEvents([])
+            setThinkingPreview('')
+            setCurrentPhase('planning')
+            phaseStartRef.current = Date.now()
+          } else if (event.type === 'run_end') {
+            const success = event.data.success as boolean
+            setCurrentPhase(success ? 'done' : 'error')
+            setEvents(prev => prev.map(e =>
+              e.status === 'active' ? { ...e, status: 'done' } : e
+            ))
+          }
+          break
+
+        case 'assistant':
+          if (event.type === 'text_delta' || event.type === 'thinking_delta') {
+            const delta = event.data.delta as string
+            setThinkingPreview(prev => {
+              const updated = prev + delta
+              // 只保留最后 200 字符作为预览
+              return updated.length > 200 ? updated.slice(-200) : updated
+            })
+          } else if (event.type === 'message_end') {
+            setThinkingPreview('')
+          }
+          break
+
+        case 'tool':
+          if (event.type === 'tool_start') {
+            const toolName = event.data.toolName as string
+            const toolDisplay = getToolIcon(toolName)
+            setThinkingPreview('')
+            setEvents(prev => [
+              ...prev,
+              {
+                id: entryId,
+                icon: toolDisplay.icon,
+                iconColor: 'cyan',
+                label: toolDisplay.label,
+                detail: toolName,
+                status: 'active',
+                timestamp: Date.now(),
+              },
+            ])
+          } else if (event.type === 'tool_end') {
+            const toolName = event.data.toolName as string
+            const toolDisplay = getToolIcon(toolName)
+            const durationMs = event.data.durationMs as number
+            const success = event.data.success as boolean
+            setEvents(prev => {
+              const lastIdx = [...prev].reverse().findIndex(
+                e => e.detail === toolName && e.status === 'active'
+              )
+              if (lastIdx === -1) return prev
+              const realIdx = prev.length - 1 - lastIdx
+              return prev.map((e, idx) =>
+                idx === realIdx
+                  ? {
+                      ...e,
+                      status: success ? 'done' as const : 'error' as const,
+                      label: `${toolDisplay.label} · ${(durationMs / 1000).toFixed(1)}s`,
+                      elapsedMs: durationMs,
+                    }
+                  : e
+              )
+            })
+          } else if (event.type === 'tool_error') {
+            const toolName = event.data.toolName as string
+            setEvents(prev => {
+              const lastIdx = [...prev].reverse().findIndex(
+                e => e.detail === toolName && e.status === 'active'
+              )
+              if (lastIdx === -1) return prev
+              const realIdx = prev.length - 1 - lastIdx
+              return prev.map((e, idx) =>
+                idx === realIdx
+                  ? { ...e, status: 'error' as const, label: `${e.label} 失败` }
+                  : e
+              )
+            })
+          }
+          break
+
+        case 'plan':
+          if (event.type === 'step_start') {
+            const stepIndex = event.data.stepIndex as number
+            const totalSteps = event.data.totalSteps as number
+            setEvents(prev => [
+              ...prev,
+              {
+                id: entryId,
+                icon: Zap,
+                iconColor: 'amber',
+                label: `步骤 ${stepIndex + 1}/${totalSteps}`,
+                detail: event.data.description as string,
+                status: 'active',
+                timestamp: Date.now(),
+              },
+            ])
+          } else if (event.type === 'step_complete') {
+            const stepIndex = event.data.stepIndex as number
+            const success = event.data.success as boolean
+            setEvents(prev =>
+              prev.map(e =>
+                e.label.startsWith(`步骤 ${stepIndex + 1}/`) && e.status === 'active'
+                  ? { ...e, status: success ? 'done' as const : 'error' as const }
+                  : e
+              )
+            )
+          }
+          break
+
+        case 'reflexion':
+          if (event.type === 'reflexion_start') {
+            setEvents(prev => [
+              ...prev,
+              {
+                id: entryId,
+                icon: RefreshCw,
+                iconColor: 'amber',
+                label: '反思中',
+                detail: `工具 ${event.data.failedTool} 失败，重新规划...`,
+                status: 'active',
+                timestamp: Date.now(),
+              },
+            ])
+          } else if (event.type === 'reflexion_end') {
+            setEvents(prev =>
+              prev.map(e =>
+                e.label === '反思中' && e.status === 'active'
+                  ? { ...e, status: 'done' as const, label: '反思完成' }
+                  : e
+              )
+            )
+          }
+          break
+
+        case 'approval':
+          if (event.type === 'approval_required') {
+            setEvents(prev => [
+              ...prev,
+              {
+                id: entryId,
+                icon: ShieldAlert,
+                iconColor: 'yellow',
+                label: '等待确认',
+                detail: event.data.reason as string,
+                status: 'active',
+                timestamp: Date.now(),
+              },
+            ])
+          } else if (event.type === 'approval_resolved') {
+            const approved = event.data.approved as boolean
+            setEvents(prev =>
+              prev.map(e =>
+                e.label === '等待确认' && e.status === 'active'
+                  ? { ...e, status: 'done' as const, label: approved ? '已批准' : '已拒绝' }
+                  : e
+              )
+            )
+          }
+          break
+      }
+    })
+
+    return unsubscribe
+  }, [isExecuting])
+
+  // 自动滚动
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [events.length, thinkingPreview])
+
+  if (events.length === 0 && !thinkingPreview && currentPhase === 'idle') return null
+
+  const phaseConfig = PHASE_LABELS[currentPhase]
+  const terminalPhases: AgentPhase[] = ['idle', 'done', 'error', 'aborted']
+  const isActivePhase = !terminalPhases.includes(currentPhase)
+
+  return (
+    <div className="rounded-xl border border-stone-200 overflow-hidden mb-3 bg-white">
+      {/* 阶段指示器头部 */}
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-stone-50/80 border-b border-stone-100">
+        <div className={cn(
+          'w-2 h-2 rounded-full',
+          isActivePhase && 'animate-pulse',
+          phaseConfig.color === 'purple' && 'bg-purple-400',
+          phaseConfig.color === 'cyan' && 'bg-cyan-400',
+          phaseConfig.color === 'amber' && 'bg-amber-400',
+          phaseConfig.color === 'blue' && 'bg-blue-400',
+          phaseConfig.color === 'yellow' && 'bg-yellow-400',
+          phaseConfig.color === 'orange' && 'bg-orange-400',
+          phaseConfig.color === 'emerald' && 'bg-emerald-400',
+          phaseConfig.color === 'red' && 'bg-red-400',
+          phaseConfig.color === 'stone' && 'bg-stone-400',
+          phaseConfig.color === 'gray' && 'bg-gray-400',
+        )} />
+        <span className="text-xs font-mono font-bold text-stone-600">
+          实时进度
+        </span>
+        <span className={cn(
+          'text-xs font-mono font-medium ml-1',
+          phaseConfig.color === 'purple' && 'text-purple-500',
+          phaseConfig.color === 'cyan' && 'text-cyan-500',
+          phaseConfig.color === 'amber' && 'text-amber-500',
+          phaseConfig.color === 'emerald' && 'text-emerald-500',
+          phaseConfig.color === 'red' && 'text-red-500',
+          phaseConfig.color === 'stone' && 'text-stone-400',
+        )}>
+          {phaseConfig.label}
+        </span>
+        {isActivePhase && phaseElapsed > 0 && (
+          <span className="text-xs font-mono text-stone-400 ml-auto">
+            {phaseElapsed}s
+          </span>
+        )}
+        {!isActivePhase && events.length > 0 && (
+          <span className="text-xs font-mono text-stone-300 ml-auto">
+            {events.filter(e => e.status === 'done').length} 步完成
+          </span>
+        )}
+      </div>
+
+      {/* 事件流列表 */}
+      <div ref={scrollRef} className="max-h-[300px] overflow-y-auto">
+        <AnimatePresence mode="popLayout">
+          {events.map((event) => {
+            const Icon = event.icon
+            return (
+              <motion.div
+                key={event.id}
+                initial={{ opacity: 0, x: -8, height: 0 }}
+                animate={{ opacity: 1, x: 0, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="flex items-center gap-2.5 px-4 py-2 border-b border-stone-50 last:border-0"
+              >
+                {/* 状态指示 */}
+                <div className={cn(
+                  'w-5 h-5 rounded flex items-center justify-center flex-shrink-0',
+                  event.status === 'active' && 'bg-cyan-50',
+                  event.status === 'done' && 'bg-emerald-50',
+                  event.status === 'error' && 'bg-red-50',
+                )}>
+                  {event.status === 'active' ? (
+                    <Loader2 className="w-3 h-3 text-cyan-500 animate-spin" />
+                  ) : event.status === 'done' ? (
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                  ) : (
+                    <XCircle className="w-3 h-3 text-red-500" />
+                  )}
+                </div>
+
+                {/* 操作图标 */}
+                <Icon className={cn(
+                  'w-3.5 h-3.5 flex-shrink-0',
+                  event.status === 'done' && 'text-stone-400',
+                  event.status === 'active' && 'text-stone-600',
+                  event.status === 'error' && 'text-red-400',
+                )} />
+
+                {/* 标签 */}
+                <span className={cn(
+                  'text-xs font-mono font-medium',
+                  event.status === 'active' && 'text-stone-700',
+                  event.status === 'done' && 'text-stone-400',
+                  event.status === 'error' && 'text-red-500',
+                )}>
+                  {event.label}
+                </span>
+
+                {/* 详情 */}
+                {event.detail && (
+                  <span className="text-xs font-mono text-stone-300 truncate max-w-[180px] ml-auto">
+                    {event.detail}
+                  </span>
+                )}
+              </motion.div>
+            )
+          })}
+        </AnimatePresence>
+
+        {/* 思考预览 (流式文字) */}
+        {thinkingPreview && isActivePhase && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="px-4 py-2.5 border-t border-stone-100 bg-purple-50/30"
+          >
+            <div className="flex items-start gap-2">
+              <Brain className="w-3.5 h-3.5 text-purple-400 mt-0.5 flex-shrink-0 animate-pulse" />
+              <p className="text-xs font-mono text-purple-400/80 leading-relaxed line-clamp-3">
+                {thinkingPreview}
+                <span className="inline-block w-1 h-3 bg-purple-400/50 ml-0.5 animate-pulse" />
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // --- 执行步骤查看器 ---
-function ExecutionStepsViewer({ steps, output, error, duration }: {
+function ExecutionStepsViewer({ steps, output, error, duration, isExecuting }: {
   steps?: ExecutionStep[]
   output?: string
   error?: string
   duration?: number
+  isExecuting?: boolean
 }) {
   const [stepsExpanded, setStepsExpanded] = useState(true) // 执行视图中默认展开
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -270,16 +730,11 @@ function ExecutionStepsViewer({ steps, output, error, duration }: {
     }
   }, [steps?.length, stepsExpanded])
 
-  if (!steps?.length && !output && !error) {
-    return (
-      <div className="p-3 bg-stone-100/80 rounded-lg border border-stone-200">
-        <p className="text-xs text-stone-400 font-mono">暂无执行记录</p>
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-2">
+      {/* 实时事件流 (仅执行中显示) */}
+      {isExecuting && <LiveEventStream isExecuting={isExecuting} />}
+
       {output && (
         <div className="p-4 bg-emerald-500/5 rounded-lg border border-emerald-500/15">
           <div className="flex items-center gap-1.5 mb-1.5">
@@ -369,6 +824,13 @@ function ExecutionStepsViewer({ steps, output, error, duration }: {
           </AnimatePresence>
         </div>
       )}
+
+      {/* 无内容且非执行中时的空状态 */}
+      {!isExecuting && !steps?.length && !output && !error && (
+        <div className="p-3 bg-stone-100/80 rounded-lg border border-stone-200">
+          <p className="text-xs text-stone-400 font-mono">暂无执行记录</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -432,6 +894,7 @@ export function ExecutionFocusView({ task, onTerminate }: ExecutionFocusViewProp
             output={task.executionOutput}
             error={task.executionError}
             duration={task.executionDuration}
+            isExecuting={task.status === 'executing'}
           />
         )}
       </div>

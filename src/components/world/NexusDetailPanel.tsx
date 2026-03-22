@@ -15,6 +15,7 @@ import { installSkill, triggerHotReload } from '@/services/installService'
 import { nexusRuleEngine, RULE_LABELS, type NexusRule } from '@/services/nexusRuleEngine'
 import { nexusScoringService } from '@/services/nexusScoringService'
 import { agentEventBus } from '@/services/agentEventBus'
+import { getConstructionProgress } from '@/store/slices/worldSlice'
 import type { NexusEntity, NexusExperience, NexusScoring } from '@/types'
 import { getScoreTier, SCORE_TIER_COLORS } from '@/types'
 import { formatTime } from '@/utils/formatTime'
@@ -28,18 +29,22 @@ import {
   type GrowthStage,
 } from '@/components/dashboard/nexusGrowth'
 import { AchievementBadges } from '@/components/dashboard/AchievementBadges'
+import { getServerUrl } from '@/utils/env'
+import { FileCard } from '@/components/shared/FileCard'
+import { nexusManager } from '@/services/nexusManager'
 
 // Tab 类型
-type DetailTab = 'ability' | 'sop' | 'skills' | 'records'
+type DetailTab = 'ability' | 'sop' | 'skills' | 'records' | 'artifacts'
 
 const TAB_CONFIG: { id: DetailTab; label: string; icon: string }[] = [
   { id: 'ability', label: '能力', icon: '\u26A1' },
   { id: 'sop', label: 'SOP', icon: '\uD83D\uDCCB' },
   { id: 'skills', label: '技能', icon: '\uD83E\uDDE9' },
   { id: 'records', label: '记录', icon: '\uD83D\uDCCA' },
+  { id: 'artifacts', label: '产出', icon: '\uD83D\uDCC1' },
 ]
 
-// 建造总时长（与 worldSlice tickConstructionAnimations 中的 3000ms 一致）
+// 建造总时长
 const CONSTRUCTION_DURATION_MS = 3000
 
 /**
@@ -150,6 +155,10 @@ export function NexusDetailPanel() {
   const dragControls = useDragControls()
   
   const nexus = selectedNexusForPanel ? nexuses.get(selectedNexusForPanel) : null
+  
+  // V2: 基于时间戳实时计算建造进度，不再依赖 tick 递增
+  const buildProgress = nexus ? getConstructionProgress(nexus) : 1
+  const isBuilding = buildProgress < 1
   
   // Resolve all bound skills (标记未加载为 unavailable, 尊重实际状态)
   const boundSkills = useMemo(() => {
@@ -326,7 +335,7 @@ export function NexusDetailPanel() {
         for (let attempt = 0; attempt < 3; attempt++) {
           await new Promise(r => setTimeout(r, 300))
           try {
-            const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+            const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
             const res = await fetch(`${serverUrl}/skills`)
             if (res.ok) {
               freshSkills = await res.json()
@@ -377,7 +386,7 @@ export function NexusDetailPanel() {
   // Load experiences from server when panel opens
   useEffect(() => {
     if (!nexus?.id || !nexusPanelOpen) return
-    const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+    const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
     fetch(`${serverUrl}/nexuses/${nexus.id}`)
       .then(res => res.ok ? res.json() : null)
       .then(data => {
@@ -410,7 +419,7 @@ export function NexusDetailPanel() {
       setScoring(cached)
     } else {
       // 尝试从服务端加载，失败则用 getOrCreate 创建初始值
-      const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+      const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
       nexusScoringService.loadFromServer(nexus.id, serverUrl).then(loaded => {
         setScoring(loaded || nexusScoringService.getOrCreate(nexus.id))
       })
@@ -459,7 +468,7 @@ export function NexusDetailPanel() {
   // V2: 评分制数据
   const scoreTier = scoring ? getScoreTier(scoring.score) : 'Learning'
   const tierColor = SCORE_TIER_COLORS[scoreTier]
-  const toolDims = scoring ? Object.values(scoring.dimensions) : []
+  const toolDims = scoring?.dimensions ? Object.values(scoring.dimensions) : []
   const recentRuns = scoring?.recentRuns || []
   
   // 保存名称修改
@@ -469,7 +478,7 @@ export function NexusDetailPanel() {
     if (!trimmedName || trimmedName === nexus.label) return
     
     try {
-      const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+      const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
       const res = await fetch(`${serverUrl}/nexuses/${nexus.id}/meta`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -637,7 +646,7 @@ export function NexusDetailPanel() {
             <div className="flex-1 overflow-y-auto p-6 space-y-5">
               
               {/* === 建造中状态 === */}
-              {nexus.constructionProgress < 1 && (
+              {isBuilding && (
                 <motion.div 
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -679,13 +688,13 @@ export function NexusDetailPanel() {
                   <div className="w-48">
                     <div className="flex justify-between text-xs font-mono text-stone-400 mb-1">
                       <span>{t('nexus.constructing_progress')}</span>
-                      <span>{Math.round(nexus.constructionProgress * 100)}%</span>
+                      <span>{Math.round(buildProgress * 100)}%</span>
                     </div>
                     <div className="h-2 bg-stone-100/80 rounded-full overflow-hidden">
                       <motion.div
                         initial={{ width: 0 }}
-                        animate={{ width: `${nexus.constructionProgress * 100}%` }}
-                        transition={{ duration: 0.5, ease: 'easeOut' }}
+                        animate={{ width: `${buildProgress * 100}%` }}
+                        transition={{ duration: 0.3, ease: 'easeOut' }}
                         className="h-full rounded-full"
                         style={dynamicBg}
                       />
@@ -696,7 +705,7 @@ export function NexusDetailPanel() {
                       <span className="text-xs font-mono text-stone-400">
                         {t('nexus.constructing_eta')}{' '}
                         <span style={dynamicText}>
-                          {Math.max(0, Math.ceil((1 - nexus.constructionProgress) * CONSTRUCTION_DURATION_MS / 1000))}
+                          {Math.max(0, Math.ceil((1 - buildProgress) * CONSTRUCTION_DURATION_MS / 1000))}
                         </span>
                         {t('nexus.constructing_eta_seconds')}
                       </span>
@@ -711,7 +720,7 @@ export function NexusDetailPanel() {
               )}
 
               {/* === 正常内容（仅在建造完成后显示） === */}
-              {nexus.constructionProgress >= 1 && (
+              {!isBuilding && (
                 <>
               {/* Growth Stage Visual + Score (V2) */}
               {(() => {
@@ -946,7 +955,7 @@ export function NexusDetailPanel() {
                                 e.stopPropagation()
                                 e.preventDefault()
                                 if (!nexus) return
-                                const serverUrl = localStorage.getItem('duncrew_server_url') || 'http://localhost:3001'
+                                const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
                                 fetch(`${serverUrl}/nexuses/${nexus.id}/skills`, {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
@@ -1652,6 +1661,31 @@ export function NexusDetailPanel() {
               </div>
               {/* ==================== TAB: RECORDS - end ==================== */}
               </>)}
+
+              {/* ==================== TAB: ARTIFACTS ==================== */}
+              {activeTab === 'artifacts' && (() => {
+                const artifacts = nexus?.id ? nexusManager.getNexusArtifacts(nexus.id) : []
+                return (
+                  <div className="space-y-2">
+                    {artifacts.length > 0 ? (
+                      artifacts.map((artifact, i) => (
+                        <FileCard
+                          key={`${artifact.path}-${i}`}
+                          filePath={artifact.path}
+                          fileName={artifact.name}
+                          fileSize={artifact.size}
+                        />
+                      ))
+                    ) : (
+                      <div className="py-12 text-center">
+                        <span className="text-2xl mb-2 block">{'\uD83D\uDCC2'}</span>
+                        <p className="text-sm font-mono text-stone-400">{'\u6682\u65E0\u4EA7\u51FA\u6587\u4EF6'}</p>
+                        <p className="text-xs font-mono text-stone-300 mt-1">Nexus {'\u6267\u884C\u4EFB\u52A1\u4EA7\u751F\u7684\u6587\u4EF6\u5C06\u81EA\u52A8\u663E\u793A\u5728\u8FD9\u91CC'}</p>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
               </>
               )}            </div>
             

@@ -95,6 +95,25 @@ export interface ExtensionSOPFitness {
   lastUpdatedAt: number;
 }
 
+// ============================================
+// Golden Path types
+// ============================================
+
+export interface GoldenPath {
+  /** Most common core tools across successful executions */
+  recommendedToolChain: string[];
+  /** Confidence (0-1): average presence rate of core tools across successes */
+  confidence: number;
+  /** Average execution duration (ms) for matching traces */
+  averageDurationMs: number;
+  /** Known failure patterns extracted from failures */
+  knownPitfalls: string[];
+  /** Number of successful executions this path is based on */
+  basedOnSuccesses: number;
+  /** Timestamp of last distillation */
+  lastDistilledAt: number;
+}
+
 export interface RecentEntities {
   files: string[];
   commands: string[];
@@ -646,6 +665,7 @@ export class NexusManager {
     if (mode === "strict") {
       let directive = `[SOP 执行指令 - ${tracker.nexusLabel}]\n`;
       directive += `你已激活 Nexus "${tracker.nexusLabel}"，必须严格按照 SOP 流程执行。\n`;
+      directive += `注意：根据任务实际需求灵活调整执行深度。对于简单任务，可以快速通过或跳过分析/验证类阶段；对于复杂任务，每个阶段都应充分执行。\n`;
       const firstPhase = tracker.phases[0];
       if (firstPhase) {
         directive += `从 Phase 1 "${firstPhase.name}" 开始:\n`;
@@ -667,6 +687,7 @@ export class NexusManager {
     }
     choice += `\n如果此任务适合按 SOP 执行，请在回复开头包含 [SOP:FOLLOW]，然后从 Phase 1 开始。\n`;
     choice += `如果此任务不需要 SOP（如简单查询、单步操作等），请在回复开头包含 [SOP:FREE]，然后自由选择最佳方案。\n`;
+    choice += `提示：即使选择 [SOP:FOLLOW]，也可以根据任务复杂度跳过不相关的阶段（如任务简单时跳过深度分析或验证阶段）。\n`;
     choice += `注意：[SOP:FOLLOW] 和 [SOP:FREE] 标记仅供系统识别，不会展示给用户。`;
     return choice;
   }
@@ -1004,41 +1025,77 @@ export class NexusManager {
   // ============================================
 
   /**
-   * Build an SOP rewrite request if conditions are met.
+   * Build an SOP rewrite request using three-tier trigger mechanism.
    * Returns null if rewrite should not be triggered.
+   *
+   * Tiers:
+   *   EMERGENCY: last 3 executions all failed
+   *   STANDARD:  5+ executions && EMA < 0.5
+   *   GRADUAL:   10+ executions && EMA < 0.7 && recent performance declining
    */
   buildSOPRewriteRequest(nexusId: string): string | null {
     const data = this.loadSOPFitness(nexusId);
 
-    // Strict conditions: all must be met
-    if (data.totalExecutions < 10) return null;
-    if (data.ema >= 0.55) return null;
+    // ── Three-tier trigger mechanism ──
+    let triggerLevel: "emergency" | "standard" | "gradual" | null = null;
+    let triggerReason = "";
 
-    // Need at least 3 phases with sufficient data
-    const significantPhases = Object.entries(data.phaseStats)
-      .filter(([, ps]) => ps.successes + ps.failures >= 3);
-    if (significantPhases.length < 3) return null;
+    // EMERGENCY: last 3 executions all failed
+    const last3 = data.recentTraces.slice(-3);
+    if (last3.length >= 3 && last3.every(t => !t.success)) {
+      triggerLevel = "emergency";
+      triggerReason = `Last ${last3.length} executions all failed`;
+    }
+
+    // STANDARD: 5+ executions && EMA < 0.5
+    if (!triggerLevel && data.totalExecutions >= 5 && data.ema < 0.5) {
+      triggerLevel = "standard";
+      triggerReason = `Low fitness (${Math.round(data.ema * 100)}%) over ${data.totalExecutions} executions`;
+    }
+
+    // GRADUAL: 10+ executions && EMA < 0.7 && recent performance declining
+    if (!triggerLevel && data.totalExecutions >= 10 && data.ema < 0.7) {
+      const recentSlice = data.recentTraces.slice(-5);
+      if (recentSlice.length > 0) {
+        const recentAvg = recentSlice.reduce((s, t) => s + t.fitness, 0) / recentSlice.length;
+        if (recentAvg < data.ema) {
+          triggerLevel = "gradual";
+          triggerReason = `Performance declining (recent: ${Math.round(recentAvg * 100)}%, overall: ${Math.round(data.ema * 100)}%)`;
+        }
+      }
+    }
+
+    if (!triggerLevel) return null;
 
     const meta = this.loadNexusMeta(nexusId);
     const nexusName = meta?.name || nexusId;
 
     const parts: string[] = [];
-    parts.push(`[SOP Rewrite Request]`);
+    parts.push(`[SOP Rewrite Request — ${triggerLevel.toUpperCase()}]`);
     parts.push(
-      `The current SOP for Nexus "${nexusName}" has underperformed (fitness: ${Math.round(data.ema * 100)}% over ${data.totalExecutions} executions).`
+      `The current SOP for Nexus "${nexusName}" needs improvement.`
     );
-    parts.push("Phase performance data:");
+    parts.push(`Trigger: ${triggerReason}`);
+    parts.push(`Overall fitness: ${Math.round(data.ema * 100)}% over ${data.totalExecutions} executions.`);
 
+    // Phase performance data
     const tracker = this.getSOPTracker(nexusId);
-    for (const [key, ps] of significantPhases) {
-      const total = ps.successes + ps.failures;
-      const phaseIndex = parseInt(key) - 1;
-      const phaseName = tracker?.phases[phaseIndex]?.name || `Phase ${key}`;
-      let line = `  ${phaseName}: ${ps.successes}/${total} success`;
-      if (ps.commonErrors.length > 0) {
-        line += `, errors: ${ps.commonErrors.join(", ")}`;
+    const significantPhases = Object.entries(data.phaseStats)
+      .filter(([, ps]) => ps.successes + ps.failures >= 2);
+
+    if (significantPhases.length > 0) {
+      parts.push("");
+      parts.push("Phase performance data:");
+      for (const [key, ps] of significantPhases) {
+        const total = ps.successes + ps.failures;
+        const phaseIndex = parseInt(key) - 1;
+        const phaseName = tracker?.phases[phaseIndex]?.name || `Phase ${key}`;
+        let line = `  ${phaseName}: ${ps.successes}/${total} success`;
+        if (ps.commonErrors.length > 0) {
+          line += `, errors: ${ps.commonErrors.join(", ")}`;
+        }
+        parts.push(line);
       }
-      parts.push(line);
     }
 
     parts.push("");
@@ -1087,6 +1144,233 @@ export class NexusManager {
     data.executionsSinceRewrite = 0;
     // Keep phaseStats and recentTraces for history — they'll naturally age out
     this.saveSOPFitness(nexusId, data);
+  }
+
+  // ============================================
+  // Golden Path — Distillation & Injection
+  // ============================================
+
+  private goldenPathFilePath(nexusId: string): string {
+    return join(this.nexusDir(nexusId), "golden-path.json");
+  }
+
+  loadGoldenPath(nexusId: string): GoldenPath | null {
+    const filePath = this.goldenPathFilePath(nexusId);
+    if (!existsSync(filePath)) return null;
+    try {
+      return JSON.parse(readFileSync(filePath, "utf-8")) as GoldenPath;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Distill a golden path from historical traces + experience files.
+   * Uses tool frequency vectors instead of exact sequence matching.
+   * Requires at least 5 successful executions.
+   */
+  distillGoldenPath(nexusId: string): GoldenPath | null {
+    const fitness = this.loadSOPFitness(nexusId);
+    const successTraces = fitness.recentTraces.filter(t => t.success);
+
+    // Supplement with experience file data
+    const expDir = this.experienceDir(nexusId);
+    const successFilePath = join(expDir, "successes.md");
+    const additionalToolChains: string[][] = [];
+
+    if (existsSync(successFilePath)) {
+      const content = readFileSync(successFilePath, "utf-8");
+      const entries = content.split(/\n###\s+/).filter(e => e.trim());
+      for (const entry of entries) {
+        const toolsMatch = entry.match(/\*\*Tools\*\*:\s*(.+)/);
+        if (toolsMatch && toolsMatch[1] !== "none") {
+          const tools = toolsMatch[1].split(",").map(t => t.trim()).filter(Boolean);
+          if (tools.length > 0) additionalToolChains.push(tools);
+        }
+      }
+    }
+
+    const allSuccessChains = [
+      ...successTraces.map(t => t.toolChain),
+      ...additionalToolChains,
+    ];
+
+    if (allSuccessChains.length < 5) return null;
+
+    // --- Tool frequency vector approach ---
+    // Build a frequency vector: for each tool, count how many success chains include it
+    const toolPresence = new Map<string, number>();
+    for (const chain of allSuccessChains) {
+      const uniqueTools = new Set(chain);
+      for (const tool of uniqueTools) {
+        toolPresence.set(tool, (toolPresence.get(tool) || 0) + 1);
+      }
+    }
+
+    // Core tools: present in >= 60% of successful chains
+    const coreThreshold = Math.ceil(allSuccessChains.length * 0.6);
+    const coreTools: Array<{ tool: string; count: number }> = [];
+    for (const [tool, count] of toolPresence) {
+      if (count >= coreThreshold) {
+        coreTools.push({ tool, count });
+      }
+    }
+
+    if (coreTools.length === 0) return null;
+
+    // Sort core tools by prevalence (most common first)
+    coreTools.sort((a, b) => b.count - a.count);
+
+    // Determine typical order from successful chains
+    const orderedCoreTools = this.inferToolOrder(
+      coreTools.map(ct => ct.tool),
+      allSuccessChains
+    );
+
+    // Confidence = average presence rate of core tools
+    const confidence = Math.round(
+      (coreTools.reduce((sum, ct) => sum + ct.count / allSuccessChains.length, 0) / coreTools.length) * 100
+    ) / 100;
+
+    // Average duration from traces that contain all core tools
+    const coreToolSet = new Set(orderedCoreTools);
+    const matchingTraces = successTraces.filter(t => {
+      const traceTools = new Set(t.toolChain);
+      for (const ct of coreToolSet) {
+        if (!traceTools.has(ct)) return false;
+      }
+      return true;
+    });
+    const averageDurationMs = matchingTraces.length > 0
+      ? Math.round(matchingTraces.reduce((sum, t) => sum + t.durationMs, 0) / matchingTraces.length)
+      : 0;
+
+    // Known pitfalls from failure traces
+    const failureTraces = fitness.recentTraces.filter(t => !t.success);
+    const errorToolFrequency = new Map<string, number>();
+    for (const trace of failureTraces) {
+      for (const tool of trace.errorTools) {
+        errorToolFrequency.set(tool, (errorToolFrequency.get(tool) || 0) + 1);
+      }
+    }
+    const knownPitfalls: string[] = [];
+    for (const [tool, count] of errorToolFrequency) {
+      if (count >= 2) {
+        knownPitfalls.push(`${tool} frequently fails (${count} times)`);
+      }
+    }
+
+    // Extract additional pitfalls from failures.md
+    const failureFilePath = join(expDir, "failures.md");
+    if (existsSync(failureFilePath)) {
+      const content = readFileSync(failureFilePath, "utf-8");
+      const entries = content.split(/\n###\s+/).filter(e => e.trim());
+      for (const entry of entries.slice(-5)) {
+        const errorMatch = entry.match(/\*\*Error\*\*:\s*(.+)/);
+        if (errorMatch) {
+          const errorText = errorMatch[1].trim().slice(0, 80);
+          if (!knownPitfalls.some(p => p.includes(errorText.slice(0, 20)))) {
+            knownPitfalls.push(errorText);
+          }
+        }
+      }
+    }
+
+    const goldenPath: GoldenPath = {
+      recommendedToolChain: orderedCoreTools,
+      confidence,
+      averageDurationMs,
+      knownPitfalls: knownPitfalls.slice(0, 5),
+      basedOnSuccesses: allSuccessChains.length,
+      lastDistilledAt: Date.now(),
+    };
+
+    // Persist
+    this.ensureDir(this.nexusDir(nexusId));
+    writeFileSync(
+      this.goldenPathFilePath(nexusId),
+      JSON.stringify(goldenPath, null, 2),
+      "utf-8"
+    );
+
+    return goldenPath;
+  }
+
+  /**
+   * Infer typical tool ordering from successful chains.
+   * For each pair of core tools, vote on which tends to come first.
+   */
+  private inferToolOrder(coreTools: string[], chains: string[][]): string[] {
+    if (coreTools.length <= 1) return coreTools;
+
+    // Build pairwise ordering votes
+    const before = new Map<string, Map<string, number>>();
+    for (const tool of coreTools) {
+      before.set(tool, new Map());
+    }
+
+    for (const chain of chains) {
+      const positions = new Map<string, number>();
+      for (let i = 0; i < chain.length; i++) {
+        if (!positions.has(chain[i])) {
+          positions.set(chain[i], i);
+        }
+      }
+
+      for (let i = 0; i < coreTools.length; i++) {
+        for (let j = i + 1; j < coreTools.length; j++) {
+          const posA = positions.get(coreTools[i]);
+          const posB = positions.get(coreTools[j]);
+          if (posA === undefined || posB === undefined) continue;
+          if (posA < posB) {
+            before.get(coreTools[i])!.set(
+              coreTools[j],
+              (before.get(coreTools[i])!.get(coreTools[j]) || 0) + 1
+            );
+          } else {
+            before.get(coreTools[j])!.set(
+              coreTools[i],
+              (before.get(coreTools[j])!.get(coreTools[i]) || 0) + 1
+            );
+          }
+        }
+      }
+    }
+
+    // Sort by: for each tool, count how many other tools it tends to precede
+    return [...coreTools].sort((a, b) => {
+      const aBeforeB = before.get(a)?.get(b) || 0;
+      const bBeforeA = before.get(b)?.get(a) || 0;
+      return bBeforeA - aBeforeB; // a comes first if more chains have a before b
+    });
+  }
+
+  /**
+   * Build golden path hint for injection into agent context.
+   * Only injects if confidence >= 0.5.
+   */
+  buildGoldenPathHint(nexusId: string): string | null {
+    const goldenPath = this.loadGoldenPath(nexusId);
+    if (!goldenPath || goldenPath.confidence < 0.5) return null;
+
+    const parts: string[] = [];
+    parts.push(`[Golden Path — Proven Execution Pattern]`);
+    parts.push(`Based on ${goldenPath.basedOnSuccesses} successful executions (confidence: ${Math.round(goldenPath.confidence * 100)}%):`);
+    parts.push(`  Recommended core tools: ${goldenPath.recommendedToolChain.join(" -> ")}`);
+
+    if (goldenPath.averageDurationMs > 0) {
+      parts.push(`  Expected duration: ~${Math.round(goldenPath.averageDurationMs / 1000)}s`);
+    }
+
+    if (goldenPath.knownPitfalls.length > 0) {
+      parts.push(`  Known pitfalls:`);
+      for (const pitfall of goldenPath.knownPitfalls) {
+        parts.push(`    - ${pitfall}`);
+      }
+    }
+
+    parts.push(`Prefer this pattern unless the task clearly requires a different approach.`);
+    return parts.join("\n");
   }
 
   // ============================================

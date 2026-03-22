@@ -6,6 +6,7 @@
 
 import type { NexusEntity } from '@/types'
 import { scoringToVisualLevel } from '@/types'
+import { getConstructionProgress } from '@/store/slices/worldSlice'
 import type { EntityRenderer, RenderContext, Point, BufferCanvas } from '../types'
 import { TILE_WIDTH, TILE_HEIGHT } from '../utils/coordinateTransforms'
 
@@ -104,8 +105,8 @@ export class BlockRenderer implements EntityRenderer {
     const cx = screenPos.x
     const cy = screenPos.y
 
-    // 构造进度
-    const buildProgress = nexus.constructionProgress ?? 1
+    // 构造进度 (V2: 基于时间戳实时计算)
+    const buildProgress = getConstructionProgress(nexus)
     
     c.save()
     c.globalAlpha = 0.3 + 0.7 * buildProgress

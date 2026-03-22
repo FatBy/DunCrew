@@ -940,6 +940,7 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
           chatStreamContent: '',
           executionStatuses: { ...s.executionStatuses, [execId]: placeholderMsg.execution! },
         }))
+        persistExecutionStatuses(get().executionStatuses)
 
         // 2. 创建实时任务 (在 TaskHouse 显示，含执行步骤)
         const fullState = get() as any
@@ -1074,6 +1075,7 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
               status: 'terminated',
               executionDuration: execDuration,
             })
+            persistExecutionStatuses(get().executionStatuses)
           } else {
             // 真正的错误
           // 显示错误消息（普通文本，无执行卡片）
@@ -1489,6 +1491,7 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
               [execId]: execMsg.execution! 
             },
           }))
+          persistExecutionStatuses(get().executionStatuses)
           
           // 使用 LocalClawService ReAct 循环执行任务
           try {
@@ -1539,6 +1542,7 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
             set((state) => ({
               executionStatuses: { ...state.executionStatuses, [execId]: errorStatus },
             }))
+            persistExecutionStatuses(get().executionStatuses)
           }
         }
       }
