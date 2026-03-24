@@ -198,7 +198,7 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
   // ═══════════════════════════════════════════
 
   async compact(params: CompactParams): Promise<CompactResult> {
-    const { sessionId, tokenBudget, trigger, currentTokenCount } = params
+    const { tokenBudget, trigger, currentTokenCount, messages } = params
 
     // 如果当前 token 在预算内，无需压缩
     if (currentTokenCount <= tokenBudget) {
@@ -210,21 +210,51 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
       }
     }
 
-    // 计算需要压缩多少
-    const targetTokens = Math.floor(tokenBudget * 0.75) // 压缩到预算的 75%
-    const tokensToRemove = currentTokenCount - targetTokens
+    // 必须提供消息历史才能生成有效摘要
+    if (!messages || messages.length === 0) {
+      return {
+        ok: false,
+        compacted: false,
+        tokensBefore: currentTokenCount,
+        reason: 'No messages provided for compaction',
+      }
+    }
 
-    console.log(`[ContextEngine] Compaction triggered (${trigger}): ${currentTokenCount} → target ${targetTokens} (remove ~${tokensToRemove} tokens)`)
+    const targetTokens = Math.floor(tokenBudget * 0.75)
+    console.log(`[ContextEngine] Compaction triggered (${trigger}): ${currentTokenCount} → target ${targetTokens}`)
 
-    // 策略: 使用 LLM 对早期消息进行摘要
     try {
-      const summaryPrompt = `请将以下对话历史压缩成一段简洁的摘要（200字以内），保留关键决策、工具调用结果和错误信息：
-当前会话 ID: ${sessionId}
-压缩触发器: ${trigger}
-需要从 ${currentTokenCount} tokens 减少到 ${targetTokens} tokens`
+      // 提取需要压缩的早期消息（跳过 system[0] 和最近 8 条）
+      const earlyMessages = messages.slice(1, -8)
+      if (earlyMessages.length === 0) {
+        return {
+          ok: true,
+          compacted: false,
+          tokensBefore: currentTokenCount,
+          reason: 'Not enough early messages to compact',
+        }
+      }
+
+      // 构建待压缩内容（限制输入总量，避免压缩请求本身也超长）
+      const COMPACT_INPUT_LIMIT = 12000
+      let compactInput = ''
+      for (const msg of earlyMessages) {
+        const content = typeof msg.content === 'string' ? msg.content : ''
+        const roleName = msg.role === 'tool' ? 'tool_result' : msg.role
+        const line = `[${roleName}]: ${content.slice(0, 500)}\n`
+        if (compactInput.length + line.length > COMPACT_INPUT_LIMIT) break
+        compactInput += line
+      }
 
       const summaryResponse = await chat([
-        { role: 'user', content: summaryPrompt },
+        {
+          role: 'system',
+          content: '你是一个对话压缩助手。请将以下对话历史压缩成一段简洁的摘要（300字以内），必须保留：1) 用户的核心任务目标 2) 已完成的关键操作和结果 3) 遇到的错误及解决方案 4) 当前进度。丢弃冗余的工具输出细节。',
+        },
+        {
+          role: 'user',
+          content: `请压缩以下 ${earlyMessages.length} 条对话历史:\n\n${compactInput}`,
+        },
       ])
 
       const tokensAfter = estimateTokens(summaryResponse) + 4

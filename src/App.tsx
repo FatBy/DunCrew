@@ -17,6 +17,7 @@ import { getHouseById } from '@/houses/registry'
 import { openClawService } from '@/services/OpenClawService'
 import { localClawService } from '@/services/LocalClawService'
 import { skillStatsService } from '@/services/skillStatsService'
+import { memoryStore } from '@/services/memoryStore'
 import { getLocalSoulData, getLocalSkills, getLocalMemories } from '@/utils/localDataProvider'
 import { simpleVisualDNA } from '@/store/slices/worldSlice'
 import { createInitialScoring } from '@/types'
@@ -220,6 +221,11 @@ function App() {
       useStore.getState().refreshSkillSnapshot()
     })
 
+    // 注册 memoryStore 写回调 → store 缓存增量更新
+    memoryStore.onWrite((entries) => {
+      useStore.getState().appendMemoryCacheEntries(entries)
+    })
+
     // 自动重连: 恢复上次的连接状态
     const savedMode = localStorage.getItem('duncrew_connection_mode')
     
@@ -375,9 +381,11 @@ function App() {
         {/* Content layer: active house */}
         <AnimatePresence mode="wait">
           {currentView !== 'world' && currentHouse && (
-            <HouseContainer key={currentView} house={currentHouse}>
-              <currentHouse.component />
-            </HouseContainer>
+            <ErrorBoundary key={currentView}>
+              <HouseContainer house={currentHouse}>
+                <currentHouse.component />
+              </HouseContainer>
+            </ErrorBoundary>
           )}
         </AnimatePresence>
 

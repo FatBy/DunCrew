@@ -7,6 +7,7 @@ import {
   Loader2, Pause, SkipForward, Activity, Edit2,
   GripVertical, Download, MessageSquare, Upload, Plus, Search
 } from 'lucide-react'
+import { MarkdownRenderer } from '@/components/ai/markdown/MarkdownRenderer'
 import { useStore } from '@/store'
 import { cn } from '@/utils/cn'
 import { useT } from '@/i18n'
@@ -123,7 +124,7 @@ export function NexusDetailPanel() {
   const conversations = useStore((s) => s.conversations)
   
   const [showModelConfig, setShowModelConfig] = useState(false)
-  const [showSOP, setShowSOP] = useState(true)  // 默认展开 SOP
+  // showSOP 已移除：SOP Tab 现在直接完整展示，不再折叠
   const [showTaskDetail, setShowTaskDetail] = useState(false)  // 任务流程默认折叠
   const [customBaseUrl, setCustomBaseUrl] = useState('')
   const [customModel, setCustomModel] = useState('')
@@ -849,6 +850,51 @@ export function NexusDetailPanel() {
                   {nexus.flavorText}
                 </p>
               )}
+
+              {/* ==================== Objective Function (目标函数) ==================== */}
+              {(nexus.objective || nexus.metrics || nexus.strategy) && (
+                <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Target className="w-4 h-4" style={dynamicText} />
+                    <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
+                      Objective Function
+                    </span>
+                  </div>
+                  
+                  {nexus.objective && (
+                    <div className="mb-4">
+                      <p className="text-sm text-stone-700 leading-relaxed">{nexus.objective}</p>
+                    </div>
+                  )}
+                  
+                  {nexus.strategy && (
+                    <div className="mb-3 p-3 rounded-lg bg-stone-50 border border-white/[0.04]">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <TrendingUp className="w-3 h-3 text-stone-400" />
+                        <span className="text-xs font-mono text-stone-400 uppercase">Strategy</span>
+                      </div>
+                      <p className="text-xs text-stone-500 leading-relaxed whitespace-pre-wrap">{nexus.strategy}</p>
+                    </div>
+                  )}
+                  
+                  {nexus.metrics && nexus.metrics.length > 0 && (
+                    <div className="p-3 rounded-lg bg-stone-50 border border-white/[0.04]">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <AlertCircle className="w-3 h-3 text-stone-400" />
+                        <span className="text-xs font-mono text-stone-400 uppercase">Success Metrics</span>
+                      </div>
+                      <ul className="space-y-1">
+                        {nexus.metrics.map((metric, i) => (
+                          <li key={i} className="text-xs text-stone-400 flex items-start gap-2">
+                            <span className="text-stone-300">•</span>
+                            <span>{metric}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
               
               {/* ==================== TAB: ABILITY - end / TAB: SKILLS - start ==================== */}
               </>)}
@@ -1033,52 +1079,137 @@ export function NexusDetailPanel() {
               {/* ==================== TAB: SKILLS - end / TAB: SOP - start ==================== */}
               </>)}
               {activeTab === 'sop' && (<>
-              {/* ==================== Objective Function (目标函数) ==================== */}
-              {(nexus.objective || nexus.metrics || nexus.strategy) && (
-                <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Target className="w-4 h-4" style={dynamicText} />
-                    <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
-                      Objective Function
-                    </span>
+              {/* ==================== SOP 改写通知 ==================== */}
+              {nexus.sopRewriteInfo && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-2">
+                  <span className="text-base">🔄</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-mono text-amber-600">
+                      SOP 已于 {new Date(nexus.sopRewriteInfo.rewrittenAt).toLocaleDateString()} 自动优化
+                      {nexus.sopRewriteInfo.previousVersion && (
+                        <span className="text-amber-400 ml-1">
+                          ({nexus.sopRewriteInfo.previousVersion} → {nexus.version || 'latest'})
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-[11px] font-mono text-amber-400/70 mt-0.5">
+                      基于 {nexus.sopRewriteInfo.basedOnExecutions || '?'} 次执行数据 · 触发级别: {nexus.sopRewriteInfo.triggerLevel || 'STANDARD'}
+                    </p>
                   </div>
-                  
-                  {nexus.objective && (
-                    <div className="mb-4">
-                      <p className="text-sm text-stone-700 leading-relaxed">{nexus.objective}</p>
-                    </div>
-                  )}
-                  
-                  {nexus.strategy && (
-                    <div className="mb-3 p-3 rounded-lg bg-stone-50 border border-white/[0.04]">
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <TrendingUp className="w-3 h-3 text-stone-400" />
-                        <span className="text-xs font-mono text-stone-400 uppercase">Strategy</span>
-                      </div>
-                      <p className="text-xs text-stone-500 leading-relaxed whitespace-pre-wrap">{nexus.strategy}</p>
-                    </div>
-                  )}
-                  
-                  {nexus.metrics && nexus.metrics.length > 0 && (
-                    <div className="p-3 rounded-lg bg-stone-50 border border-white/[0.04]">
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <AlertCircle className="w-3 h-3 text-stone-400" />
-                        <span className="text-xs font-mono text-stone-400 uppercase">Success Metrics</span>
-                      </div>
-                      <ul className="space-y-1">
-                        {nexus.metrics.map((metric, i) => (
-                          <li key={i} className="text-xs text-stone-400 flex items-start gap-2">
-                            <span className="text-stone-300">•</span>
-                            <span>{metric}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                 </div>
               )}
 
-              {/* === SOP tab pause: always-visible operational status === */}
+              {/* ==================== SOP Phase 结构化展示 ==================== */}
+              {(() => {
+                const sopPhases = nexus.sopContent ? nexusManager.parseSOP(nexus.sopContent) : []
+                // 从 sopEvolutionData 读取 Phase 状态（如果有）
+                const phaseInsights: Array<{ phaseName: string; status: 'golden' | 'stable' | 'bottleneck'; insight: string }> = 
+                  (nexus as any).sopEvolutionData?.goldenPathSummary?.phaseInsights || []
+                const isGoldenNexus = (nexus as any).sopEvolutionData?.isGolden === true
+
+                if (sopPhases.length > 0) {
+                  return (
+                    <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                      <div className="flex items-center gap-2 mb-4">
+                        <BookOpen className="w-4 h-4" style={dynamicText} />
+                        <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
+                          SOP Phases
+                        </span>
+                        <span className="ml-auto text-xs font-mono text-stone-300">
+                          {nexus.version || '1.0.0'}
+                        </span>
+                        {isGoldenNexus && (
+                          <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-amber-400/15 text-amber-500 border border-amber-400/30">
+                            ✨ Golden
+                          </span>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {sopPhases.map((phase) => {
+                          const insight = phaseInsights.find(pi => 
+                            pi.phaseName === phase.name || 
+                            pi.phaseName === `Phase ${phase.index}`
+                          )
+                          const phaseStatus = insight?.status || 'stable'
+                          const statusConfig = {
+                            golden: { color: '#f59e0b', bg: 'bg-amber-500/10', border: 'border-amber-500/20', icon: '🏆', label: 'Golden' },
+                            stable: { color: '#22c55e', bg: 'bg-emerald-500/5', border: 'border-emerald-500/10', icon: '✅', label: 'Stable' },
+                            bottleneck: { color: '#f97316', bg: 'bg-orange-500/10', border: 'border-orange-500/20', icon: '⚠️', label: 'Bottleneck' },
+                          }
+                          const config = statusConfig[phaseStatus]
+
+                          return (
+                            <div 
+                              key={phase.index}
+                              className={cn(
+                                'p-3 rounded-lg border transition-colors',
+                                config.bg,
+                                config.border
+                              )}
+                            >
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-sm">{config.icon}</span>
+                                <span className="text-xs font-mono font-semibold text-stone-600">
+                                  Phase {phase.index}: {phase.name}
+                                </span>
+                                {insight && (
+                                  <span 
+                                    className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded-full border"
+                                    style={{ color: config.color, borderColor: `${config.color}40`, backgroundColor: `${config.color}10` }}
+                                  >
+                                    {config.label}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="space-y-1 pl-6">
+                                {phase.steps.map((step) => (
+                                  <p key={step.index} className="text-xs text-stone-500 leading-relaxed">
+                                    <span className="text-stone-400 font-mono mr-1">{step.index}.</span>
+                                    {step.text}
+                                  </p>
+                                ))}
+                              </div>
+                              {insight?.insight && (
+                                <p className="text-[11px] font-mono text-stone-400 mt-2 pl-6 italic">
+                                  💡 {insight.insight}
+                                </p>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                }
+                return null
+              })()}
+
+              {/* ==================== SOP 完整内容 ==================== */}
+              {nexus.sopContent && (
+                <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                  <div className="flex items-center gap-2 mb-3">
+                    <BookOpen className="w-4 h-4" style={dynamicText} />
+                    <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
+                      完整 SOP 文档
+                    </span>
+                    <span className="ml-auto text-xs font-mono text-stone-300">
+                      {nexus.version || '1.0.0'}
+                    </span>
+                  </div>
+                  <div className="max-h-[500px] overflow-y-auto">
+                    <MarkdownRenderer content={nexus.sopContent} className="text-sm text-stone-600" />
+                  </div>
+                </div>
+              )}
+
+              {/* 无 SOP 时的空状态 */}
+              {!nexus.sopContent && (
+                <div className="py-12 text-center">
+                  <span className="text-2xl mb-2 block">📋</span>
+                  <p className="text-sm font-mono text-stone-400">暂无 SOP</p>
+                  <p className="text-xs font-mono text-stone-300 mt-1">此 Nexus 尚未定义标准操作流程</p>
+                </div>
+              )}
               </>)}
 
               {/* ==================== Active Nexus Indicator ==================== */}
@@ -1228,50 +1359,7 @@ export function NexusDetailPanel() {
                 </div>
               )}
               
-              {/* ==================== TAB: SOP - resume ==================== */}
-              {activeTab === 'sop' && (<>
-              {/* ==================== SOP Section ==================== */}
-              {nexus.sopContent && (
-                <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                  <button
-                    onClick={() => setShowSOP(!showSOP)}
-                    className="w-full flex items-center gap-2"
-                  >
-                    <BookOpen className="w-4 h-4" style={dynamicText} />
-                    <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
-                      Mission & SOP
-                    </span>
-                    <span className="ml-auto text-xs font-mono text-stone-300">
-                      {nexus.version || '1.0.0'}
-                    </span>
-                    {showSOP 
-                      ? <ChevronDown className="w-3 h-3 text-stone-300" />
-                      : <ChevronRight className="w-3 h-3 text-stone-300" />
-                    }
-                  </button>
-                  
-                  <AnimatePresence initial={false}>
-                    {showSOP && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.2 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="mt-3 pt-3 border-t border-stone-100">
-                          <pre className="text-sm font-mono text-stone-500 leading-relaxed whitespace-pre-wrap max-h-[400px] overflow-y-auto">
-                            {nexus.sopContent}
-                          </pre>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              )}
-
-              {/* ==================== TAB: SOP - end ==================== */}
-              </>)}
+              {/* (SOP Tab 内容已在上方 SOP Tab 块中完整渲染) */}
 
               {/* ==================== TAB: SKILLS - resume for Experience ==================== */}
               {activeTab === 'skills' && (<>

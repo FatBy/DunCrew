@@ -214,23 +214,57 @@ class ConfidenceTrackerService {
             {
               role: 'system',
               content: [
-                '你是一个记忆提炼助手。请将以下多条工具执行记录提炼为一条简洁的核心记忆。',
-                '要求：',
-                '- 用一两句话概括用户做了什么、关注什么、得到了什么关键结果',
-                '- 提取有价值的事实和结论，忽略执行细节（命令、参数、字节数等）',
-                '- 使用自然语言，像人类笔记一样',
-                '- 只输出提炼后的记忆内容，不要解释',
+                '你是一个记忆提炼助手。判断以下工具执行记录是否值得作为长期记忆保留。',
+                '',
+                '## 值得保留的记忆',
+                '- 用户的具体意图和目标（"用户想修复 config.json 的端口配置"）',
+                '- 关键发现和结论（"发现端口 3001 被占用，改为 3002 后解决"）',
+                '- 用户偏好和习惯（"用户偏好用 pnpm 而非 npm"）',
+                '- 重要的项目上下文（"项目使用 Vite + React + TypeScript"）',
+                '',
+                '## 不值得保留的记忆',
+                '- 纯粹的工具执行细节（"readFile 返回了 200 字节"）',
+                '- 临时性操作（"列出了目录内容"）',
+                '- 无上下文的碎片信息',
+                '',
+                '## 输出规则',
+                '- 如果值得保留：用一两句自然语言概括核心信息，像人类笔记一样',
+                '- 如果不值得保留：只输出"无"',
+                '- 不要解释你的判断过程',
               ].join('\n'),
             },
             { role: 'user', content: rawContents.slice(0, 2000) },
           ])
-          summarizedContent = summaryResult?.trim() || rawContents.slice(0, 300)
+
+          const trimmedResult = summaryResult?.trim() || ''
+
+          // "无"跳过机制：LLM 判断不值得保留则标记并跳过
+          if (trimmedResult === '无' || trimmedResult === '') {
+            console.log(`[ConfidenceTracker] LLM judged entries not worth promoting for Nexus ${nexusId}, skipping`)
+            for (const entry of groupEntries) {
+              entry.promotedToL0 = true
+              entry.updatedAt = Date.now()
+            }
+            continue
+          }
+
+          summarizedContent = trimmedResult
         } catch (summarizeError) {
           console.warn('[ConfidenceTracker] LLM summarize failed, using fallback:', summarizeError)
           summarizedContent = this.fallbackSummarize(groupEntries)
         }
       } else {
         summarizedContent = this.fallbackSummarize(groupEntries)
+      }
+
+      // fallback 也可能返回空（无有价值内容）
+      if (!summarizedContent) {
+        console.log(`[ConfidenceTracker] Fallback found no valuable content for Nexus ${nexusId}, skipping`)
+        for (const entry of groupEntries) {
+          entry.promotedToL0 = true
+          entry.updatedAt = Date.now()
+        }
+        continue
       }
 
       const ok = await memoryStore.write({
@@ -265,17 +299,28 @@ class ConfidenceTrackerService {
   }
 
   /**
-   * 本地 fallback 提炼：不依赖 LLM，从多条 L1 记忆中提取关键信息
+   * 本地 fallback 提炼：优先提取用户意图，无意图时返回空字符串
    */
   private fallbackSummarize(entries: L1MemoryEntry[]): string {
-    const toolNames = new Set<string>()
-    const targets = new Set<string>()
-
-    for (const entry of entries) {
-      const colonIndex = entry.content.indexOf(':')
-      if (colonIndex > 0 && colonIndex < 30) {
-        toolNames.add(entry.content.slice(0, colonIndex).trim())
+    // 优先：从带 [toolName] 前缀的条目中提取用户意图
+    const intentEntries = entries.filter(e => e.content.startsWith('['))
+    if (intentEntries.length > 0) {
+      const intents = new Set<string>()
+      for (const entry of intentEntries) {
+        const closeBracket = entry.content.indexOf(']')
+        if (closeBracket > 0) {
+          intents.add(entry.content.slice(closeBracket + 1).trim())
+        }
       }
+      const uniqueIntents = Array.from(intents).slice(0, 3)
+      if (uniqueIntents.length > 0) {
+        return uniqueIntents.join('；')
+      }
+    }
+
+    // 降级：从工具输出中提取文件路径等有价值信息
+    const targets = new Set<string>()
+    for (const entry of entries) {
       const pathMatch = entry.content.match(/(?:[\w./\\-]+\.[\w]{1,6})/g)
       if (pathMatch) {
         for (const path of pathMatch.slice(0, 3)) {
@@ -284,17 +329,21 @@ class ConfidenceTrackerService {
       }
     }
 
-    const successCount = entries.filter(e => e.confidence >= 0.5).length
+    // 如果连文件路径都没有，说明这批记忆没有价值，返回空
+    if (targets.size === 0) return ''
+
+    const toolNames = new Set<string>()
+    for (const entry of entries) {
+      const colonIndex = entry.content.indexOf(':')
+      if (colonIndex > 0 && colonIndex < 30) {
+        toolNames.add(entry.content.slice(0, colonIndex).trim())
+      }
+    }
+
     const toolList = Array.from(toolNames).slice(0, 5).join('、')
     const targetList = Array.from(targets).slice(0, 3).join('、')
 
-    let summary = `使用 ${toolList} 执行了 ${entries.length} 项操作`
-    if (targetList) {
-      summary += `，涉及 ${targetList}`
-    }
-    summary += `，${successCount}/${entries.length} 项成功`
-
-    return summary
+    return `使用 ${toolList} 操作了 ${targetList}`
   }
 
   // ═══ L0 衰减 ═══
@@ -361,9 +410,16 @@ class ConfidenceTrackerService {
    * 按 nexusId + toolName 聚合追踪（而非按 callId）
    * 同一个 Nexus 下多次成功使用同一个工具 → 给同一个条目追加信号
    */
+  /**
+   * 按 nexusId + toolName 聚合追踪（而非按 callId）
+   * 同一个 Nexus 下多次成功使用同一个工具 → 给同一个条目追加信号
+   *
+   * @param userIntent 用户原始意图（来自 userPrompt），用于提升 L1 内容质量
+   */
   trackToolResults(
     nexusId: string,
     toolResults: Array<{ callId: string; toolName: string; status: 'success' | 'error'; result?: string }>,
+    userIntent?: string,
   ): string[] {
     const trackedIds: string[] = []
 
@@ -380,10 +436,17 @@ class ConfidenceTrackerService {
           } else {
             this.addFailureSignal(memoryId)
           }
-          existingEntry.content = `${tr.toolName}: ${(tr.result || '').slice(0, 200)}`
+          // 只在 content 还是工具原始输出格式时才用意图覆盖
+          // 已有 [toolName] 前缀说明之前已写入过高价值意图，不再覆盖
+          if (userIntent && !existingEntry.content.startsWith('[')) {
+            existingEntry.content = `[${tr.toolName}] ${userIntent}`
+          }
           existingEntry.updatedAt = Date.now()
         } else {
-          const content = `${tr.toolName}: ${(tr.result || '').slice(0, 200)}`
+          // 新条目：优先用意图，fallback 到工具输出
+          const content = userIntent
+            ? `[${tr.toolName}] ${userIntent}`
+            : `${tr.toolName}: ${(tr.result || '').slice(0, 200)}`
           this.trackEntry(memoryId, nexusId, content)
 
           if (tr.status === 'success') {

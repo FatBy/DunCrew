@@ -254,6 +254,9 @@ function migrateFromLegacy(): { conversations: Map<string, Conversation>; active
 
 const emptySummary = (): AISummary => ({ content: '', loading: false, error: null, timestamp: 0 })
 
+// 空消息数组常量，避免每次 getCurrentMessages 返回新引用破坏选择器记忆化
+const EMPTY_MESSAGES: ChatMessage[] = []
+
 // 初始化时加载持久化数据
 const { conversations: initialConversations, activeId: initialActiveId } = migrateFromLegacy()
 const initialExecutionStatuses = loadExecutionStatuses()
@@ -740,8 +743,8 @@ export const createAiSlice: StateCreator<AiSlice, [], [], AiSlice> = (set, get) 
   
   getCurrentMessages: () => {
     const { conversations, activeConversationId } = get()
-    if (!activeConversationId) return []
-    return conversations.get(activeConversationId)?.messages || []
+    if (!activeConversationId) return EMPTY_MESSAGES
+    return conversations.get(activeConversationId)?.messages || EMPTY_MESSAGES
   },
 
   // 内部辅助：向当前会话添加消息

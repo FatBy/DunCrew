@@ -8,23 +8,26 @@
  */
 
 import { useState } from 'react'
-import { Loader2, Activity, Clock, BarChart3 } from 'lucide-react'
+import { Loader2, Activity, Clock, BarChart3, BookOpen } from 'lucide-react'
 import { useStore } from '@/store'
+import { useShallow } from 'zustand/react/shallow'
 import { TaskMonitorView } from '@/components/blueprint/TaskMonitorView'
 import { AgentRunStatePanel } from './task/AgentRunStatePanel'
 import { ExecutionFocusView } from './task/ExecutionFocusView'
 import { SilentAnalysisView } from './task/SilentAnalysisView'
+import { DiaryView } from './task/DiaryView'
 
-type TabType = 'executing' | 'live' | 'matrix'
+type TabType = 'executing' | 'live' | 'matrix' | 'diary'
 
 const TABS: { id: TabType; label: string; icon: typeof Activity }[] = [
   { id: 'executing', label: '执行中', icon: Clock },
   { id: 'live', label: '实时', icon: Activity },
   { id: 'matrix', label: '监控矩阵', icon: BarChart3 },
+  { id: 'diary', label: '日记', icon: BookOpen },
 ]
 
 export function TaskHouse() {
-  const activeExecutions = useStore((s) => s.activeExecutions)
+  const activeExecutions = useStore(useShallow((s) => s.activeExecutions))
   const loading = useStore((s) => s.sessionsLoading)
   const connectionStatus = useStore((s) => s.connectionStatus)
   const updateActiveExecution = useStore((s) => s.updateActiveExecution)
@@ -97,6 +100,8 @@ export function TaskHouse() {
             )}
           </>
         )}
+
+        {activeTab === 'diary' && <DiaryView />}
       </div>
     </div>
   )

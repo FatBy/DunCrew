@@ -76,7 +76,6 @@ export const selectLogs = (state: AppStore) => state.logs
 
 // AI 选择器
 export const selectLlmConfig = (state: AppStore) => state.llmConfig
-export const selectChatMessages = (state: AppStore) => state.getCurrentMessages()
 export const selectChatStreaming = (state: AppStore) => state.chatStreaming
 
 // World 选择器

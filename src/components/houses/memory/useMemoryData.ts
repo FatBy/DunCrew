@@ -184,10 +184,14 @@ export function useMemoryData(): MemoryDataState {
   const connectionStatus = useStore(s => s.connectionStatus)
   const isConnected = connectionStatus === 'connected'
 
-  // 原始数据
-  const [rawL0, setRawL0] = useState<MemorySearchResult[]>([])
-  const [rawTraces, setRawTraces] = useState<MemorySearchResult[]>([])
-  const [rawL1, setRawL1] = useState<MemorySearchResult[]>([])
+  // 从 store 读取缓存的记忆数据
+  const memoryCacheRaw = useStore(s => s.memoryCacheRaw)
+  const memoryCacheVersion = useStore(s => s.memoryCacheVersion)
+  const memoryCacheLoaded = useStore(s => s.memoryCacheLoaded)
+  const setMemoryCacheRaw = useStore(s => s.setMemoryCacheRaw)
+
+  // 搜索模式的本地 state（临时，不缓存到 store）
+  const [searchResults, setSearchResults] = useState<MemorySearchResult[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null)
   const [lensData, setLensData] = useState<LensData | null>(null)
@@ -198,63 +202,56 @@ export function useMemoryData(): MemoryDataState {
   // nexus label 查找表
   const nexusLabelMap = useMemo(() => buildNexusLabelMap(nexuses), [nexuses])
 
-  // ── 数据加载 ──
+  // ── 初次加载（仅在 store 未加载时 fetch） ──
 
-  const fetchAllData = useCallback(async () => {
+  const loadMemoryCache = useCallback(async () => {
     if (!isConnected || refreshLock.current) return
     refreshLock.current = true
     setLoading(true)
 
     try {
-      // 一次性拉取全量数据，然后按 source 字段在前端分类
-      // 后端混合搜索引擎可能忽略 source 过滤参数，所以不能依赖后端分类
-      // 加 15 秒超时，避免后端被 Embedding 等任务阻塞时页面永远空白
-      const searchPromise = memoryStore.search({
+      const allResults = await memoryStore.search({
         query: '*',
         maxResults: 500,
         minScore: 0,
         useMmr: false,
       })
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Memory search timeout (15s)')), 15000),
-      )
-      const allResults = await Promise.race([searchPromise, timeoutPromise])
-
-      // 按 source 字段前端分类
-      const l0Results: MemorySearchResult[] = []
-      const traceResults: MemorySearchResult[] = []
-      const l1Results: MemorySearchResult[] = []
-
-      for (const result of allResults) {
-        switch (result.source) {
-          case 'memory':
-            l0Results.push(result)
-            break
-          case 'exec_trace':
-            traceResults.push(result)
-            break
-          case 'l1_memory':
-            l1Results.push(result)
-            break
-          // gene, nexus_xp, session 等其他 source 暂不展示
-        }
-      }
-
-      setRawL0(l0Results)
-      setRawTraces(traceResults)
-      setRawL1(l1Results)
+      // 写入 store，固化
+      setMemoryCacheRaw(allResults)
     } catch (error) {
-      console.warn('[useMemoryData] Failed to fetch memory data:', error)
+      console.warn('[useMemoryData] Failed to load memory cache:', error)
     } finally {
       setLoading(false)
       refreshLock.current = false
     }
-  }, [isConnected])
+  }, [isConnected, setMemoryCacheRaw])
 
-  // 初始加载 + 连接状态变化时重新加载
+  // 仅在 store 未加载时触发 fetch
   useEffect(() => {
-    fetchAllData()
-  }, [fetchAllData])
+    if (isConnected && !memoryCacheLoaded) {
+      loadMemoryCache()
+    }
+  }, [isConnected, memoryCacheLoaded, loadMemoryCache])
+
+  // ── 按 source 分类（从 store 缓存或搜索结果） ──
+
+  const activeData = searchResults ?? memoryCacheRaw
+
+  const rawL0 = useMemo(
+    () => activeData.filter(r => r.source === 'memory'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeData, memoryCacheVersion],
+  )
+  const rawTraces = useMemo(
+    () => activeData.filter(r => r.source === 'exec_trace'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeData, memoryCacheVersion],
+  )
+  const rawL1 = useMemo(
+    () => activeData.filter(r => r.source === 'l1_memory'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeData, memoryCacheVersion],
+  )
 
   // ── L0 核心记忆视图模型 ──
 
@@ -531,7 +528,8 @@ export function useMemoryData(): MemoryDataState {
 
   const searchMemories = useCallback(async (query: string) => {
     if (!query.trim()) {
-      await fetchAllData()
+      // 清空搜索结果，回退到 store 缓存数据
+      setSearchResults(null)
       return
     }
 
@@ -545,15 +543,14 @@ export function useMemoryData(): MemoryDataState {
         useMmr: true,
       })
 
-      setRawL0(results.filter(r => r.source === 'memory'))
-      setRawTraces(results.filter(r => r.source === 'exec_trace'))
-      setRawL1(results.filter(r => r.source === 'l1_memory'))
+      // 搜索结果写入本地 state，不污染 store 缓存
+      setSearchResults(results)
     } catch (error) {
       console.warn('[useMemoryData] Search failed:', error)
     } finally {
       setLoading(false)
     }
-  }, [fetchAllData])
+  }, [])
 
   return {
     l0Memories,
@@ -568,6 +565,6 @@ export function useMemoryData(): MemoryDataState {
     traceCount: traces.length,
     selectMemory,
     searchMemories,
-    refresh: fetchAllData,
+    refresh: loadMemoryCache,
   }
 }

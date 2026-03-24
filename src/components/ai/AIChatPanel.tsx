@@ -83,8 +83,10 @@ export function AIChatPanel() {
   }, [setIsOpen])
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [chatMessages, chatStreamContent])
+    // 流式期间用 instant 避免 smooth 动画在高频 token 更新下叠加
+    const behavior = chatStreaming ? 'instant' : 'smooth'
+    messagesEndRef.current?.scrollIntoView({ behavior })
+  }, [chatMessages, chatStreamContent, chatStreaming])
 
   useEffect(() => {
     if (isOpen) {

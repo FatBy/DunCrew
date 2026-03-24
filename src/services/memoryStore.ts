@@ -1,25 +1,24 @@
 /**
  * MemoryStore - 统一记忆存储服务
  *
- * 前端 API 客户端，对接后端 SQLite + FTS5 存储。
+ * 前端 API 客户端，对接后端 SQLite + FTS5 + BGE 向量存储。
  * 提供：
- * - 混合搜索（FTS5 全文 + 向量语义 + 时间衰减 + MMR 去冗余）
+ * - 搜索（信任后端混合排序 + 时间衰减 + MMR 去冗余）
  * - 记忆写入（exec_trace, gene, nexus_xp, session, memory）
  * - 批量导入/导出
  *
- * 后端实现在 duncrew-server.py，前端仅做 API 调用和结果处理。
+ * 后端实现在 duncrew-server.py，前端仅做 API 调用和结果后处理。
  */
 
 import type { MemorySearchResult } from '@/types'
 import { SEARCH_CONFIG } from '@/types'
-import { localEmbed, cosineSimilarity } from './llmService'
 import { getServerUrl } from '@/utils/env'
 
 // ============================================
 // 类型定义
 // ============================================
 
-export type MemorySource = 'memory' | 'exec_trace' | 'gene' | 'nexus_xp' | 'session' | 'l1_memory'
+export type MemorySource = 'memory' | 'exec_trace' | 'gene' | 'nexus_xp' | 'session' | 'l1_memory' | 'diary'
 
 export interface MemoryWriteParams {
   source: MemorySource
@@ -64,13 +63,13 @@ function temporalDecay(entryTimestamp: number, halfLifeDays: number = SEARCH_CON
 // ============================================
 
 /**
- * MMR 重排序：在相关性和多样性之间取得平衡
+ * MMR 重排序：基于 Jaccard 文本相似度的去冗余
  *
- * score_mmr = lambda * relevance - (1 - lambda) * max_similarity_to_selected
+ * 后端不返回 embedding 向量，使用 snippet 文本重叠度作为多样性指标。
+ * score_mmr = lambda * relevance - (1 - lambda) * max_text_similarity_to_selected
  */
 function mmrRerank(
   results: MemorySearchResult[],
-  embeddings: Map<string, number[]>,
   lambda: number = SEARCH_CONFIG.MMR_LAMBDA,
   maxResults: number = SEARCH_CONFIG.DEFAULT_MAX_RESULTS,
 ): MemorySearchResult[] {
@@ -79,7 +78,21 @@ function mmrRerank(
   const selected: MemorySearchResult[] = []
   const remaining = [...results]
 
-  // 贪心选择
+  const tokenize = (text: string): Set<string> =>
+    new Set(text.toLowerCase().split(/\s+/).filter(w => w.length > 1))
+
+  const jaccardSim = (a: Set<string>, b: Set<string>): number => {
+    let intersection = 0
+    for (const w of a) { if (b.has(w)) intersection++ }
+    const union = a.size + b.size - intersection
+    return union === 0 ? 0 : intersection / union
+  }
+
+  const snippetTokens = new Map<string, Set<string>>()
+  for (const r of results) {
+    snippetTokens.set(r.id, tokenize(r.snippet.slice(0, 300)))
+  }
+
   while (selected.length < maxResults && remaining.length > 0) {
     let bestIdx = 0
     let bestScore = -Infinity
@@ -88,16 +101,14 @@ function mmrRerank(
       const candidate = remaining[i]
       const relevance = candidate.score
 
-      // 计算与已选集合的最大相似度
       let maxSim = 0
       if (selected.length > 0) {
-        const candEmb = embeddings.get(candidate.id)
-        if (candEmb) {
+        const candTokens = snippetTokens.get(candidate.id)
+        if (candTokens) {
           for (const sel of selected) {
-            const selEmb = embeddings.get(sel.id)
-            if (selEmb) {
-              const sim = cosineSimilarity(candEmb, selEmb)
-              maxSim = Math.max(maxSim, sim)
+            const selTokens = snippetTokens.get(sel.id)
+            if (selTokens) {
+              maxSim = Math.max(maxSim, jaccardSim(candTokens, selTokens))
             }
           }
         }
@@ -123,23 +134,52 @@ function mmrRerank(
 
 class MemoryStoreService {
   private serverUrl: string = getServerUrl()
+  private writeCallbacks: Array<(entries: MemorySearchResult[]) => void> = []
 
   /** 更新后端地址 */
   setServerUrl(url: string): void {
     this.serverUrl = url
   }
 
+  /** 注册写入回调（用于通知 store 更新缓存） */
+  onWrite(callback: (entries: MemorySearchResult[]) => void): void {
+    this.writeCallbacks.push(callback)
+  }
+
+  /** 从 MemoryWriteParams 构造合成的 MemorySearchResult */
+  private synthesizeResult(params: MemoryWriteParams): MemorySearchResult {
+    const now = Date.now()
+    return {
+      id: `mem-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      source: params.source,
+      content: params.content,
+      snippet: params.content.slice(0, 200),
+      nexusId: params.nexusId || '',
+      tags: params.tags || [],
+      score: 1.0,
+      createdAt: now,
+      confidence: 0.5,
+      metadata: params.metadata || {},
+    }
+  }
+
+  /** 通知所有注册的回调 */
+  private notifyWrite(entries: MemorySearchResult[]): void {
+    for (const cb of this.writeCallbacks) {
+      try { cb(entries) } catch { /* 回调失败不影响主流程 */ }
+    }
+  }
+
   // ═══ 搜索 ═══
 
   /**
-   * 混合搜索：FTS5 + 向量语义 + 时间衰减 + MMR
+   * 搜索：信任后端混合分数 + 时间衰减 + MMR 去冗余
    *
    * 流程：
-   * 1. 向后端发送 FTS5 全文搜索请求
-   * 2. 本地计算查询向量与结果的语义相似度
-   * 3. 融合分数 = FTS_WEIGHT * fts_score + VECTOR_WEIGHT * vector_sim
-   * 4. 应用时间衰减
-   * 5. 可选 MMR 去冗余
+   * 1. 向后端发送搜索请求（后端已做 FTS5 + BGE 向量混合排序）
+   * 2. 信任后端返回的 score，不再前端重新计算
+   * 3. 应用时间衰减
+   * 4. 可选 MMR 去冗余（基于文本去重）
    */
   async search(params: MemorySearchParams): Promise<MemorySearchResult[]> {
     const {
@@ -153,11 +193,16 @@ class MemoryStoreService {
     } = params
 
     try {
-      // 1. 向后端发送 FTS 搜索
+      // 通配符 '*' 不是语义搜索，跳过混合引擎，走 SQL 直查
+      const effectiveQuery = query === '*' ? '' : query
+      const limit = Math.min(maxResults * 3, 500)
+
+      // 1. 向后端发送搜索请求
       const searchParams = new URLSearchParams({
-        q: query,
-        limit: String(maxResults * 3), // 多取一些用于后续过滤和 MMR
+        q: effectiveQuery,
+        limit: String(limit),
       })
+      if (effectiveQuery === '') searchParams.set('hybrid', '0')
       if (sources?.length) searchParams.set('source', sources[0])
       if (nexusId) searchParams.set('nexusId', nexusId)
       if (since) searchParams.set('since', String(since))
@@ -170,24 +215,9 @@ class MemoryStoreService {
 
       let results: MemorySearchResult[] = await res.json()
 
-      // 2. 本地向量语义增强（如果结果数 > 0）
+      // 2. 信任后端 score，仅应用时间衰减
       if (results.length > 0) {
-        const queryEmbed = localEmbed(query)
-        const embeddings = new Map<string, number[]>()
-
         for (const r of results) {
-          const snippetEmbed = localEmbed(r.snippet.slice(0, 300))
-          embeddings.set(r.id, snippetEmbed)
-
-          const vectorSim = cosineSimilarity(queryEmbed, snippetEmbed)
-          // 融合分数
-          r.score = SEARCH_CONFIG.FTS_WEIGHT * r.score + SEARCH_CONFIG.VECTOR_WEIGHT * vectorSim
-        }
-
-        // 3. 时间衰减（基于 id 中的时间戳或 score 保持）
-        // results 的 score 已经包含 FTS+向量融合，再乘以时间衰减
-        for (const r of results) {
-          // 尝试从 id 提取时间戳
           const tsMatch = r.id.match(/(\d{13})/)
           if (tsMatch) {
             const ts = parseInt(tsMatch[1])
@@ -195,12 +225,12 @@ class MemoryStoreService {
           }
         }
 
-        // 4. 排序
+        // 3. 排序
         results.sort((a, b) => b.score - a.score)
 
-        // 5. MMR 去冗余
+        // 4. MMR 去冗余（基于文本相似度）
         if (useMmr && results.length > 1) {
-          results = mmrRerank(results, embeddings, SEARCH_CONFIG.MMR_LAMBDA, maxResults)
+          results = mmrRerank(results, SEARCH_CONFIG.MMR_LAMBDA, maxResults)
         }
       }
 
@@ -232,7 +262,11 @@ class MemoryStoreService {
           timestamp: Date.now(),
         }),
       })
-      return res.ok
+      if (res.ok) {
+        this.notifyWrite([this.synthesizeResult(params)])
+        return true
+      }
+      return false
     } catch (error: any) {
       console.warn('[MemoryStore] Write error:', error.message)
       return false
@@ -254,7 +288,11 @@ class MemoryStoreService {
       })
       if (res.ok) {
         const data = await res.json()
-        return data.written || 0
+        const written = data.written || 0
+        if (written > 0) {
+          this.notifyWrite(entries.map(e => this.synthesizeResult(e)))
+        }
+        return written
       }
       return 0
     } catch (error: any) {

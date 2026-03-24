@@ -786,6 +786,34 @@ export interface NexusEntity {
     name?: string
     emoji?: string
   }
+  // Phase 6: SOP 自进化
+  sopRewriteInfo?: {              // SOP 最近一次自动改写信息
+    rewrittenAt: number           // 改写时间戳
+    previousVersion?: string      // 改写前版本号
+    triggerLevel?: string         // 触发级别 (EMERGENCY/STANDARD/GRADUAL)
+    basedOnExecutions?: number    // 基于多少次执行数据
+  }
+  sopEvolutionData?: {            // SOP 进化运行时数据
+    isGolden: boolean             // 是否达到 Golden 状态
+    ema: number                   // EMA fitness (0-1)
+    totalExecutions: number       // 总执行次数
+    goldenPathSummary?: {         // LLM 蒸馏的 Golden Path 总结
+      taskCategories: Array<{
+        name: string
+        typicalToolChain: string[]
+        estimatedDurationMs: number
+        tips: string
+      }>
+      phaseInsights: Array<{
+        phaseName: string
+        status: 'golden' | 'stable' | 'bottleneck'
+        insight: string
+      }>
+      commonPitfalls: string[]
+      lastSummarizedAt: number
+      basedOnExecutions: number
+    }
+  }
 }
 
 // Nexus 经验记录
@@ -1543,6 +1571,8 @@ export interface CompactParams {
   tokenBudget: number
   trigger: 'overflow' | 'budget' | 'proactive'
   currentTokenCount: number
+  /** 需要压缩的消息历史（compact 必须看到实际内容才能生成有效摘要） */
+  messages?: Array<{ role: string; content: string }>
 }
 
 export interface CompactResult {

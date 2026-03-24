@@ -11,10 +11,20 @@
 
 import type { ExecTrace, SoulAmendment, NexusScoring } from '@/types'
 import { SOUL_EVOLUTION_CONFIG } from '@/types'
-import { useStore } from '@/store'
 import { nexusScoringService } from './nexusScoringService'
 import { computeBehavioralModifiers, computeExpressedMBTI } from './mbtiAnalyzer'
 import { chat, isLLMConfigured } from './llmService'
+
+// ── 懒加载 store（打破循环依赖）────────────────
+// 循环链: store/index → aiSlice → LocalClawService → 本文件 → store/index
+// 用 dynamic import 在 init() 时缓存引用，后续同步访问
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _storeRef: { getState: () => any } | null = null
+
+function getStore() {
+  if (!_storeRef) throw new Error('[SoulEvolution] Store not initialized. Call init() first.')
+  return _storeRef
+}
 
 // ── 内部状态 ─────────────────────────────────
 
@@ -35,16 +45,22 @@ const CHECK_COOLDOWN_MS = 60_000 // 最少间隔 1 分钟
  * 应在应用启动时调用一次
  */
 export async function init(): Promise<void> {
+  // 0. 懒加载 store（打破循环依赖）
+  if (!_storeRef) {
+    const { useStore } = await import('@/store')
+    _storeRef = useStore
+  }
+
   // 1. 加载已有修正案
-  await useStore.getState().loadAmendments()
+  await getStore().getState().loadAmendments()
 
   // 2. 首次衰减
-  useStore.getState().applyAmendmentDecay()
+  getStore().getState().applyAmendmentDecay()
 
   // 3. 启动周期衰减 (默认 6 小时)
   if (decayIntervalId) clearInterval(decayIntervalId)
   decayIntervalId = setInterval(() => {
-    useStore.getState().applyAmendmentDecay()
+    getStore().getState().applyAmendmentDecay()
     refreshExpressedMBTI()
   }, SOUL_EVOLUTION_CONFIG.DECAY_INTERVAL_MS)
 
@@ -110,7 +126,7 @@ export async function triggerCheck(): Promise<void> {
   console.log(`[SoulEvolution] Detected ${signals.length} signal(s):`, signals.map(s => s.label))
 
   // 检查是否已存在相似修正案 (避免重复)
-  const existingAmendments = useStore.getState().amendments
+  const existingAmendments: SoulAmendment[] = getStore().getState().amendments
   const newSignals = signals.filter(
     (sig) => !existingAmendments.some(
       (a) => a.status === 'approved' && a.content.toLowerCase().includes(sig.label.toLowerCase()),
@@ -127,7 +143,7 @@ export async function triggerCheck(): Promise<void> {
     try {
       const amendment = await extractAmendment(signal, scorings)
       if (amendment) {
-        useStore.getState().addDraft(amendment)
+        getStore().getState().addDraft(amendment)
         console.log(`[SoulEvolution] Draft amendment created: "${amendment.content}"`)
       }
     } catch (err) {
@@ -387,7 +403,7 @@ function buildAmendment(content: string, signal: BehavioralSignal): SoulAmendmen
  * 当修正案变化或衰减发生后调用
  */
 export function refreshExpressedMBTI(): void {
-  const state = useStore.getState()
+  const state = getStore().getState()
   const base = state.soulMBTIBase
   if (!base) return
 

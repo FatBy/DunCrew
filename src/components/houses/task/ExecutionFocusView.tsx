@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Play, Loader2, Brain, Wrench, Terminal,
@@ -291,10 +291,26 @@ const PHASE_LABELS: Record<AgentPhase, { icon: typeof Brain; color: string; labe
   aborted:          { icon: XCircle,      color: 'gray',    label: '已终止' },
 }
 
+/** 事件列表上限，防止长任务内存膨胀 */
+const MAX_LIVE_EVENTS = 100
+
+/** 事件更新描述：匹配函数 + 补丁 */
+interface EventUpdateEntry {
+  match: (e: LiveEvent) => boolean
+  patch: Partial<LiveEvent>
+}
+
+/** phase 变化批次描述 */
+interface PhaseBatchEntry {
+  clearThinking: boolean
+  newPhase?: AgentPhase
+  phaseEntry?: LiveEvent
+  markAllDone?: boolean
+}
+
 function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
   const [events, setEvents] = useState<LiveEvent[]>([])
   const [currentPhase, setCurrentPhase] = useState<AgentPhase>(() => {
-    // 挂载时立即读取 eventBus 当前状态，避免错过 run_start 事件
     const state = agentEventBus.getState()
     return state.phase || 'idle'
   })
@@ -302,6 +318,14 @@ function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
   const [thinkingPreview, setThinkingPreview] = useState('')
   const phaseStartRef = useRef(Date.now())
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // ── RAF 攒批 refs ──
+  const thinkingBufferRef = useRef('')
+  const newEntriesRef = useRef<LiveEvent[]>([])
+  const eventUpdatesRef = useRef<EventUpdateEntry[]>([])
+  const phaseEventsRef = useRef<PhaseBatchEntry[]>([])
+  const shouldClearRef = useRef(false)
+  const rafIdRef = useRef<number>(0)
 
   // 挂载时从 eventBus 当前状态初始化（解决时序问题）
   useEffect(() => {
@@ -354,7 +378,7 @@ function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
       }
 
       if (initialEvents.length > 0) {
-        setEvents(initialEvents)
+        setEvents(initialEvents.slice(-MAX_LIVE_EVENTS))
       }
     }
   }, [isExecuting])
@@ -369,7 +393,96 @@ function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
     return () => clearInterval(timer)
   }, [currentPhase, isExecuting])
 
-  // 订阅 agentEventBus
+  // ── RAF flush 逻辑 ──
+  const flushBatch = useCallback(() => {
+    rafIdRef.current = 0
+
+    // run_start 清空
+    if (shouldClearRef.current) {
+      setEvents([])
+      setThinkingPreview('')
+      setCurrentPhase('planning')
+      phaseStartRef.current = Date.now()
+      shouldClearRef.current = false
+      newEntriesRef.current = []
+      eventUpdatesRef.current = []
+      phaseEventsRef.current = []
+      thinkingBufferRef.current = ''
+      return
+    }
+
+    // 处理 phase 变化
+    const phaseEvents = phaseEventsRef.current
+    phaseEventsRef.current = []
+    for (const pe of phaseEvents) {
+      if (pe.clearThinking) {
+        setThinkingPreview('')
+        thinkingBufferRef.current = ''
+      }
+      if (pe.newPhase) {
+        setCurrentPhase(pe.newPhase)
+        phaseStartRef.current = Date.now()
+        setPhaseElapsed(0)
+      }
+    }
+
+    // 合并 thinking delta
+    if (thinkingBufferRef.current) {
+      const buffer = thinkingBufferRef.current
+      thinkingBufferRef.current = ''
+      setThinkingPreview(prev => {
+        const updated = prev + buffer
+        return updated.length > 200 ? updated.slice(-200) : updated
+      })
+    }
+
+    // 合并事件：新增 + 更新，一次 setEvents
+    const newEntries = newEntriesRef.current
+    const updates = eventUpdatesRef.current
+    const markAllDone = phaseEvents.some(pe => pe.markAllDone)
+    const phaseEntries = phaseEvents.filter(pe => pe.phaseEntry).map(pe => pe.phaseEntry!)
+
+    if (newEntries.length > 0 || updates.length > 0 || markAllDone || phaseEntries.length > 0) {
+      newEntriesRef.current = []
+      eventUpdatesRef.current = []
+
+      setEvents(prev => {
+        let result = [...prev]
+
+        // 标记所有 active 为 done（phase_change / run_end）
+        if (markAllDone) {
+          result = result.map(e => e.status === 'active' ? { ...e, status: 'done' as const } : e)
+        }
+
+        // 应用更新（tool_end, step_complete, reflexion_end, approval_resolved）
+        for (const upd of updates) {
+          const lastIdx = [...result].reverse().findIndex(upd.match)
+          if (lastIdx !== -1) {
+            const realIdx = result.length - 1 - lastIdx
+            result = result.map((e, idx) => idx === realIdx ? { ...e, ...upd.patch } : e)
+          }
+        }
+
+        // 添加新条目（phase entries + tool/plan/reflexion/approval starts）
+        result = [...result, ...phaseEntries, ...newEntries]
+
+        // 事件列表上限
+        if (result.length > MAX_LIVE_EVENTS) {
+          result = result.slice(-MAX_LIVE_EVENTS)
+        }
+
+        return result
+      })
+    }
+  }, [])
+
+  const scheduleFlush = useCallback(() => {
+    if (rafIdRef.current === 0) {
+      rafIdRef.current = requestAnimationFrame(flushBatch)
+    }
+  }, [flushBatch])
+
+  // 订阅 agentEventBus（RAF 攒批模式）
   useEffect(() => {
     if (!isExecuting) return
 
@@ -380,15 +493,13 @@ function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
         case 'lifecycle':
           if (event.type === 'phase_change') {
             const newPhase = event.data.to as AgentPhase
-            setCurrentPhase(newPhase)
-            phaseStartRef.current = Date.now()
-            setPhaseElapsed(0)
-
             const display = PHASE_LABELS[newPhase]
             const terminalPhases: AgentPhase[] = ['done', 'error', 'aborted']
-            setEvents(prev => [
-              ...prev.map(e => e.status === 'active' ? { ...e, status: 'done' as const } : e),
-              {
+            phaseEventsRef.current.push({
+              clearThinking: false,
+              newPhase,
+              markAllDone: true,
+              phaseEntry: {
                 id: entryId,
                 icon: display.icon,
                 iconColor: display.color,
@@ -396,31 +507,24 @@ function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
                 status: terminalPhases.includes(newPhase) ? 'done' : 'active',
                 timestamp: Date.now(),
               },
-            ])
+            })
           } else if (event.type === 'run_start') {
-            setEvents([])
-            setThinkingPreview('')
-            setCurrentPhase('planning')
-            phaseStartRef.current = Date.now()
+            shouldClearRef.current = true
           } else if (event.type === 'run_end') {
             const success = event.data.success as boolean
-            setCurrentPhase(success ? 'done' : 'error')
-            setEvents(prev => prev.map(e =>
-              e.status === 'active' ? { ...e, status: 'done' } : e
-            ))
+            phaseEventsRef.current.push({
+              clearThinking: false,
+              newPhase: success ? 'done' : 'error',
+              markAllDone: true,
+            })
           }
           break
 
         case 'assistant':
           if (event.type === 'text_delta' || event.type === 'thinking_delta') {
-            const delta = event.data.delta as string
-            setThinkingPreview(prev => {
-              const updated = prev + delta
-              // 只保留最后 200 字符作为预览
-              return updated.length > 200 ? updated.slice(-200) : updated
-            })
+            thinkingBufferRef.current += event.data.delta as string
           } else if (event.type === 'message_end') {
-            setThinkingPreview('')
+            phaseEventsRef.current.push({ clearThinking: true })
           }
           break
 
@@ -428,54 +532,34 @@ function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
           if (event.type === 'tool_start') {
             const toolName = event.data.toolName as string
             const toolDisplay = getToolIcon(toolName)
-            setThinkingPreview('')
-            setEvents(prev => [
-              ...prev,
-              {
-                id: entryId,
-                icon: toolDisplay.icon,
-                iconColor: 'cyan',
-                label: toolDisplay.label,
-                detail: toolName,
-                status: 'active',
-                timestamp: Date.now(),
-              },
-            ])
+            phaseEventsRef.current.push({ clearThinking: true })
+            newEntriesRef.current.push({
+              id: entryId,
+              icon: toolDisplay.icon,
+              iconColor: 'cyan',
+              label: toolDisplay.label,
+              detail: toolName,
+              status: 'active',
+              timestamp: Date.now(),
+            })
           } else if (event.type === 'tool_end') {
             const toolName = event.data.toolName as string
             const toolDisplay = getToolIcon(toolName)
             const durationMs = event.data.durationMs as number
             const success = event.data.success as boolean
-            setEvents(prev => {
-              const lastIdx = [...prev].reverse().findIndex(
-                e => e.detail === toolName && e.status === 'active'
-              )
-              if (lastIdx === -1) return prev
-              const realIdx = prev.length - 1 - lastIdx
-              return prev.map((e, idx) =>
-                idx === realIdx
-                  ? {
-                      ...e,
-                      status: success ? 'done' as const : 'error' as const,
-                      label: `${toolDisplay.label} · ${(durationMs / 1000).toFixed(1)}s`,
-                      elapsedMs: durationMs,
-                    }
-                  : e
-              )
+            eventUpdatesRef.current.push({
+              match: (e) => e.detail === toolName && e.status === 'active',
+              patch: {
+                status: success ? 'done' as const : 'error' as const,
+                label: `${toolDisplay.label} · ${(durationMs / 1000).toFixed(1)}s`,
+                elapsedMs: durationMs,
+              },
             })
           } else if (event.type === 'tool_error') {
             const toolName = event.data.toolName as string
-            setEvents(prev => {
-              const lastIdx = [...prev].reverse().findIndex(
-                e => e.detail === toolName && e.status === 'active'
-              )
-              if (lastIdx === -1) return prev
-              const realIdx = prev.length - 1 - lastIdx
-              return prev.map((e, idx) =>
-                idx === realIdx
-                  ? { ...e, status: 'error' as const, label: `${e.label} 失败` }
-                  : e
-              )
+            eventUpdatesRef.current.push({
+              match: (e) => e.detail === toolName && e.status === 'active',
+              patch: { status: 'error' as const },
             })
           }
           break
@@ -484,86 +568,76 @@ function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
           if (event.type === 'step_start') {
             const stepIndex = event.data.stepIndex as number
             const totalSteps = event.data.totalSteps as number
-            setEvents(prev => [
-              ...prev,
-              {
-                id: entryId,
-                icon: Zap,
-                iconColor: 'amber',
-                label: `步骤 ${stepIndex + 1}/${totalSteps}`,
-                detail: event.data.description as string,
-                status: 'active',
-                timestamp: Date.now(),
-              },
-            ])
+            newEntriesRef.current.push({
+              id: entryId,
+              icon: Zap,
+              iconColor: 'amber',
+              label: `步骤 ${stepIndex + 1}/${totalSteps}`,
+              detail: event.data.description as string,
+              status: 'active',
+              timestamp: Date.now(),
+            })
           } else if (event.type === 'step_complete') {
             const stepIndex = event.data.stepIndex as number
             const success = event.data.success as boolean
-            setEvents(prev =>
-              prev.map(e =>
-                e.label.startsWith(`步骤 ${stepIndex + 1}/`) && e.status === 'active'
-                  ? { ...e, status: success ? 'done' as const : 'error' as const }
-                  : e
-              )
-            )
+            eventUpdatesRef.current.push({
+              match: (e) => e.label.startsWith(`步骤 ${stepIndex + 1}/`) && e.status === 'active',
+              patch: { status: success ? 'done' as const : 'error' as const },
+            })
           }
           break
 
         case 'reflexion':
           if (event.type === 'reflexion_start') {
-            setEvents(prev => [
-              ...prev,
-              {
-                id: entryId,
-                icon: RefreshCw,
-                iconColor: 'amber',
-                label: '反思中',
-                detail: `工具 ${event.data.failedTool} 失败，重新规划...`,
-                status: 'active',
-                timestamp: Date.now(),
-              },
-            ])
+            newEntriesRef.current.push({
+              id: entryId,
+              icon: RefreshCw,
+              iconColor: 'amber',
+              label: '反思中',
+              detail: `工具 ${event.data.failedTool} 失败，重新规划...`,
+              status: 'active',
+              timestamp: Date.now(),
+            })
           } else if (event.type === 'reflexion_end') {
-            setEvents(prev =>
-              prev.map(e =>
-                e.label === '反思中' && e.status === 'active'
-                  ? { ...e, status: 'done' as const, label: '反思完成' }
-                  : e
-              )
-            )
+            eventUpdatesRef.current.push({
+              match: (e) => e.label === '反思中' && e.status === 'active',
+              patch: { status: 'done' as const, label: '反思完成' },
+            })
           }
           break
 
         case 'approval':
           if (event.type === 'approval_required') {
-            setEvents(prev => [
-              ...prev,
-              {
-                id: entryId,
-                icon: ShieldAlert,
-                iconColor: 'yellow',
-                label: '等待确认',
-                detail: event.data.reason as string,
-                status: 'active',
-                timestamp: Date.now(),
-              },
-            ])
+            newEntriesRef.current.push({
+              id: entryId,
+              icon: ShieldAlert,
+              iconColor: 'yellow',
+              label: '等待确认',
+              detail: event.data.reason as string,
+              status: 'active',
+              timestamp: Date.now(),
+            })
           } else if (event.type === 'approval_resolved') {
             const approved = event.data.approved as boolean
-            setEvents(prev =>
-              prev.map(e =>
-                e.label === '等待确认' && e.status === 'active'
-                  ? { ...e, status: 'done' as const, label: approved ? '已批准' : '已拒绝' }
-                  : e
-              )
-            )
+            eventUpdatesRef.current.push({
+              match: (e) => e.label === '等待确认' && e.status === 'active',
+              patch: { status: 'done' as const, label: approved ? '已批准' : '已拒绝' },
+            })
           }
           break
       }
+
+      scheduleFlush()
     })
 
-    return unsubscribe
-  }, [isExecuting])
+    return () => {
+      unsubscribe()
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current)
+        rafIdRef.current = 0
+      }
+    }
+  }, [isExecuting, scheduleFlush])
 
   // 自动滚动
   useEffect(() => {

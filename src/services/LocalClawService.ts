@@ -29,6 +29,7 @@ import { fileRegistry } from './fileRegistry'
 import { FILE_REGISTRY_CONFIG, SOUL_EVOLUTION_CONFIG } from '@/types'
 import { confidenceTracker } from './confidenceTracker'
 import { soulEvolutionService } from './soulEvolutionService'
+import { sopEvolutionService } from './sopEvolutionService'
 
 // ============================================
 // 类型定义
@@ -145,6 +146,8 @@ const CONFIG = {
   // Reflexion 机制配置
   CRITIC_TOOLS: ['writeFile', 'runCmd', 'appendFile'], // 修改类工具需要 Critic 验证
   HIGH_RISK_TOOLS: ['runCmd'], // 高风险工具需要执行前检查
+  // P1: Reflexion/Critic 提示分隔符（零宽空格标记，避免与工具结果内容混淆）
+  HINT_SEPARATOR: '\n\n\u200B\u2500\u2500\u2500\u2500 SYSTEM_HINT \u2500\u2500\u2500\u2500\u200B\n',
   // P3: 危险命令模式 (触发用户审批) - 仅保留真正破坏性操作
   DANGER_PATTERNS: [
     { pattern: 'rm -rf', level: 'critical' as const, reason: '递归强制删除' },
@@ -159,6 +162,60 @@ const CONFIG = {
 // ============================================
 // JIT 上下文注入配置
 // ============================================
+
+// ============================================
+// P1: 工具结果分级截断
+// ============================================
+
+/** 按工具类型智能截断结果，防止上下文膨胀 */
+function truncateToolResult(toolName: string, result: string): string {
+  const TOOL_RESULT_LIMITS: Record<string, number> = {
+    readFile:      2500,
+    webFetch:      2000,
+    runCmd:        2000,
+    webSearch:     1500,
+    searchFiles:   1500,
+    listDir:       1500,
+    searchMemory:  1500,
+  }
+  const DEFAULT_LIMIT = 2500
+  const limit = TOOL_RESULT_LIMITS[toolName] || DEFAULT_LIMIT
+
+  if (result.length <= limit) return result
+
+  if (toolName === 'readFile') {
+    const half = Math.floor(limit / 2)
+    return result.slice(0, half) +
+      `\n\n... [已截断 ${result.length - limit} 字符，原始 ${result.length} 字符] ...\n\n` +
+      result.slice(-half)
+  }
+
+  if (toolName === 'runCmd') {
+    return `[输出已截断，仅保留最后 ${limit} 字符]\n` + result.slice(-limit)
+  }
+
+  return result.slice(0, limit) + `\n... [已截断，原始 ${result.length} 字符]`
+}
+
+// ============================================
+// P2/P4: 安全切割点查找（保证 tool_call/tool_result 配对完整）
+// ============================================
+
+/**
+ * 从 messages 数组中找到一个安全的切割索引。
+ * 安全边界 = user 消息 或 无 tool_calls 的 assistant 消息。
+ * 返回 -1 表示找不到安全切割点。
+ */
+function findSafeCutIndex(messages: Array<{ role: string; tool_calls?: unknown[] }>, keepRecent: number): number {
+  let idx = Math.max(1, messages.length - keepRecent)
+  while (idx > 1) {
+    const msg = messages[idx]
+    if (msg.role === 'user') return idx
+    if (msg.role === 'assistant' && !msg.tool_calls?.length) return idx
+    idx--
+  }
+  return -1 // 找不到安全切割点
+}
 
 /**
  * 技能关键词映射表 (P1: 动态填充，不再硬编码)
@@ -269,6 +326,12 @@ const SYSTEM_PROMPT_FC = `你是 DunCrew，运行在用户本地电脑上的 AI 
 3. 危险操作前必须告知用户
 4. 遇到问题及时告知，不要卡住
 5. **SOP/多阶段任务连续执行（极其重要！）**：当你在执行 Nexus SOP 或任何多阶段任务时，必须在一次执行中连续完成所有阶段（Phase 1 → Phase 2 → Phase 3 → ...），中途**绝对不要停下来**向用户汇报进度或询问是否继续。完成一个阶段后，立即开始下一个阶段的工具调用。只有在**全部阶段都完成后**才输出最终总结。
+
+# 回复排版规范（重要！）
+- **禁止使用 # 和 ## 标题**。在聊天对话中，大标题非常突兀，破坏阅读体验。
+- 需要分段时，使用 **加粗文字** 作为段落小标题，或使用 ### 小标题（仅在确实需要层级结构时）。
+- 优先使用：**加粗**、列表（- 或 1.）、简短段落来组织内容。
+- 回复要紧凑自然，像对话而不是文档。避免过度格式化。
 
 # 建议选项格式（重要！）
 
@@ -638,6 +701,7 @@ class LocalClawService {
     // V2: 同步 serverUrl 到 memoryStore 和 sessionPersistence
     memoryStore.setServerUrl(this.serverUrl)
     sessionPersistence.setServerUrl(this.serverUrl)
+    sopEvolutionService.setServerUrl(this.serverUrl)
 
     // 接线提取出的服务
     nexusRuleEngine.setIO({
@@ -1160,41 +1224,92 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
     const exampleParts: string[] = []
     const queryLower = userQuery.toLowerCase()
 
+    // 模块级预算控制：动态上下文总字符数上限
+    const CONTEXT_CHAR_BUDGET = 8000
+    const EXAMPLE_CHAR_BUDGET = 3000
+    let contextCharsUsed = 0
+    let exampleCharsUsed = 0
+
+    /** 带预算检查的 contextParts.push */
+    const pushContext = (text: string): boolean => {
+      if (contextCharsUsed + text.length > CONTEXT_CHAR_BUDGET) {
+        console.log(`[LocalClaw/DynCtx] Budget exceeded, skipping ${text.slice(0, 40)}... (${contextCharsUsed}/${CONTEXT_CHAR_BUDGET})`)
+        return false
+      }
+      contextParts.push(text)
+      contextCharsUsed += text.length
+      return true
+    }
+
+    /** 带预算检查的 exampleParts.push */
+    const pushExample = (text: string): boolean => {
+      if (exampleCharsUsed + text.length > EXAMPLE_CHAR_BUDGET) {
+        return false
+      }
+      exampleParts.push(text)
+      exampleCharsUsed += text.length
+      return true
+    }
+
     // 0. P5: 指代消解提示 (优先注入，让模型理解代词指向)
     const anaphoraHint = this.buildAnaphoraHint(userQuery)
     if (anaphoraHint) {
-      contextParts.push(anaphoraHint)
+      pushContext(anaphoraHint)
     }
 
     // 1. 核心人格 (SOUL.md) - 始终加载但精简
     if (this.soulContent) {
       const soulSummary = this.extractSoulSummary(this.soulContent)
       if (soulSummary) {
-        contextParts.push(`## 核心人格\n${soulSummary}`)
+        pushContext(`## 核心人格\n${soulSummary}`)
       }
     }
 
     // 1.5 激活的 Nexus SOP 注入 (Phase 4)
-    // 优先使用传入的 nexusId，fallback 到全局 activeNexusId
     const activeNexusId = overrideNexusId ?? this.getActiveNexusId()
     if (activeNexusId) {
       const nexusCtx = await nexusManager.buildContext(activeNexusId, queryLower)
       if (nexusCtx) {
-        contextParts.push(nexusCtx)
+        pushContext(nexusCtx)
+      }
+
+      // 1.5.1 SOP Evolution: 初始化 SOPTracker + 注入 hints/rewrite/golden-path
+      if (!sopEvolutionService.getSOPTracker(activeNexusId)) {
+        // 获取 sopContent 初始化 tracker
+        const nexuses = (this.storeActions as any)?.nexuses as Map<string, NexusEntity> | undefined
+        const nexus = nexuses?.get(activeNexusId)
+        let sopContent = nexus?.sopContent
+        if (!sopContent) {
+          try {
+            const res = await fetch(`${this.serverUrl}/nexuses/${encodeURIComponent(activeNexusId)}`)
+            if (res.ok) {
+              const detail = await res.json()
+              sopContent = detail.sopContent
+            }
+          } catch { /* 静默 */ }
+        }
+        if (sopContent) {
+          sopEvolutionService.createSOPTracker(activeNexusId, nexus?.label || activeNexusId, sopContent)
+        }
+      }
+
+      const sopHints = await sopEvolutionService.getContextHints(activeNexusId)
+      if (sopHints) {
+        pushContext(sopHints)
       }
     }
 
     // 1.6 📊 Nexus 性能洞察注入
     const performanceInsight = nexusManager.buildInsight(activeNexusId)
     if (performanceInsight) {
-      contextParts.push(performanceInsight)
+      pushContext(performanceInsight)
     }
 
     // 1.7 🤖 自适应规则引擎注入
     const activeRules = nexusRuleEngine.getActiveRulesForNexus(activeNexusId)
     if (activeRules.length > 0) {
       const ruleTexts = activeRules.map(r => `- ${r.injectedPrompt}`).join('\n')
-      contextParts.push(`## 🤖 自适应约束\n${ruleTexts}`)
+      pushContext(`## 🤖 自适应约束\n${ruleTexts}`)
     }
 
     // 2. V4: 记忆检索 - 分层注入 (L0 核心记忆优先 + exec_trace 补充)
@@ -1216,7 +1331,7 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
 
       if (l0Results.length > 0) {
         const l0Hints = l0Results.map(r => `- ${(r.snippet || r.content || '').slice(0, 200)}`).join('\n')
-        contextParts.push(`## 核心记忆\n${l0Hints}`)
+        pushContext(`## 核心记忆\n${l0Hints}`)
       }
 
       // 层 2: exec_trace 执行轨迹 (工具序列参考)
@@ -1243,7 +1358,7 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
 
       if (supplementary.length > 0) {
         const traceHints = supplementary.map(r => `- ${(r.snippet || r.content || '').slice(0, 150)}`).join('\n')
-        contextParts.push(`## 历史操作参考\n${traceHints}`)
+        pushContext(`## 历史操作参考\n${traceHints}`)
       }
     } catch {
       // memoryStore 不可用时降级到文件读取
@@ -1252,7 +1367,7 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
       if (dailyLog) {
         const recentLogs = this.extractRecentLogs(dailyLog, 10)
         if (recentLogs) {
-          contextParts.push(`## 今日活动\n${recentLogs}`)
+          pushContext(`## 今日活动\n${recentLogs}`)
         }
       }
     }
@@ -1260,28 +1375,31 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
     // 3.3 V3: 文件注册表 - 注入已知文件路径，减少重复探索
     const knownFilesSection = fileRegistry.buildContextSection(activeNexusId || undefined, 15)
     if (knownFilesSection) {
-      contextParts.push(knownFilesSection)
+      pushContext(knownFilesSection)
     }
 
     // 3.5 P2: 执行追踪检索 - 查找相似任务的成功工具序列
-    const relatedTraces = await this.searchExecTraces(queryLower, 3)
-    const successfulTraces = relatedTraces.filter(t => t.success)
-    if (successfulTraces.length > 0) {
-      const traceHints = successfulTraces.map(t => {
-        const toolSeq = t.tools.map(tool => `${tool.name}()`).join(' → ')
-        return `- 任务: "${t.task.slice(0, 50)}..." → ${toolSeq}`
-      }).join('\n')
-      contextParts.push(`## 历史成功案例\n${traceHints}`)
+    if (contextCharsUsed < CONTEXT_CHAR_BUDGET) {
+      const relatedTraces = await this.searchExecTraces(queryLower, 3)
+      const successfulTraces = relatedTraces.filter(t => t.success)
+      if (successfulTraces.length > 0) {
+        const traceHints = successfulTraces.map(t => {
+          const toolSeq = t.tools.map(tool => `${tool.name}()`).join(' → ')
+          return `- 任务: "${t.task.slice(0, 50)}..." → ${toolSeq}`
+        }).join('\n')
+        pushContext(`## 历史成功案例\n${traceHints}`)
+      }
     }
 
     // 4. 动态技能注入 - 优先语义检索，fallback 关键词匹配
     const matchedSkills = await this.matchSkillsAsync(queryLower)
     for (const skillPath of matchedSkills) {
+      if (exampleCharsUsed >= EXAMPLE_CHAR_BUDGET) break
       const skillContent = await this.readFileWithCache(skillPath)
       if (skillContent) {
         const skillUsage = this.extractSkillUsage(skillContent)
         if (skillUsage) {
-          exampleParts.push(skillUsage)
+          pushExample(skillUsage)
         }
       }
     }
@@ -1290,14 +1408,14 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
     if (queryLower.includes('偏好') || queryLower.includes('设置') || queryLower.includes('preference')) {
       const userPrefs = await this.readFileWithCache('USER.md')
       if (userPrefs) {
-        contextParts.push(`## 用户偏好\n${userPrefs}`)
+        pushContext(`## 用户偏好\n${userPrefs}`)
       }
     }
 
     // 🧬 Phase 4: Nexus 通讯提示 (让 AI 知道可以协作的其他 Nexus)
     const nexusCommunicationHint = nexusManager.buildNexusCommunicationHint(userQuery, activeNexusId || undefined)
     if (nexusCommunicationHint) {
-      contextParts.push(nexusCommunicationHint)
+      pushContext(nexusCommunicationHint)
     }
 
     // 🧠 Soul Evolution: 注入已批准且权重达标的用户偏好修正案 (Layer 2)
@@ -1318,7 +1436,7 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
           charBudget -= line.length
           storeState.incrementHitCount(a.id)
         }
-        contextParts.push(`## 用户偏好观测\n以下是从历史行为中观测到的用户偏好，请适当参考:\n${lines.join('\n')}`)
+        pushContext(`## 用户偏好观测\n以下是从历史行为中观测到的用户偏好，请适当参考:\n${lines.join('\n')}`)
       }
     } catch {
       // Soul amendment store 不可用时静默降级
@@ -1941,6 +2059,21 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
         turnCount++
         console.log(`[LocalClaw/FC] Turn ${turnCount}`)
 
+        // SOP Evolution: 每隔 N 轮注入 SOP 进度提醒
+        {
+          const sopNexusId = nexusId || this.getActiveNexusId()
+          if (sopNexusId && turnCount > 1 && turnCount % sopEvolutionService.reminderInterval === 0) {
+            const usedToolNames = traceTools.map(t => t.name)
+            const reminder = sopEvolutionService.buildSOPReminder(sopNexusId, usedToolNames, lastToolResult)
+            if (reminder) {
+              messages.push({
+                role: 'user',
+                content: CONFIG.HINT_SEPARATOR + reminder,
+              })
+            }
+          }
+        }
+
         try {
           // Fix2: 推送 thinking step，让 TaskHouse 实时显示"正在思考"
           onStep?.({
@@ -2255,6 +2388,14 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
 
             lastToolResult = toolResult.result
 
+            // SOP Evolution: Phase 追踪 — 每次工具执行后推断 Phase 进度
+            {
+              const sopNexusId = nexusId || this.getActiveNexusId()
+              if (sopNexusId) {
+                sopEvolutionService.inferSOPProgress(sopNexusId, toolName, toolResult.result.slice(0, 500))
+              }
+            }
+
             // 🔄 优化1+3: 实时规则评估 (每次工具执行后立即检查)
             {
               const realtimeNexusId = nexusId || this.getActiveNexusId()
@@ -2370,9 +2511,7 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
                 messages.push({
                   role: 'tool',
                   tool_call_id: tc.id,
-                  content: toolResult.result + `
-
-[CRITICAL - 重复错误检测]
+                  content: truncateToolResult(toolName, toolResult.result) + CONFIG.HINT_SEPARATOR + `[CRITICAL - 重复错误检测]
 工具 ${toolName} 已连续 ${repeatCount} 次产生相同错误。禁止再次使用相同参数调用此工具。
 你必须选择以下策略之一:
 1. 使用完全不同的工具或方法达成目标
@@ -2415,7 +2554,7 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
                 messages.push({
                   role: 'tool',
                   tool_call_id: tc.id,
-                  content: toolResult.result + reflexionHint,
+                  content: truncateToolResult(toolName, toolResult.result) + CONFIG.HINT_SEPARATOR + reflexionHint,
                   name: toolName,
                 })
                 
@@ -2502,7 +2641,7 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
                 messages.push({
                   role: 'tool',
                   tool_call_id: tc.id,
-                  content: toolResult.result + criticHint,
+                  content: truncateToolResult(toolName, toolResult.result) + CONFIG.HINT_SEPARATOR + criticHint,
                   name: toolName,
                 })
                 
@@ -2522,11 +2661,11 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
                   }
                 }
               } else {
-                // 非修改类工具：直接添加结果
+                // 非修改类工具：直接添加结果（截断防膨胀）
                 messages.push({
                   role: 'tool',
                   tool_call_id: tc.id,
-                  content: toolResult.result,
+                  content: truncateToolResult(toolName, toolResult.result),
                   name: toolName,
                 })
               }
@@ -2742,8 +2881,32 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
               tokenBudget: TOKEN_BUDGET,
               trigger: 'overflow',
               currentTokenCount: tokenCount,
+              messages: messages.map(m => ({
+                role: m.role,
+                content: typeof m.content === 'string' ? m.content : '',
+              })),
             })
-            return result.compacted
+            // compact 成功后必须替换 messages，否则返回 false 防止死循环
+            if (result.compacted && result.summary) {
+              const systemMsg = messages[0]
+              const safeCutIdx = findSafeCutIndex(messages, 8)
+              if (safeCutIdx > 0) {
+                const recentMessages = messages.slice(safeCutIdx)
+                messages.length = 0
+                messages.push(systemMsg)
+                messages.push({
+                  role: 'user',
+                  content: `[上下文摘要] 以下是之前对话的压缩摘要:\n${result.summary}`,
+                })
+                messages.push(...recentMessages)
+                console.log(`[LocalClaw/FC] ErrorRecovery compact: ${tokenCount} → ~${result.tokensAfter} tokens`)
+                return true
+              }
+              // 找不到安全切割点，压缩失败
+              console.warn('[LocalClaw/FC] ErrorRecovery: no safe cut point, compact aborted')
+              return false
+            }
+            return false
           },
         })
 
@@ -2862,7 +3025,7 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
             status: t.status as 'success' | 'error',
             result: t.result,
           }))
-          confidenceTracker.trackToolResults(activeNexusId, trackedToolResults)
+          confidenceTracker.trackToolResults(activeNexusId, trackedToolResults, userPrompt)
 
           // 2. 评估是否有可晋升到 L0 的记忆
           const promotable = confidenceTracker.evaluatePromotions(activeNexusId)
@@ -2875,6 +3038,42 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
               console.warn('[LocalClaw/FC] L1→L0 promotion failed:', err)
             })
           }
+        }
+
+        // SOP Evolution: fitness 计算 + 持久化 + rewrite 检测 + Golden Path 蒸馏
+        if (activeNexusId) {
+          const sopTraceTools = traceTools.map(t => ({
+            name: t.name,
+            status: t.status as 'success' | 'error',
+            result: t.result,
+            duration: t.latency,
+          }))
+          const sopSuccess = traceTools.length > 0
+            ? traceTools.every(t => t.status === 'success')
+            : !!finalResponse
+
+          // 获取 sopContent 用于 LLM 蒸馏
+          const nexuses = (this.storeActions as any)?.nexuses as Map<string, NexusEntity> | undefined
+          const activeNexus = nexuses?.get(activeNexusId)
+          const activeSopContent = activeNexus?.sopContent || undefined
+
+          sopEvolutionService.afterTaskCompletion(
+            activeNexusId,
+            sopTraceTools,
+            sopSuccess,
+            finalResponse,
+            userPrompt,
+            activeSopContent,
+            // 回调：同步更新 NexusEntity.sopEvolutionData 到 Zustand Store
+            (evolutionData) => {
+              if (nexuses && activeNexus) {
+                const updatedNexus = { ...activeNexus, sopEvolutionData: evolutionData }
+                nexuses.set(activeNexusId, updatedNexus)
+              }
+            },
+          ).catch(err => {
+            console.warn('[LocalClaw/FC] SOP Evolution afterTaskCompletion failed:', err)
+          })
         }
       }
     }
@@ -2890,6 +3089,26 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
       ).catch(err => {
         console.warn('[LocalClaw/FC] Failed to record Nexus text experience:', err)
       })
+    }
+
+    // P5: 对话级记忆写入 — 无工具调用的有意义对话也值得记忆
+    if (traceTools.length === 0 && finalResponse && userPrompt.length > 10) {
+      const isSubstantive = userPrompt.length > 20 ||
+        /[？?]/.test(userPrompt) ||
+        /如何|怎么|什么|为什么|能不能|帮我/.test(userPrompt)
+
+      if (isSubstantive) {
+        memoryStore.write({
+          source: 'session',
+          content: `[对话] ${userPrompt.slice(0, 200)}`,
+          nexusId: activeNexusId || undefined,
+          tags: ['conversation'],
+          metadata: {
+            responsePreview: finalResponse.slice(0, 100),
+            timestamp: Date.now(),
+          },
+        }).catch(err => console.warn('[LocalClaw/FC] Conversation memory write failed:', err))
+      }
     }
 
     // V2: 发出 run_end 事件 (在所有后处理完成后，包含真实 scoreChange)

@@ -2101,8 +2101,12 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         q = query.get('q', [''])[0]
         source = query.get('source', [None])[0]
         nexus_id = query.get('nexusId', [None])[0]
-        limit = int(query.get('limit', ['20'])[0])
+        limit = min(int(query.get('limit', ['20'])[0]), 500)  # 上限 500
         use_hybrid = query.get('hybrid', ['1'])[0] == '1'
+
+        # 通配符视为空查询，跳过混合搜索
+        if q == '*':
+            q = ''
 
         # V4: 优先使用混合搜索
         engine = get_hybrid_engine()

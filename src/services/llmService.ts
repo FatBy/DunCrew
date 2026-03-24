@@ -546,6 +546,19 @@ export async function chat(
 }
 
 /**
+ * 简化版非流式调用，失败时返回 null 而非抛异常。
+ * 供 sopEvolutionService 等内部模块使用。
+ */
+export async function simpleChat(messages: SimpleChatMessage[]): Promise<string | null> {
+  try {
+    const result = await chat(messages)
+    return result || null
+  } catch {
+    return null
+  }
+}
+
+/**
  * 流式调用 (SSE) - 支持 Function Calling + Anthropic 适配
  * 
  * 当传入 tools 参数时，返回 LLMStreamResult 包含 toolCalls;
@@ -860,18 +873,20 @@ export async function embed(
   useLocalFallback = true
 ): Promise<number[]> {
   const fullCfg = { ...getLLMConfig(), ...config }
+  const localServer = getLocalServerUrl()
   
-  // 优先使用独立的 Embedding 配置
+  // 优先使用独立的 Embedding 配置，其次尝试本地后端 BGE
   const apiKey = fullCfg.embedApiKey || fullCfg.apiKey
-  const baseUrl = fullCfg.embedBaseUrl || fullCfg.baseUrl
-  const model = fullCfg.embedModel || 'text-embedding-3-small'
+  const baseUrl = fullCfg.embedBaseUrl || localServer || fullCfg.baseUrl
+  const isLocal = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')
+  const model = fullCfg.embedModel || (isLocal ? 'bge-large-zh-v1.5' : 'text-embedding-3-small')
   
-  // 如果没有配置 API，直接使用本地嵌入
-  if (!apiKey || !baseUrl) {
+  // 如果没有任何可用的 embedding 端点，直接使用本地嵌入
+  if (!baseUrl) {
     if (useLocalFallback) {
       return localEmbed(text)
     }
-    console.warn('[Embed] API not configured, skipping embedding')
+    console.warn('[Embed] No embedding endpoint available, skipping')
     return []
   }
 
@@ -881,9 +896,14 @@ export async function embed(
   }
 
   try {
+    // 本地后端不需要 Authorization header
+    const headers = isLocal
+      ? { 'Content-Type': 'application/json' }
+      : buildHeaders(apiKey)
+
     const res = await fetch(buildEmbeddingUrl(baseUrl), {
       method: 'POST',
-      headers: buildHeaders(apiKey),
+      headers,
       body: JSON.stringify({
         model,
         input: text,
@@ -891,7 +911,6 @@ export async function embed(
     })
 
     if (!res.ok) {
-      const isLocal = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')
       // 400/404 表示该 provider 不支持 embeddings 端点
       if (res.status === 400 || res.status === 404) {
         if (!isLocal) {
@@ -912,7 +931,6 @@ export async function embed(
     return data.data?.[0]?.embedding || (useLocalFallback ? localEmbed(text) : [])
   } catch (err) {
     // 网络错误 (CORS / 连接失败等)
-    const isLocal = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')
     if (!isLocal) {
       _embedUnsupportedProviders.add(baseUrl)
       console.warn(`[Embed] Request failed (${baseUrl}), permanently falling back to local TF-IDF:`, err)

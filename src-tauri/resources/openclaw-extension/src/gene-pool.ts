@@ -75,14 +75,31 @@ function thompsonSelect(matches: GeneMatch[], count: number): GeneMatch[] {
 
 // ============================================
 // V2: Base Type Classifier (E/P/V/X)
+// SYNC: 此分类器逻辑必须与 src/utils/baseClassifier.ts 保持同步
 // ============================================
 
-const READ_TOOLS = new Set(["readFile", "listDir", "searchText", "searchFiles", "readMultipleFiles"]);
+const READ_TOOLS = new Set(["readFile", "listDir", "searchText", "searchFiles", "readMultipleFiles", "search_files"]);
+const EXPLORE_TOOLS = new Set(["webSearch", "webFetch"]);
 const WRITE_TOOLS = new Set(["writeFile", "appendFile", "deleteFile", "renameFile"]);
 const VERIFY_CMD_PATTERNS = [
-  /tsc\b.*--noEmit/i, /npm\s+(test|run\s+test|run\s+lint)/i,
+  /tsc\b.*--noEmit/i, /npm\s+(test|run\s+test|run\s+lint|run\s+build)/i,
   /pytest|jest|vitest|mocha/i, /eslint|prettier.*--check/i,
   /cargo\s+(check|test|clippy)/i,
+  /go\s+(test|vet)/i,
+  /python\s+-m\s+(unittest|pytest)/i,
+];
+const EXPLORE_CMD_PATTERNS = [
+  /^(ls|dir|tree|find)\b/i,
+  /^(cat|head|tail|less|more)\b/i,
+  /^(grep|rg|ag|ack)\b/i,
+  /^git\s+(log|status|diff|show|branch)/i,
+  /^(which|where|type|command\s+-v)\b/i,
+  /^(echo\s+\$|env|printenv|set)\b/i,
+];
+const EXPLORE_NAME_PATTERNS = [
+  /search/i, /fetch/i, /get/i, /list/i, /read/i,
+  /find/i, /query/i, /browse/i, /scan/i, /lookup/i,
+  /navigate/i, /screenshot/i, /inspect/i,
 ];
 
 interface BaseCtx {
@@ -91,24 +108,43 @@ interface BaseCtx {
   lastEntry: SessionToolTrace | null;
 }
 
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/");
+}
+
 function extractResource(toolName: string, params: Record<string, unknown>): string | null {
   const p = params.path || params.filePath || params.file || params.directory;
-  if (typeof p === "string") return p;
+  if (typeof p === "string") return normalizePath(p);
+  const url = params.url || params.href;
+  if (typeof url === "string") return url;
+  const query = params.query || params.q || params.search_query;
+  if (typeof query === "string") return `query:${query}`;
   if (toolName === "runCmd") {
     const cmd = String(params.command || params.cmd || "");
     const m = cmd.match(/(?:^|\s)((?:\.\/|\/|[a-zA-Z]:\\)[\w\-./\\]+)/);
-    return m ? m[1] : `cmd:${cmd.slice(0, 50)}`;
+    return m ? normalizePath(m[1]) : `cmd:${cmd.slice(0, 50)}`;
   }
   return null;
 }
 
+function inferIntentFromArgs(args: Record<string, unknown>): "read" | "write" | "unknown" {
+  const hasContent = !!(args.content || args.body || args.data || args.text || args.payload);
+  const hasReadTarget = !!(args.url || args.href || args.query || args.q || args.search_query ||
+    args.path || args.filePath || args.file || args.directory);
+  if (hasContent) return "write";
+  if (hasReadTarget && !hasContent) return "read";
+  return "unknown";
+}
+
 function classifyBaseType(
   toolName: string, params: Record<string, unknown>,
-  status: "success" | "error", ctx: BaseCtx
+  _status: "success" | "error", ctx: BaseCtx
 ): "E" | "V" | "X" {
   const resource = extractResource(toolName, params);
+  const isKnownTool = READ_TOOLS.has(toolName) || WRITE_TOOLS.has(toolName) ||
+    EXPLORE_TOOLS.has(toolName) || toolName === "runCmd";
 
-  // V: write-then-read same resource
+  // V: write-then-read same resource (path normalized)
   if (READ_TOOLS.has(toolName) && resource && ctx.recentWrites.some(w => w.resource === resource)) return "V";
   // V: retry after failure
   if (ctx.lastEntry && ctx.lastEntry.name === toolName && ctx.lastEntry.status === "error") return "V";
@@ -117,8 +153,24 @@ function classifyBaseType(
 
   // X: read operation on never-successfully-accessed resource
   if (READ_TOOLS.has(toolName) && resource && !ctx.successfulResources.has(resource)) return "X";
-  // X: listDir early in session
-  if (toolName === "listDir" && (ctx.lastEntry === null || (ctx.lastEntry.order <= 3))) return "X";
+  // X: web search/fetch
+  if (EXPLORE_TOOLS.has(toolName)) return "X";
+  // X: listDir on never-accessed directory
+  if (toolName === "listDir" && resource && !ctx.successfulResources.has(resource)) return "X";
+  // X: listDir early in session (fallback for no-path listDir)
+  if (toolName === "listDir" && !resource && (ctx.lastEntry === null || (ctx.lastEntry.order <= 3))) return "X";
+  // X: exploratory shell commands
+  if (toolName === "runCmd") {
+    const cmd = String(params.command || params.cmd || "").trim();
+    if (EXPLORE_CMD_PATTERNS.some(p => p.test(cmd))) return "X";
+  }
+
+  // Unknown tool fallback: param shape → name pattern
+  if (!isKnownTool) {
+    const argIntent = inferIntentFromArgs(params);
+    if (argIntent === "read") return "X";
+    if (argIntent === "unknown" && EXPLORE_NAME_PATTERNS.some(p => p.test(toolName))) return "X";
+  }
 
   return "E";
 }
@@ -131,7 +183,7 @@ function updateBaseCtx(ctx: BaseCtx, entry: SessionToolTrace): void {
   const resource = extractResource(entry.name, entry.params);
   if (entry.status === "success" && resource) ctx.successfulResources.add(resource);
   if (WRITE_TOOLS.has(entry.name) && entry.status === "success" && resource) {
-    ctx.recentWrites.push({ resource, order: entry.order });
+    ctx.recentWrites.push({ resource: normalizePath(resource), order: entry.order });
     if (ctx.recentWrites.length > 10) ctx.recentWrites.shift();
   }
   ctx.lastEntry = entry;

@@ -11,15 +11,21 @@
  * reliably inferred from tool calls alone. It must be assigned by the LLM
  * itself (via reasoning or function-call metadata). This classifier handles
  * E/V/X and defaults to E when no V/X signal is detected.
+ *
+ * SYNC: 此分类器逻辑必须与 openclaw-extension/src/gene-pool.ts 保持同步
  */
 
 // ============================================
-// Tool categories
+// Tool categories (白名单 — 精确分类)
 // ============================================
 
 const READ_TOOLS = new Set([
   'readFile', 'listDir', 'searchText', 'searchFiles',
   'readMultipleFiles', 'search_files',
+])
+
+const EXPLORE_TOOLS = new Set([
+  'webSearch', 'webFetch',
 ])
 
 const WRITE_TOOLS = new Set([
@@ -34,6 +40,23 @@ const VERIFY_CMD_PATTERNS = [
   /cargo\s+(check|test|clippy)/i,
   /go\s+(test|vet)/i,
   /python\s+-m\s+(unittest|pytest)/i,
+]
+
+// 探索性 shell 命令 (runCmd 专用)
+const EXPLORE_CMD_PATTERNS = [
+  /^(ls|dir|tree|find)\b/i,
+  /^(cat|head|tail|less|more)\b/i,
+  /^(grep|rg|ag|ack)\b/i,
+  /^git\s+(log|status|diff|show|branch)/i,
+  /^(which|where|type|command\s+-v)\b/i,
+  /^(echo\s+\$|env|printenv|set)\b/i,
+]
+
+// 未知工具的名称模式兜底 (优先级低于白名单和参数推断)
+const EXPLORE_NAME_PATTERNS = [
+  /search/i, /fetch/i, /get/i, /list/i, /read/i,
+  /find/i, /query/i, /browse/i, /scan/i, /lookup/i,
+  /navigate/i, /screenshot/i, /inspect/i,
 ]
 
 // ============================================
@@ -58,6 +81,14 @@ export function createBaseClassifierCtx(): BaseClassifierCtx {
 }
 
 // ============================================
+// Path normalization
+// ============================================
+
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+/g, '/')
+}
+
+// ============================================
 // Resource extraction
 // ============================================
 
@@ -65,16 +96,37 @@ function extractResource(
   toolName: string,
   args: Record<string, unknown>,
 ): string | null {
+  // 文件系统路径
   const p = args.path || args.filePath || args.file || args.directory
-  if (typeof p === 'string') return p
+  if (typeof p === 'string') return normalizePath(p)
+
+  // 网络资源: URL 或搜索查询
+  const url = args.url || args.href
+  if (typeof url === 'string') return url
+  const query = args.query || args.q || args.search_query
+  if (typeof query === 'string') return `query:${query}`
 
   if (toolName === 'runCmd') {
     const cmd = String(args.command || args.cmd || '')
     const m = cmd.match(/(?:^|\s)((?:\.\/|\/|[a-zA-Z]:\\)[\w\-./\\]+)/)
-    return m ? m[1] : `cmd:${cmd.slice(0, 50)}`
+    return m ? normalizePath(m[1]) : `cmd:${cmd.slice(0, 50)}`
   }
 
   return null
+}
+
+// ============================================
+// Parameter shape inference (未知工具专用)
+// ============================================
+
+function inferIntentFromArgs(args: Record<string, unknown>): 'read' | 'write' | 'unknown' {
+  const hasContent = !!(args.content || args.body || args.data || args.text || args.payload)
+  const hasReadTarget = !!(args.url || args.href || args.query || args.q || args.search_query ||
+    args.path || args.filePath || args.file || args.directory)
+
+  if (hasContent) return 'write'
+  if (hasReadTarget && !hasContent) return 'read'
+  return 'unknown'
 }
 
 // ============================================
@@ -84,6 +136,12 @@ function extractResource(
 /**
  * Classify a tool call into E/V/X based on context.
  * P must be assigned externally (by LLM metadata).
+ *
+ * Priority chain:
+ *   1. V checks (highest priority — verification patterns)
+ *   2. X checks (known read tools + explore tools + shell explore commands)
+ *   3. Unknown tool fallback (param shape → name pattern)
+ *   4. E (default)
  */
 export function classifyBaseType(
   toolName: string,
@@ -92,9 +150,11 @@ export function classifyBaseType(
   ctx: BaseClassifierCtx,
 ): 'E' | 'V' | 'X' {
   const resource = extractResource(toolName, args)
+  const isKnownTool = READ_TOOLS.has(toolName) || WRITE_TOOLS.has(toolName) ||
+    EXPLORE_TOOLS.has(toolName) || toolName === 'runCmd'
 
   // --- V (Verify) ---
-  // Write-then-read same resource
+  // Write-then-read same resource (path normalized)
   if (READ_TOOLS.has(toolName) && resource &&
     ctx.recentWrites.some(w => w.resource === resource)) {
     return 'V'
@@ -116,9 +176,35 @@ export function classifyBaseType(
   if (READ_TOOLS.has(toolName) && resource && !ctx.successfulResources.has(resource)) {
     return 'X'
   }
-  // listDir early in session (no previous entry or very early order)
-  if (toolName === 'listDir' && (ctx.lastEntry === null || ctx.lastEntry.order <= 3)) {
+  // Web search/fetch — always exploring new information
+  if (EXPLORE_TOOLS.has(toolName)) {
     return 'X'
+  }
+  // listDir on never-accessed directory
+  if (toolName === 'listDir' && resource && !ctx.successfulResources.has(resource)) {
+    return 'X'
+  }
+  // listDir early in session (fallback for no-path listDir)
+  if (toolName === 'listDir' && !resource && (ctx.lastEntry === null || ctx.lastEntry.order <= 3)) {
+    return 'X'
+  }
+  // Exploratory shell commands (ls, grep, git status, etc.)
+  if (toolName === 'runCmd') {
+    const cmd = String(args.command || args.cmd || '').trim()
+    if (EXPLORE_CMD_PATTERNS.some(p => p.test(cmd))) {
+      return 'X'
+    }
+  }
+
+  // --- Unknown tool fallback (方向 1+2) ---
+  if (!isKnownTool) {
+    // 优先看参数形态
+    const argIntent = inferIntentFromArgs(args)
+    if (argIntent === 'read') return 'X'
+    // 再看工具名模式
+    if (argIntent === 'unknown' && EXPLORE_NAME_PATTERNS.some(p => p.test(toolName))) {
+      return 'X'
+    }
   }
 
   // --- E (Execute) ---

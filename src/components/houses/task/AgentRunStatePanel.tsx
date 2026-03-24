@@ -9,7 +9,7 @@
  * - 子智能体状态
  */
 
-import { useEffect, useState, useRef, forwardRef } from 'react'
+import { useEffect, useState, useRef, useCallback, forwardRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity, Wrench, Brain, Shield, AlertTriangle,
@@ -137,55 +137,113 @@ export function AgentRunStatePanel() {
   const [recentEvents, setRecentEvents] = useState<AgentEventEnvelope[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    // 订阅所有事件
-    const unsub = agentEventBus.subscribe((event: AgentEventEnvelope) => {
-      // 更新状态
-      setState({ ...agentEventBus.getState() })
+  // ── RAF 攒批 refs ──
+  const pendingToolStartsRef = useRef<ToolEvent[]>([])
+  const pendingToolUpdatesRef = useRef<Map<string, Partial<ToolEvent>>>(new Map())
+  const pendingRecentEventsRef = useRef<AgentEventEnvelope[]>([])
+  const shouldClearRef = useRef(false)
+  const rafIdRef = useRef<number>(0)
 
-      // 追踪工具事件
+  const flushBatch = useCallback(() => {
+    rafIdRef.current = 0
+
+    // 状态同步（始终取最新快照）
+    setState({ ...agentEventBus.getState() })
+
+    // run_start 清空
+    if (shouldClearRef.current) {
+      setToolEvents([])
+      setRecentEvents([])
+      shouldClearRef.current = false
+      pendingToolStartsRef.current = []
+      pendingToolUpdatesRef.current.clear()
+      pendingRecentEventsRef.current = []
+      return
+    }
+
+    // 合并 tool 事件
+    const newStarts = pendingToolStartsRef.current
+    const updates = pendingToolUpdatesRef.current
+    if (newStarts.length > 0 || updates.size > 0) {
+      setToolEvents(prev => {
+        let result = [...prev, ...newStarts]
+        if (updates.size > 0) {
+          result = result.map(t => {
+            const patch = updates.get(t.callId)
+            return patch ? { ...t, ...patch } : t
+          })
+        }
+        return result
+      })
+      pendingToolStartsRef.current = []
+      pendingToolUpdatesRef.current.clear()
+    }
+
+    // 合并 recent events
+    const newRecent = pendingRecentEventsRef.current
+    if (newRecent.length > 0) {
+      setRecentEvents(prev => [...prev, ...newRecent].slice(-30))
+      pendingRecentEventsRef.current = []
+    }
+  }, [])
+
+  const scheduleFlush = useCallback(() => {
+    if (rafIdRef.current === 0) {
+      rafIdRef.current = requestAnimationFrame(flushBatch)
+    }
+  }, [flushBatch])
+
+  useEffect(() => {
+    const unsub = agentEventBus.subscribe((event: AgentEventEnvelope) => {
+      // 工具事件 → 收集到 ref
       if (event.stream === 'tool') {
         if (event.type === 'tool_start') {
           const data = event.data as any
-          setToolEvents(prev => [...prev, {
+          pendingToolStartsRef.current.push({
             callId: data.callId,
             name: data.toolName,
             status: 'running',
             startTime: Date.now(),
             isMutating: data.isMutating || false,
-          }])
+          })
         } else if (event.type === 'tool_end') {
           const data = event.data as any
-          setToolEvents(prev => prev.map(t =>
-            t.callId === data.callId
-              ? { ...t, status: data.ok ? 'success' as const : 'error' as const, endTime: Date.now(), latencyMs: data.latencyMs }
-              : t
-          ))
+          pendingToolUpdatesRef.current.set(data.callId, {
+            status: data.success ? 'success' as const : 'error' as const,
+            endTime: Date.now(),
+            latencyMs: data.latencyMs,
+          })
         } else if (event.type === 'tool_error') {
           const data = event.data as any
-          setToolEvents(prev => prev.map(t =>
-            t.callId === data.callId
-              ? { ...t, status: 'error' as const, endTime: Date.now() }
-              : t
-          ))
+          pendingToolUpdatesRef.current.set(data.callId, {
+            status: 'error' as const,
+            endTime: Date.now(),
+          })
         }
       }
 
-      // 生命周期：run_start 时清空
+      // run_start 清空标记
       if (event.stream === 'lifecycle' && event.type === 'run_start') {
-        setToolEvents([])
-        setRecentEvents([])
+        shouldClearRef.current = true
       }
 
-      // 保留最近 30 条事件
-      setRecentEvents(prev => [...prev.slice(-29), event])
+      // 收集 recent events
+      pendingRecentEventsRef.current.push(event)
+
+      scheduleFlush()
     })
 
     // 初始状态
     setState({ ...agentEventBus.getState() })
 
-    return unsub
-  }, [])
+    return () => {
+      unsub()
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current)
+        rafIdRef.current = 0
+      }
+    }
+  }, [scheduleFlush])
 
   // idle 状态下显示空状态
   const isIdle = !state || state.phase === 'idle'
