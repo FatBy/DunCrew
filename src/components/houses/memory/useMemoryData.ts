@@ -250,20 +250,31 @@ export function useMemoryData(): MemoryDataState {
 
   const activeData = searchResults ?? memoryCacheRaw
 
+  // 按 ID 去重，保留最新的条目
+  const dedupedData = useMemo(() => {
+    const seen = new Map<string, typeof activeData[number]>()
+    for (const item of activeData) {
+      if (!seen.has(item.id)) {
+        seen.set(item.id, item)
+      }
+    }
+    return [...seen.values()]
+  }, [activeData])
+
   const rawL0 = useMemo(
-    () => activeData.filter(r => r.source === 'memory'),
+    () => dedupedData.filter(r => r.source === 'memory'),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeData, memoryCacheVersion],
+    [dedupedData, memoryCacheVersion],
   )
   const rawTraces = useMemo(
-    () => activeData.filter(r => r.source === 'exec_trace'),
+    () => dedupedData.filter(r => r.source === 'exec_trace'),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeData, memoryCacheVersion],
+    [dedupedData, memoryCacheVersion],
   )
   const rawL1 = useMemo(
-    () => activeData.filter(r => r.source === 'l1_memory'),
+    () => dedupedData.filter(r => r.source === 'l1_memory'),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeData, memoryCacheVersion],
+    [dedupedData, memoryCacheVersion],
   )
 
   // ── L0 核心记忆视图模型 ──
