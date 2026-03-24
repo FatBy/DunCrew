@@ -17,6 +17,10 @@ import { getServerUrl } from '@/utils/env'
 
 const SERVER_URL = getServerUrl()
 
+// localStorage 存储 key
+const LS_KEY_GENES = 'duncrew:gene_pool'
+const LS_KEY_CAPSULES = 'duncrew:capsules'
+
 // 配置常量
 const MAX_GENE_HINTS = 3              // Reflexion 中最多注入的基因数
 const MAX_CAPSULE_HISTORY = 100       // 内存中保留的胶囊数
@@ -240,41 +244,123 @@ class GenePoolService {
 
   /**
    * 从后端加载全部基因
+   * 优先后端 API，失败时从 localStorage 兜底
+   * 后端非空 + localStorage 非空时按 gene.id 去重合并
    */
   private async loadGenes(): Promise<void> {
+    let backendGenes: Gene[] | null = null
+
+    // 1. 尝试从后端加载
     try {
       const res = await fetch(`${SERVER_URL}/api/genes/load`)
       if (res.ok) {
         const data = await res.json()
         const all = Array.isArray(data) ? data : []
-        // 过滤掉旧的 capability/artifact/activity 数据（已迁移至 nexusManager）
-        this.genes = all.filter((g: Gene) => g.category === 'repair')
-        const skipped = all.length - this.genes.length
-        console.log(`[GenePool] Loaded ${this.genes.length} repair genes${skipped > 0 ? ` (skipped ${skipped} non-repair)` : ''}`)
+        backendGenes = all.filter((g: Gene) => g.category === 'repair')
+        const skipped = all.length - backendGenes.length
+        console.log(`[GenePool] Loaded ${backendGenes.length} repair genes from backend${skipped > 0 ? ` (skipped ${skipped} non-repair)` : ''}`)
       }
     } catch {
+      console.warn('[GenePool] Backend unavailable, falling back to localStorage')
+    }
+
+    // 2. 从 localStorage 读取缓存
+    const localGenes = this.loadGenesFromLocalStorage()
+
+    // 3. 合并策略
+    if (backendGenes !== null && backendGenes.length > 0) {
+      // 后端有数据: 以后端为主，合并 localStorage 中后端不存在的基因
+      if (localGenes.length > 0) {
+        const backendIds = new Set(backendGenes.map(g => g.id))
+        const localOnly = localGenes.filter(g => !backendIds.has(g.id))
+        if (localOnly.length > 0) {
+          backendGenes.push(...localOnly)
+          console.log(`[GenePool] Merged ${localOnly.length} offline genes from localStorage`)
+          for (const gene of localOnly) {
+            this.saveGeneToBackend(gene).catch(() => {})
+          }
+        }
+      }
+      this.genes = backendGenes
+    } else if (backendGenes !== null && backendGenes.length === 0 && localGenes.length > 0) {
+      // 后端返回空但 localStorage 有数据: 用 localStorage，回写后端
+      this.genes = localGenes
+      console.log(`[GenePool] Restored ${localGenes.length} genes from localStorage to empty backend`)
+      for (const gene of localGenes) {
+        this.saveGeneToBackend(gene).catch(() => {})
+      }
+    } else if (backendGenes === null && localGenes.length > 0) {
+      // 后端不可用: 用 localStorage 兜底
+      this.genes = localGenes
+      console.log(`[GenePool] Loaded ${localGenes.length} repair genes from localStorage (offline)`)
+    } else {
       this.genes = []
+    }
+
+    // 4. 同步快照到 localStorage
+    this.syncGenesToLocalStorage()
+  }
+
+  /** 从 localStorage 读取基因缓存 */
+  private loadGenesFromLocalStorage(): Gene[] {
+    try {
+      const raw = localStorage.getItem(LS_KEY_GENES)
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed.filter((g: Gene) => g.id && g.category === 'repair') : []
+    } catch {
+      return []
+    }
+  }
+
+  /** 将当前 this.genes 整体写入 localStorage 作为镜像快照 */
+  private syncGenesToLocalStorage(): void {
+    try {
+      localStorage.setItem(LS_KEY_GENES, JSON.stringify(this.genes))
+    } catch {
+      // localStorage 满或不可用，静默忽略
     }
   }
 
   /**
    * 从后端加载胶囊历史
+   * 优先后端 API，失败时从 localStorage 兜底
    */
   private async loadCapsules(): Promise<void> {
+    let loaded = false
     try {
       const res = await fetch(`${SERVER_URL}/api/capsules/load`)
       if (res.ok) {
         const data = await res.json()
         this.capsules = Array.isArray(data) ? data : []
-        // 保留上限
-        if (this.capsules.length > MAX_CAPSULE_HISTORY) {
-          this.capsules = this.capsules.slice(-MAX_CAPSULE_HISTORY)
-        }
-        console.log(`[GenePool] Loaded ${this.capsules.length} capsules`)
+        loaded = true
+        console.log(`[GenePool] Loaded ${this.capsules.length} capsules from backend`)
       }
     } catch {
-      this.capsules = []
+      // 后端不可用
     }
+
+    if (!loaded) {
+      // 从 localStorage 兜底
+      try {
+        const raw = localStorage.getItem(LS_KEY_CAPSULES)
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          this.capsules = Array.isArray(parsed) ? parsed : []
+          console.log(`[GenePool] Loaded ${this.capsules.length} capsules from localStorage (offline)`)
+        }
+      } catch {
+        this.capsules = []
+      }
+    }
+
+    // 保留上限
+    if (this.capsules.length > MAX_CAPSULE_HISTORY) {
+      this.capsules = this.capsules.slice(-MAX_CAPSULE_HISTORY)
+    }
+
+    // 同步到 localStorage
+    this.syncCapsulesToLocalStorage()
   }
 
   /**
@@ -293,6 +379,8 @@ class GenePoolService {
 
   private async flushCapsules(): Promise<void> {
     this.capsuleDirty = false
+    // 无论后端是否可用，都同步 localStorage
+    this.syncCapsulesToLocalStorage()
     try {
       const res = await fetch(`${SERVER_URL}/api/capsules/save`, {
         method: 'POST',
@@ -303,15 +391,32 @@ class GenePoolService {
         console.log(`[GenePool] Flushed ${this.capsules.length} capsules to backend`)
       }
     } catch (err) {
-      console.warn('[GenePool] Failed to flush capsules:', err)
+      console.warn('[GenePool] Failed to flush capsules to backend (localStorage fallback active):', err)
       this.capsuleDirty = true // 标记重试
     }
   }
 
+  /** 将当前 this.capsules 写入 localStorage 作为镜像快照 */
+  private syncCapsulesToLocalStorage(): void {
+    try {
+      localStorage.setItem(LS_KEY_CAPSULES, JSON.stringify(this.capsules))
+    } catch {
+      // localStorage 满或不可用，静默忽略
+    }
+  }
+
   /**
-   * 保存单个基因到后端
+   * 保存单个基因到后端 + 同步 localStorage 快照
+   * 无论后端成功或失败，都更新 localStorage 镜像
    */
   private async saveGene(gene: Gene): Promise<void> {
+    this.saveGeneToBackend(gene).catch(() => {})
+    // 无论后端是否可用，都同步 localStorage 快照
+    this.syncGenesToLocalStorage()
+  }
+
+  /** 仅写后端，不触发 localStorage 同步 (供 loadGenes 合并回写时使用) */
+  private async saveGeneToBackend(gene: Gene): Promise<void> {
     try {
       const res = await fetch(`${SERVER_URL}/api/genes/save`, {
         method: 'POST',
@@ -319,10 +424,10 @@ class GenePoolService {
         body: JSON.stringify(gene),
       })
       if (res.ok) {
-        console.log(`[GenePool] Gene saved: ${gene.id} (${gene.signals_match.length} signals)`)
+        console.log(`[GenePool] Gene saved to backend: ${gene.id} (${gene.signals_match.length} signals)`)
       }
     } catch (err) {
-      console.warn('[GenePool] Failed to save gene:', err)
+      console.warn('[GenePool] Backend save failed (localStorage fallback active):', err)
     }
   }
 

@@ -28,11 +28,9 @@ import type {
   ChildSpawnPreparation,
   OnChildEndedParams,
   ChatMessage,
-  L1ActionSnapshot,
-  MemorySearchResult,
+  ToolCallSummary,
 } from '@/types'
-import { L1_MEMORY_CONFIG } from '@/types'
-import { chat } from './llmService'
+import { chat, isLLMConfigured } from './llmService'
 import { memoryStore } from './memoryStore'
 
 // ============================================
@@ -71,10 +69,6 @@ interface ContextEngineConfig {
   getContext: (query: string) => Promise<string>
   /** 获取系统提示词 */
   getSystemPrompt: () => string
-  /** 获取历史上下文（最近对话） */
-  getConversationHistory?: () => ChatMessage[]
-  /** 按 Nexus 加载持久化记忆 (返回最近 N 条) */
-  loadNexusMemories?: (nexusId: string, limit: number) => Promise<MemorySearchResult[]>
 }
 
 /**
@@ -89,10 +83,7 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
   private config: ContextEngineConfig
   private ingestedMessages: ChatMessage[] = []
   private compactionHistory: Array<{ before: number; after: number; ts: number }> = []
-  /** V3: L1-Hot 记忆快照 (最近 N 轮的结构化操作摘要) */
-  private l1HotSnapshots: L1ActionSnapshot[] = []
-  /** L1-Hot 持久化防抖计时器 */
-  private l1HotPersistTimer: ReturnType<typeof setTimeout> | null = null
+  private l1HotSnapshots: Array<{ content: string; ts: number }> = []
 
   constructor(config: ContextEngineConfig) {
     this.config = config
@@ -101,6 +92,16 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
       nexusId: config.nexusId,
       name: `ContextEngine[${config.nexusLabel}]`,
     }
+  }
+
+  // ═══════════════════════════════════════════
+  // L1-Hot 快照管理
+  // ═══════════════════════════════════════════
+
+  private buildL1HotSection(): string {
+    return this.l1HotSnapshots
+      .map(s => s.content)
+      .join('\n')
   }
 
   // ═══════════════════════════════════════════
@@ -321,41 +322,6 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
       console.log(`[ContextEngine/${sessionId}] afterTurn: ${successTools.length} success, ${errorTools.length} errors in this turn`)
     }
 
-    // 2.5 V3: 收集 L1-Hot 快照
-    const newSnapshots = this.collectL1Snapshots(toolResults, runState.seq)
-    if (newSnapshots.length > 0) {
-      this.l1HotSnapshots.push(...newSnapshots)
-      // 保持固定大小窗口
-      while (this.l1HotSnapshots.length > L1_MEMORY_CONFIG.HOT_MAX_SNAPSHOTS) {
-        this.l1HotSnapshots.shift()
-      }
-      console.log(`[ContextEngine] L1-Hot: ${this.l1HotSnapshots.length} snapshots (added ${newSnapshots.length})`)
-
-      // V3: L1-Hot 持久化 (2 秒防抖)
-      this.debouncePersistL1Hot()
-
-      // V3: L1-Cold 异步持久化到 memoryStore (语义化摘要)
-      for (const snap of newSnapshots) {
-        const semanticContent = this.buildSemanticSummary(snap)
-        const tags = [snap.action, snap.status]
-        // 从 target 提取额外标签 (文件扩展名、路径关键词等)
-        if (snap.target) {
-          const extMatch = snap.target.match(/\.(\w{1,6})$/)
-          if (extMatch) tags.push(extMatch[1])
-          // 提取路径中有意义的部分
-          const pathParts = snap.target.split(/[/\\]/).filter(p => p && !p.startsWith('.'))
-          if (pathParts.length > 0) tags.push(pathParts[pathParts.length - 1])
-        }
-        memoryStore.write({
-          source: 'l1_memory',
-          content: semanticContent,
-          nexusId: this.config.nexusId,
-          tags,
-          metadata: { turn: snap.turn, resultSize: snap.resultSize },
-        }).catch(() => {}) // 不阻塞
-      }
-    }
-
     // 3. 清理过期的 ingested 消息
     const MAX_INGESTED_AGE = 30 * 60 * 1000 // 30 分钟
     const now = Date.now()
@@ -372,66 +338,15 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
     const { sessionId } = params
     console.log(`[ContextEngine] Bootstrapping session: ${sessionId} for Nexus: ${this.config.nexusId}`)
 
-    // 清理旧状态
+    // 纯状态清理 — 记忆加载由 buildDynamicContext 按需驱动
     this.ingestedMessages = []
     this.compactionHistory = []
-    this.l1HotSnapshots = []
-
-    let importedMessages = 0
-    let memoriesLoaded = 0
-
-    // ---- 阶段 1: 从 memoryStore 加载该 Nexus 的持久化记忆 ----
-    if (this.config.loadNexusMemories) {
-      try {
-        const memories = await this.config.loadNexusMemories(this.config.nexusId, 15)
-        if (memories.length > 0) {
-          memoriesLoaded = memories.length
-          // 构建记忆回顾注入消息
-          const recapLines = memories.map(m => {
-            const ts = m.createdAt ? new Date(m.createdAt).toLocaleString('zh-CN') : '未知时间'
-            const snippet = (m.snippet || m.content || '').slice(0, 150)
-            return `- [${ts}] ${snippet}`
-          })
-          const recapContent = `## 历史记忆回顾\n以下是你与该用户在之前会话中积累的记忆，请基于这些信息保持连贯性：\n${recapLines.join('\n')}`
-
-          this.ingestedMessages.push({
-            id: `bootstrap-memories-${Date.now()}`,
-            role: 'system',
-            content: recapContent,
-            timestamp: Date.now(),
-          })
-          console.log(`[ContextEngine] Bootstrap: loaded ${memoriesLoaded} memories from store`)
-        }
-      } catch (e) {
-        console.warn('[ContextEngine] Bootstrap: failed to load nexus memories:', e)
-      }
-    }
-
-    // ---- 阶段 2: 恢复 L1-Hot 快照 ----
-    const restoredSnapshots = await this.restoreL1Hot()
-    if (restoredSnapshots > 0) {
-      console.log(`[ContextEngine] Bootstrap: restored ${restoredSnapshots} L1-Hot snapshots`)
-    }
-
-    // ---- 阶段 3: 从当前会话历史导入 ----
-    const history = this.config.getConversationHistory?.() ?? []
-    if (history.length > 0) {
-      const recentHistory = history.slice(-10)
-      for (const msg of recentHistory) {
-        this.ingestedMessages.push(msg)
-      }
-      importedMessages = recentHistory.length
-    }
-
-    const reason = memoriesLoaded === 0 && importedMessages === 0
-      ? 'Fresh session, no prior history or memories'
-      : undefined
 
     return {
       bootstrapped: true,
-      importedMessages,
-      memoriesLoaded,
-      reason,
+      importedMessages: 0,
+      memoriesLoaded: 0,
+      reason: 'Lightweight bootstrap: state cleared, memory loading deferred to buildDynamicContext',
     }
   }
 
@@ -500,163 +415,89 @@ export class DefaultNexusContextEngine implements NexusContextEngine {
   }
 
   // ═══════════════════════════════════════════
+  // flushMemory: ReAct 循环结束后提炼本轮认知
+  // ═══════════════════════════════════════════
+
+  async flushMemory(toolHistory: ToolCallSummary[]): Promise<void> {
+    // F3 优化：如果本轮 AI 已经主动保存过记忆，跳过 Flush（避免语义重叠 + 节省 LLM 调用）
+    if (toolHistory.some(t => t.toolName === 'saveMemory' && t.status === 'success')) {
+      console.log('[ContextEngine] Skipping Memory Flush: saveMemory already called this session')
+      return
+    }
+
+    const successTools = toolHistory.filter(t => t.status === 'success')
+    if (successTools.length < 3) return
+
+    if (!isLLMConfigured()) return
+
+    try {
+      // 构建本轮工具执行摘要
+      const toolSummary = successTools
+        .slice(-10)
+        .map(t => `${t.toolName}: ${JSON.stringify(t.args).slice(0, 100)} → ${(t.result || '').slice(0, 80)}`)
+        .join('\n')
+
+      const flushResult = await chat([
+        {
+          role: 'system',
+          content: [
+            '你是一个记忆提炼助手。从以下工具执行记录中提炼出值得长期记住的认知。',
+            '',
+            '## 值得提炼的认知',
+            '- 用户的偏好和习惯（"用户偏好用 pnpm"）',
+            '- 项目的关键上下文（"项目使用 Vite + React"）',
+            '- 重要的发现和结论（"端口 3001 被占用，改为 3002"）',
+            '',
+            '## 不值得提炼的',
+            '- 纯工具执行细节（"readFile 返回 200 字节"）',
+            '- 临时性操作',
+            '',
+            '## 输出规则',
+            '- 如果有值得记住的认知：用一两句自然语言概括',
+            '- 如果没有：只输出"无"',
+          ].join('\n'),
+        },
+        { role: 'user', content: `本轮执行了 ${successTools.length} 个工具：\n${toolSummary}` },
+      ])
+
+      const trimmed = flushResult?.trim() || ''
+      if (!trimmed || trimmed === '无' || trimmed === '无。') {
+        console.log('[ContextEngine] Memory Flush: nothing worth remembering')
+        return
+      }
+
+      // 通过 writeWithDedup 写入，自动去重
+      const written = await memoryStore.writeWithDedup({
+        source: 'memory',
+        content: trimmed,
+        nexusId: this.config.nexusId,
+        tags: ['memory_flush'],
+        metadata: {
+          flushSource: 'react_loop',
+          toolCount: successTools.length,
+          flushedAt: Date.now(),
+        },
+      })
+
+      if (written) {
+        console.log(`[ContextEngine] Memory Flush: saved "${trimmed.slice(0, 60)}..."`)
+      }
+    } catch (error) {
+      console.warn('[ContextEngine] Memory Flush failed:', error)
+    }
+  }
+
+  // ═══════════════════════════════════════════
   // dispose: 清理资源
   // ═══════════════════════════════════════════
 
   async dispose(): Promise<void> {
     console.log(`[ContextEngine] Disposing engine for Nexus: ${this.config.nexusId}`)
-    // 在清理前持久化 L1-Hot
-    await this.persistL1Hot()
-    if (this.l1HotPersistTimer) {
-      clearTimeout(this.l1HotPersistTimer)
-      this.l1HotPersistTimer = null
-    }
     this.ingestedMessages = []
     this.compactionHistory = []
-    this.l1HotSnapshots = []
   }
 
-  // ═══════════════════════════════════════════
-  // V3: L1 记忆辅助方法
-  // ═══════════════════════════════════════════
 
-  /** 从 ToolCallSummary 构建 L1ActionSnapshot 列表 */
-  private collectL1Snapshots(
-    toolResults: import('@/types').ToolCallSummary[],
-    currentSeq: number,
-  ): L1ActionSnapshot[] {
-    const snapshots: L1ActionSnapshot[] = []
-
-    for (const tr of toolResults) {
-      // 提取操作目标：优先取 path 参数，fallback 到 args 摘要
-      let target = ''
-      if (tr.args.path) {
-        target = String(tr.args.path)
-      } else if (tr.args.query) {
-        target = String(tr.args.query)
-      } else if (tr.args.command) {
-        target = String(tr.args.command)
-      } else {
-        target = JSON.stringify(tr.args).slice(0, L1_MEMORY_CONFIG.SNAPSHOT_TARGET_CHARS)
-      }
-      if (target.length > L1_MEMORY_CONFIG.SNAPSHOT_TARGET_CHARS) {
-        target = target.slice(0, L1_MEMORY_CONFIG.SNAPSHOT_TARGET_CHARS - 3) + '...'
-      }
-
-      const resultText = tr.result || tr.error || ''
-      snapshots.push({
-        turn: currentSeq,
-        action: tr.toolName,
-        target,
-        status: tr.status,
-        resultSize: resultText.length,
-        resultPreview: resultText.slice(0, L1_MEMORY_CONFIG.SNAPSHOT_PREVIEW_CHARS),
-        nexusId: this.config.nexusId,
-        timestamp: tr.timestamp,
-      })
-    }
-
-    return snapshots
-  }
-
-  /** 构建 L1-Hot 上下文注入段落 */
-  private buildL1HotSection(): string {
-    const lines = this.l1HotSnapshots.map(snap => {
-      const statusIcon = snap.status === 'success' ? '✓' : '✗'
-      const preview = snap.resultPreview
-        ? ` "${snap.resultPreview.slice(0, 60).replace(/\n/g, ' ')}${snap.resultPreview.length > 60 ? '...' : ''}"`
-        : ''
-      return `- [Turn ${snap.turn}] ${snap.action} → ${snap.target} ${statusIcon} (${snap.resultSize}B)${preview}`
-    })
-
-    return `## 最近操作回顾 (L1-Hot)\n以下是本次会话中最近的操作记录，可用于追踪执行进度：\n${lines.join('\n')}`
-  }
-
-  /** 根据工具类型构建语义化摘要 (替代纯 metadata 记录) */
-  private buildSemanticSummary(snap: L1ActionSnapshot): string {
-    const statusText = snap.status === 'success' ? '成功' : '失败'
-    const preview = snap.resultPreview || ''
-
-    switch (snap.action) {
-      case 'readFile':
-        return `读取文件 ${snap.target} ${statusText}，内容 ${snap.resultSize} 字节。${preview ? '内容摘要: ' + preview.slice(0, 100) : ''}`
-      case 'writeFile':
-        return `写入文件 ${snap.target} ${statusText}，写入 ${snap.resultSize} 字节。`
-      case 'appendFile':
-        return `追加内容到文件 ${snap.target} ${statusText}。`
-      case 'runCmd':
-        return `执行命令 "${snap.target}" ${statusText}。${preview ? '输出: ' + preview.slice(0, 100) : ''}`
-      case 'webSearch':
-        return `搜索 "${snap.target}" ${statusText}。${preview ? '结果: ' + preview.slice(0, 100) : ''}`
-      case 'webFetch':
-        return `获取网页 ${snap.target} ${statusText}，内容 ${snap.resultSize} 字节。`
-      case 'saveMemory':
-        return `保存记忆 "${snap.target}" ${statusText}。`
-      case 'searchMemory':
-        return `检索记忆 "${snap.target}" ${statusText}。${preview ? '结果: ' + preview.slice(0, 100) : ''}`
-      default:
-        return `执行 ${snap.action} → ${snap.target} ${statusText} (${snap.resultSize}B)。${preview ? ' ' + preview.slice(0, 80) : ''}`
-    }
-  }
-
-  // ═══════════════════════════════════════════
-  // V3: L1-Hot 持久化
-  // ═══════════════════════════════════════════
-
-  /** 持久化 L1-Hot 快照到 memoryStore (单条 JSON 记录) */
-  private async persistL1Hot(): Promise<void> {
-    if (this.l1HotSnapshots.length === 0) return
-    try {
-      await memoryStore.write({
-        source: 'l1_memory',
-        content: `[L1-Hot-State] ${JSON.stringify(this.l1HotSnapshots)}`,
-        nexusId: this.config.nexusId,
-        tags: ['l1_hot_state'],
-        metadata: { type: 'l1_hot_state', count: this.l1HotSnapshots.length },
-      })
-      console.log(`[ContextEngine] L1-Hot persisted: ${this.l1HotSnapshots.length} snapshots`)
-    } catch (e) {
-      console.warn('[ContextEngine] L1-Hot persist failed:', e)
-    }
-  }
-
-  /** 防抖持久化 L1-Hot (2 秒) */
-  private debouncePersistL1Hot(): void {
-    if (this.l1HotPersistTimer) clearTimeout(this.l1HotPersistTimer)
-    this.l1HotPersistTimer = setTimeout(() => {
-      this.persistL1Hot()
-      this.l1HotPersistTimer = null
-    }, 2000)
-  }
-
-  /** 从 memoryStore 恢复 L1-Hot 快照 */
-  private async restoreL1Hot(): Promise<number> {
-    try {
-      // 搜索最近的 l1_hot_state 记录
-      const results = await memoryStore.search({
-        query: 'L1-Hot-State',
-        nexusId: this.config.nexusId,
-        maxResults: 1,
-        useMmr: false,
-        minScore: 0,
-      })
-      for (const r of results) {
-        const content = r.snippet || r.content || ''
-        const jsonMatch = content.match(/\[L1-Hot-State\]\s*(\[[\s\S]*\])/)
-        if (jsonMatch) {
-          const snapshots: L1ActionSnapshot[] = JSON.parse(jsonMatch[1])
-          if (Array.isArray(snapshots) && snapshots.length > 0) {
-            this.l1HotSnapshots = snapshots.slice(-L1_MEMORY_CONFIG.HOT_MAX_SNAPSHOTS)
-            console.log(`[ContextEngine] L1-Hot restored: ${this.l1HotSnapshots.length} snapshots`)
-            return this.l1HotSnapshots.length
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[ContextEngine] L1-Hot restore failed:', e)
-    }
-    return 0
-  }
 }
 
 // ============================================

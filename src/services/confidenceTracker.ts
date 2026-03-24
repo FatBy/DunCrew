@@ -25,8 +25,11 @@ import type { ConfidenceSignal, L1MemoryEntry } from '@/types'
 import { CONFIDENCE_SIGNALS, L0_PROMOTION_CONFIG } from '@/types'
 import { memoryStore } from './memoryStore'
 import { chat, isLLMConfigured } from './llmService'
+import { PROMOTION_PROMPT, parsePromotionResult } from '@/utils/memoryPromotion'
+import { getServerUrl } from '@/utils/env'
 
 const TRACKER_STORAGE_KEY = 'duncrew_confidence_tracker'
+const MIGRATION_FLAG_KEY = 'duncrew_confidence_migrated'
 
 // ============================================
 // ConfidenceTrackerService
@@ -39,25 +42,72 @@ class ConfidenceTrackerService {
   private decayTimer: ReturnType<typeof setInterval> | null = null
   /** 批量操作时跳过中间持久化 */
   private _skipPersist = false
+  /** 初始化完成 Promise（加载 + 迁移），所有关键方法前 await */
+  private readyPromise: Promise<void>
 
   constructor() {
-    this.loadFromStorage()
+    this.readyPromise = this.initialize()
+  }
+
+  /** 串联加载 + 迁移两个异步操作 */
+  private async initialize(): Promise<void> {
+    await this.loadFromStorage()
+    await this.migrateToBackend()
   }
 
   // ═══ 持久化 ═══
 
-  /** 从 localStorage 恢复追踪状态 */
-  private loadFromStorage(): void {
+  /** 从 localStorage 恢复追踪状态，为空时从后端恢复 */
+  private async loadFromStorage(): Promise<void> {
     try {
       const raw = localStorage.getItem(TRACKER_STORAGE_KEY)
-      if (!raw) return
-      const entries: L1MemoryEntry[] = JSON.parse(raw)
-      for (const entry of entries) {
-        this.trackedEntries.set(entry.id, entry)
+      if (raw) {
+        const entries: L1MemoryEntry[] = JSON.parse(raw)
+        for (const entry of entries) {
+          this.trackedEntries.set(entry.id, entry)
+        }
+        console.log(`[ConfidenceTracker] Restored ${entries.length} entries from localStorage`)
+        return
       }
-      console.log(`[ConfidenceTracker] Restored ${entries.length} entries from storage`)
+
+      // localStorage 为空（用户清了缓存），从后端恢复
+      console.log('[ConfidenceTracker] localStorage empty, recovering from backend...')
+      const serverUrl = getServerUrl()
+      const res = await fetch(`${serverUrl}/api/confidence/entries`)
+      if (res.ok) {
+        const entries: L1MemoryEntry[] = await res.json()
+        for (const entry of entries) {
+          this.trackedEntries.set(entry.id, entry)
+        }
+        if (entries.length > 0) {
+          this.saveToStorage()
+          console.log(`[ConfidenceTracker] Recovered ${entries.length} entries from backend`)
+        }
+      }
     } catch {
-      console.warn('[ConfidenceTracker] Failed to load from storage')
+      console.warn('[ConfidenceTracker] Failed to load from storage/backend')
+    }
+  }
+
+  /** 将 localStorage 数据迁移到后端（一次性，有 flag 防重复） */
+  private async migrateToBackend(): Promise<void> {
+    if (localStorage.getItem(MIGRATION_FLAG_KEY)) return
+    if (this.trackedEntries.size === 0) return
+
+    try {
+      const serverUrl = getServerUrl()
+      const entries = Array.from(this.trackedEntries.values())
+      const res = await fetch(`${serverUrl}/api/confidence/migrate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries }),
+      })
+      if (res.ok) {
+        localStorage.setItem(MIGRATION_FLAG_KEY, '1')
+        console.log(`[ConfidenceTracker] Migrated ${entries.length} entries to backend`)
+      }
+    } catch {
+      console.warn('[ConfidenceTracker] Migration to backend failed (will retry next time)')
     }
   }
 
@@ -184,9 +234,15 @@ class ConfidenceTrackerService {
     )
   }
 
+  /** 安全版：await readyPromise 后再评估晋升 */
+  async evaluatePromotionsSafe(nexusId: string): Promise<L1MemoryEntry[]> {
+    await this.readyPromise
+    return this.evaluatePromotions(nexusId)
+  }
+
   /**
    * 将高置信度 L1 记忆晋升到 L0 全局记忆
-   * V2: 聚合同 Nexus 的多条 L1 记忆，调用 LLM 生成语义摘要后写入
+   * V2: 聚合同 Nexus 的多条 L1 记忆，调用 LLM 生成语义摘要后通过 writeWithDedup 写入
    */
   async promoteToL0(entries: L1MemoryEntry[]): Promise<number> {
     if (entries.length === 0) return 0
@@ -206,40 +262,19 @@ class ConfidenceTrackerService {
       const rawContents = groupEntries.map(e => e.content).join('\n')
       const avgConfidence = groupEntries.reduce((sum, e) => sum + e.confidence, 0) / groupEntries.length
 
-      // 尝试用 LLM 做语义提炼
-      let summarizedContent: string
+      // 尝试用 LLM 做语义提炼（使用共享的 PROMOTION_PROMPT）
+      let summarizedContent: string | null = null
       if (isLLMConfigured()) {
         try {
           const summaryResult = await chat([
-            {
-              role: 'system',
-              content: [
-                '你是一个记忆提炼助手。判断以下工具执行记录是否值得作为长期记忆保留。',
-                '',
-                '## 值得保留的记忆',
-                '- 用户的具体意图和目标（"用户想修复 config.json 的端口配置"）',
-                '- 关键发现和结论（"发现端口 3001 被占用，改为 3002 后解决"）',
-                '- 用户偏好和习惯（"用户偏好用 pnpm 而非 npm"）',
-                '- 重要的项目上下文（"项目使用 Vite + React + TypeScript"）',
-                '',
-                '## 不值得保留的记忆',
-                '- 纯粹的工具执行细节（"readFile 返回了 200 字节"）',
-                '- 临时性操作（"列出了目录内容"）',
-                '- 无上下文的碎片信息',
-                '',
-                '## 输出规则',
-                '- 如果值得保留：用一两句自然语言概括核心信息，像人类笔记一样',
-                '- 如果不值得保留：只输出"无"',
-                '- 不要解释你的判断过程',
-              ].join('\n'),
-            },
+            { role: 'system', content: PROMOTION_PROMPT },
             { role: 'user', content: rawContents.slice(0, 2000) },
           ])
 
-          const trimmedResult = summaryResult?.trim() || ''
+          summarizedContent = parsePromotionResult(summaryResult?.trim() || '')
 
-          // "无"跳过机制：LLM 判断不值得保留则标记并跳过
-          if (trimmedResult === '无' || trimmedResult === '') {
+          // LLM 判断不值得保留则标记并跳过
+          if (!summarizedContent) {
             console.log(`[ConfidenceTracker] LLM judged entries not worth promoting for Nexus ${nexusId}, skipping`)
             for (const entry of groupEntries) {
               entry.promotedToL0 = true
@@ -247,8 +282,6 @@ class ConfidenceTrackerService {
             }
             continue
           }
-
-          summarizedContent = trimmedResult
         } catch (summarizeError) {
           console.warn('[ConfidenceTracker] LLM summarize failed, using fallback:', summarizeError)
           summarizedContent = this.fallbackSummarize(groupEntries)
@@ -267,7 +300,8 @@ class ConfidenceTrackerService {
         continue
       }
 
-      const ok = await memoryStore.write({
+      // 使用 writeWithDedup 写入，自动去重
+      const writeSuccess = await memoryStore.writeWithDedup({
         source: 'memory',
         content: summarizedContent,
         tags: ['l0_promoted', `from_nexus:${nexusId}`],
@@ -281,7 +315,7 @@ class ConfidenceTrackerService {
         },
       })
 
-      if (ok) {
+      if (writeSuccess) {
         for (const entry of groupEntries) {
           entry.promotedToL0 = true
           entry.updatedAt = Date.now()
@@ -296,6 +330,12 @@ class ConfidenceTrackerService {
     }
 
     return promoted
+  }
+
+  /** 安全版：await readyPromise 后再执行晋升 */
+  async promoteToL0Safe(entries: L1MemoryEntry[]): Promise<number> {
+    await this.readyPromise
+    return this.promoteToL0(entries)
   }
 
   /**

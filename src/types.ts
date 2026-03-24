@@ -289,11 +289,19 @@ export const SOUL_EVOLUTION_CONFIG = {
   MIN_WEIGHT_THRESHOLD: 0.1,
   INJECTION_MIN_WEIGHT: 0.3,
   MAX_INJECTION_CHARS: 500,
-  CHECK_INTERVAL_TASKS: 5,
-  MIN_NEXUS_COUNT: 2,
+  CHECK_INTERVAL_TASKS: 3,
+  MIN_NEXUS_COUNT: 1,
   INITIAL_DRAFT_WEIGHT: 0.6,
   MBTI_MAX_MODIFIER: 0.4,
   DECAY_INTERVAL_MS: 6 * 60 * 60 * 1000,
+  /** 工具偏好信号：最少总调用数 */
+  TOOL_PREF_MIN_TOTAL_CALLS: 5,
+  /** 工具偏好信号：最少跨 Nexus 数 */
+  TOOL_PREF_MIN_NEXUS_SPREAD: 1,
+  /** 成功模式信号：最少 Nexus 数 */
+  SUCCESS_PATTERN_MIN_SCORINGS: 1,
+  /** 风格偏移信号：最少历史总调用数 */
+  STYLE_SHIFT_MIN_TOTAL_CALLS: 12,
 } as const
 
 // ============================================
@@ -1665,6 +1673,9 @@ export interface NexusContextEngine {
   prepareChildSpawn?(params: PrepareChildSpawnParams): Promise<ChildSpawnPreparation>
   onChildEnded?(params: OnChildEndedParams): Promise<void>
   dispose?(): Promise<void>
+
+  /** Memory Flush: ReAct 循环结束后提炼本轮认知（可选，由 LocalClawService 调用） */
+  flushMemory?(toolHistory: ToolCallSummary[]): Promise<void>
 }
 
 // ============================================
@@ -1757,6 +1768,7 @@ export const SEARCH_CONFIG = {
   SNIPPET_MAX_CHARS: 700,
   DEFAULT_MAX_RESULTS: 10,
   DEFAULT_MIN_SCORE: 0.3,
+  DEDUP_SIMILARITY_THRESHOLD: 0.85,
 } as const
 
 // ============================================
@@ -1895,8 +1907,8 @@ export const CONFIDENCE_SIGNALS = {
 
 // L0 晋升配置
 export const L0_PROMOTION_CONFIG = {
-  PROMOTION_THRESHOLD: 0.65,     // 置信度 >= 0.65 (从 0.7 降低)
-  MIN_SIGNALS_FOR_PROMOTION: 2,  // 至少 2 个信号 (从 3 降低)
+  PROMOTION_THRESHOLD: 0.50,     // 置信度 >= 0.50 (从 0.65 降低，实际路径: 0.35+0.15+0.10=0.60>0.50)
+  MIN_SIGNALS_FOR_PROMOTION: 2,  // 至少 2 个信号
   DECAY_HALF_LIFE_DAYS: 30,      // L0 记忆半衰期
-  INITIAL_CONFIDENCE: 0.35,      // 新条目初始置信度 (从 0.3 提高)
+  INITIAL_CONFIDENCE: 0.35,      // 新条目初始置信度
 } as const

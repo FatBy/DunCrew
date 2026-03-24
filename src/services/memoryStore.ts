@@ -13,6 +13,8 @@
 import type { MemorySearchResult } from '@/types'
 import { SEARCH_CONFIG } from '@/types'
 import { getServerUrl } from '@/utils/env'
+import { PROMOTION_PROMPT, parsePromotionResult } from '@/utils/memoryPromotion'
+import { chat, isLLMConfigured } from './llmService'
 
 // ============================================
 // 类型定义
@@ -345,6 +347,211 @@ class MemoryStoreService {
     } catch {
       return []
     }
+  }
+
+  // ═══ 分组搜索 (Phase 1.1) ═══
+
+  /** 按 source 分别限制数量的分组搜索 */
+  async searchGrouped(params: {
+    query: string
+    sourceLimits: Record<string, number>
+    nexusId?: string
+    minScore?: number
+    useMmr?: boolean
+  }): Promise<MemorySearchResult[]> {
+    const {
+      query,
+      sourceLimits,
+      nexusId,
+      minScore = SEARCH_CONFIG.DEFAULT_MIN_SCORE,
+      useMmr = true,
+    } = params
+
+    try {
+      const res = await fetch(`${this.serverUrl}/api/memory/search-grouped`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          q: query,
+          sourceLimits,
+          nexusId,
+          minScore,
+          useMmr,
+        }),
+      })
+
+      if (!res.ok) {
+        console.warn(`[MemoryStore] searchGrouped failed: ${res.status}`)
+        return []
+      }
+
+      const results: MemorySearchResult[] = await res.json()
+
+      // 应用时间衰减
+      for (const result of results) {
+        const timestampMatch = result.id.match(/(\d{13})/)
+        if (timestampMatch) {
+          const entryTimestamp = parseInt(timestampMatch[1])
+          result.score *= temporalDecay(entryTimestamp)
+        }
+      }
+
+      // MMR 去冗余
+      if (useMmr && results.length > 1) {
+        const totalLimit = Object.values(sourceLimits).reduce((sum, limit) => sum + limit, 0)
+        return mmrRerank(results, SEARCH_CONFIG.MMR_LAMBDA, totalLimit)
+      }
+
+      return results.filter(result => result.score >= minScore)
+    } catch (error: any) {
+      console.warn('[MemoryStore] searchGrouped error:', error.message)
+      // 降级：用原有 search 方法
+      return this.search({
+        query,
+        maxResults: Object.values(sourceLimits).reduce((sum, limit) => sum + limit, 0),
+        minScore,
+        useMmr,
+        nexusId,
+      })
+    }
+  }
+
+  // ═══ 去重写入 (Phase 2.0) ═══
+
+  /** 最近写入缓存（5 分钟过期） */
+  private recentWrites: Array<{ content: string; timestamp: number }> = []
+  private readonly DEDUP_CACHE_TTL = 5 * 60 * 1000
+
+  /**
+   * 带去重的记忆写入
+   * 仅对 source='memory' 生效，其他 source 直接写入
+   */
+  async writeWithDedup(params: MemoryWriteParams): Promise<boolean> {
+    if (params.source !== 'memory') {
+      return this.write(params)
+    }
+
+    // 1. 先检查本地缓存（零网络开销）
+    const now = Date.now()
+    this.recentWrites = this.recentWrites.filter(write => now - write.timestamp < this.DEDUP_CACHE_TTL)
+
+    for (const recent of this.recentWrites) {
+      if (this.bigramJaccardSimilarity(params.content, recent.content) > 0.7) {
+        console.log(`[MemoryStore] Dedup (cache hit): skipped "${params.content.slice(0, 50)}..."`)
+        return true
+      }
+    }
+
+    // 2. 缓存未命中，走后端语义搜索
+    try {
+      const similar = await this.search({
+        query: params.content,
+        sources: ['memory'],
+        maxResults: 3,
+        minScore: SEARCH_CONFIG.DEDUP_SIMILARITY_THRESHOLD,
+        useMmr: false,
+      })
+      if (similar.length > 0) {
+        console.log(`[MemoryStore] Dedup (backend hit): skipped "${params.content.slice(0, 50)}..."`)
+        this.recentWrites.push({ content: params.content, timestamp: now })
+        return true
+      }
+    } catch {
+      // 去重查询失败不阻塞写入
+    }
+
+    // 3. 写入并加入缓存
+    const writeSuccess = await this.write(params)
+    if (writeSuccess) {
+      this.recentWrites.push({ content: params.content, timestamp: now })
+    }
+    return writeSuccess
+  }
+
+  /** 基于字符 bigram 的 Jaccard 文本相似度 */
+  private bigramJaccardSimilarity(textA: string, textB: string): number {
+    const bigramsA = new Set<string>()
+    const bigramsB = new Set<string>()
+    for (let i = 0; i < textA.length - 1; i++) bigramsA.add(textA.slice(i, i + 2))
+    for (let i = 0; i < textB.length - 1; i++) bigramsB.add(textB.slice(i, i + 2))
+    let intersection = 0
+    for (const bigram of bigramsA) if (bigramsB.has(bigram)) intersection++
+    const union = bigramsA.size + bigramsB.size - intersection
+    return union === 0 ? 0 : intersection / union
+  }
+
+  // ═══ 软删除 (Phase 3.2) ═══
+
+  /** 软删除一条记忆（设置 deleted_at） */
+  async delete(memoryId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.serverUrl}/api/memory/${encodeURIComponent(memoryId)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (res.ok) {
+        console.log(`[MemoryStore] Soft-deleted memory: ${memoryId}`)
+        return true
+      }
+      console.warn(`[MemoryStore] Delete failed: ${res.status}`)
+      return false
+    } catch (error: any) {
+      console.warn('[MemoryStore] Delete error:', error.message)
+      return false
+    }
+  }
+
+  // ═══ 旧数据清理 (F2) ═══
+
+  /**
+   * 一次性清理旧低质量 L0 记忆
+   * 正则快速过滤工具日志 + LLM 兜底判断
+   * 由设置页"整理记忆"按钮触发
+   */
+  async cleanupLowQualityMemories(): Promise<number> {
+    const allL0 = await this.search({
+      query: '*',
+      sources: ['memory'],
+      maxResults: 200,
+      minScore: 0,
+      useMmr: false,
+    })
+
+    let cleaned = 0
+    for (const mem of allL0) {
+      const content = mem.content || mem.snippet || ''
+
+      // 快速过滤：纯工具日志特征（不需要 LLM）
+      const isToolLog = /^(readFile|writeFile|runCmd|listDir|searchFiles)\s*[:：]/.test(content)
+        || /返回\s*\d+\s*字节/.test(content)
+        || /操作了\s*.+\.(json|ts|py|md)/.test(content)
+
+      if (isToolLog) {
+        await this.delete(mem.id)
+        cleaned++
+        continue
+      }
+
+      // 对不确定的短内容，用 LLM 判断（复用 PROMOTION_PROMPT）
+      if (content.length < 100 && isLLMConfigured()) {
+        try {
+          const result = await chat([
+            { role: 'system', content: PROMOTION_PROMPT },
+            { role: 'user', content },
+          ])
+          const parsed = parsePromotionResult(result?.trim() || '')
+          if (!parsed) {
+            await this.delete(mem.id)
+            cleaned++
+          }
+        } catch {
+          // LLM 调用失败，保守保留
+        }
+      }
+    }
+
+    console.log(`[MemoryStore] Cleanup completed: ${cleaned} low-quality memories removed`)
+    return cleaned
   }
 }
 

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Loader2, Sparkles, Activity } from 'lucide-react'
 import { useStore } from '@/store'
 import { IdentityCard } from './IdentityCard'
@@ -16,6 +17,8 @@ export function SoulTowerPage() {
   const soulMBTIBase = useStore((s) => s.soulMBTIBase)
   const soulMBTIExpressed = useStore((s) => s.soulMBTIExpressed)
   const soulMBTIAxes = useStore((s) => s.soulMBTIAxes)
+  const soulTruthsSummary = useStore((s) => s.soulTruthsSummary)
+  const generateSoulSummary = useStore((s) => s.generateSoulSummary)
   const loading = useStore((s) => s.devicesLoading)
 
   // — soulAmendmentSlice —
@@ -24,6 +27,13 @@ export function SoulTowerPage() {
   const approveDraft = useStore((s) => s.approveDraft)
   const rejectDraft = useStore((s) => s.rejectDraft)
   const archiveAmendment = useStore((s) => s.archiveAmendment)
+
+  // 首次加载时触发核心协议总结生成（有缓存则直接读取）
+  useEffect(() => {
+    if (soulCoreTruths.length > 0 && !soulTruthsSummary) {
+      generateSoulSummary()
+    }
+  }, [soulCoreTruths.length, soulTruthsSummary, generateSoulSummary])
 
   // — 构造 base / expressed 轴分数 —
   // 如果 base 和 expressed 类型不同，通过类型字母推算基础轴
@@ -43,8 +53,8 @@ export function SoulTowerPage() {
     )
   }
 
-  // Build insight text
-  const insightText = buildInsightText(soulMBTI, soulMBTIBase, soulMBTIExpressed, soulVibeStatement)
+  // Build insight text — 使用表达型作为当前类型
+  const insightText = buildInsightText(soulMBTIExpressed || soulMBTI, soulMBTIBase, soulMBTIExpressed, soulVibeStatement)
 
   return (
     <div
@@ -72,13 +82,13 @@ export function SoulTowerPage() {
         <div className="lg:col-span-3 flex flex-col gap-4">
           <IdentityCard identity={soulIdentity} />
           {soulCoreTruths.length > 0 && (
-            <CoreTruthsAccordion truths={soulCoreTruths} />
+            <CoreTruthsAccordion truths={soulCoreTruths} summary={soulTruthsSummary} />
           )}
         </div>
 
-        {/* Center Column: The Core Avatar */}
+        {/* Center Column: The Core Avatar — 优先显示表达型(漂移后)MBTI */}
         <SoulCoreAvatar
-          mbtiResult={soulMBTI}
+          mbtiResult={soulMBTIExpressed || soulMBTI}
           identity={soulIdentity}
           loading={soulMBTILoading}
         />

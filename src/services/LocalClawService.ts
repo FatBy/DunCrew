@@ -13,6 +13,7 @@ import type { SimpleChatMessage, LLMStreamResult } from './llmService'
 import type { ExecutionStatus, OpenClawSkill, MemoryEntry, ToolInfo, ExecTrace, ExecTraceToolCall, ApprovalRequest, ExecutionStep, NexusEntity, TaskCheckpoint, GeneMatch } from '@/types'
 import { parseSoulMd, type ParsedSoul } from '@/utils/soulParser'
 import { classifyBaseType, updateBaseClassifierCtx, createBaseClassifierCtx, buildBaseSequence, buildBaseDistribution } from '@/utils/baseClassifier'
+import { classifyTaskComplexity } from '@/utils/taskClassifier'
 import { skillStatsService } from './skillStatsService'
 import { immuneService } from './capsuleService'
 import { nexusRuleEngine } from './nexusRuleEngine'
@@ -1943,39 +1944,33 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
     const currentLLMModel = (window as any).__ddos_llm_model || 'unknown'
     agentEventBus.startRun(runId, currentLLMModel, nexusId || undefined)
 
-    // 复杂度感知轮次分配
-    const isSimpleTask = userPrompt.length < 20 && 
-      !userPrompt.match(/代码|编写|创建|修复|分析|部署|配置|脚本|搜索|安装|下载|code|create|fix|analyze|search|install/)
-    const isHeavyTask = userPrompt.length > 80 ||
-      !!userPrompt.match(/并且|然后|之后|同时|自动|批量|全部|and then|also|batch/)
-    const maxTurns = isSimpleTask ? CONFIG.SIMPLE_TURNS : isHeavyTask ? CONFIG.MAX_REACT_TURNS : CONFIG.DEFAULT_TURNS
-    console.log(`[LocalClaw/FC] Task complexity: ${isSimpleTask ? 'simple' : isHeavyTask ? 'heavy' : 'normal'}, maxTurns: ${maxTurns}`)
-
     // 🎯 Nexus 驱动：为当前任务准备精准工具集
     const { tools: taskTools, matchedNexus, isFiltered } = nexusManager.prepareToolsForTask(userPrompt)
     let currentTaskTools = taskTools
 
+    // 多维复杂度分类（替代旧的字符串长度 + 正则判断）
+    const activeNexusId = nexusId || this.getActiveNexusId()
+    const taskClassification = classifyTaskComplexity(
+      userPrompt,
+      matchedNexus,
+      activeNexusId,
+      conversationHistory,
+    )
+    const maxTurns = taskClassification.level === 'chat' ? CONFIG.SIMPLE_TURNS : CONFIG.DEFAULT_TURNS
+    console.log(`[LocalClaw/FC] Task complexity: ${taskClassification.level}, maxTurns: ${maxTurns}`)
+
     // V2: Phase 1 - 初始化 ContextEngine (可插拔的上下文管理器)
-    const engineNexusId = nexusId || this.getActiveNexusId() || 'default'
+    const engineNexusId = activeNexusId || 'default'
     const contextEngine = contextEngineRegistry.getOrCreate(engineNexusId, () =>
       new DefaultNexusContextEngine({
         nexusId: engineNexusId,
         nexusLabel: matchedNexus?.label || engineNexusId,
         getContext: async (query: string) => (await this.buildDynamicContext(query, nexusId)).context,
         getSystemPrompt: () => SYSTEM_PROMPT_FC,
-        getConversationHistory: () =>
-          (conversationHistory || []).map((m, i) => ({
-            id: `hist-${i}`,
-            role: m.role,
-            content: m.content,
-            timestamp: Date.now(),
-          })),
-        loadNexusMemories: (nid: string, limit: number) =>
-          memoryStore.getByNexus(nid, limit),
       })
     )
 
-    // V3: Bootstrap - 主动加载 Nexus 持久化记忆 (新会话防失忆)
+    // Bootstrap - 轻量会话初始化（仅清理状态，不加载记忆）
     await contextEngine.bootstrap?.({ sessionId: runId }).catch(e =>
       console.warn('[LocalClaw/FC] Bootstrap failed (non-blocking):', e)
     )
@@ -2223,6 +2218,16 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
             ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
           }
           messages.push(assistantMsg)
+
+          // SOP Evolution: 检测工具调用轮次中 LLM 文本回复里夹带的 <SOP_REWRITE> 标签
+          // （Rewrite 请求注入后，LLM 可能在工具调用轮次中输出改写内容，而非最终回复）
+          if (content && content.includes('<SOP_REWRITE>')) {
+            const sopNexusId = nexusId || this.getActiveNexusId()
+            if (sopNexusId) {
+              sopEvolutionService.detectAndApplyRewrite(content, sopNexusId)
+                .catch(err => console.warn('[LocalClaw/FC] Mid-loop SOP rewrite detection failed:', err))
+            }
+          }
 
           // 逐个执行工具并收集结果
           let needReplanHint = false
@@ -3027,17 +3032,18 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
           }))
           confidenceTracker.trackToolResults(activeNexusId, trackedToolResults, userPrompt)
 
-          // 2. 评估是否有可晋升到 L0 的记忆
-          const promotable = confidenceTracker.evaluatePromotions(activeNexusId)
-          if (promotable.length > 0) {
-            confidenceTracker.promoteToL0(promotable).then(count => {
-              if (count > 0) {
-                console.log(`[LocalClaw/FC] Promoted ${count} L1 memories to L0 for Nexus ${activeNexusId}`)
-              }
-            }).catch(err => {
-              console.warn('[LocalClaw/FC] L1→L0 promotion failed:', err)
-            })
-          }
+          // 2. 评估是否有可晋升到 L0 的记忆（使用 Safe 版本，等待 readyPromise）
+          confidenceTracker.evaluatePromotionsSafe(activeNexusId).then(promotable => {
+            if (promotable.length > 0) {
+              return confidenceTracker.promoteToL0Safe(promotable).then(count => {
+                if (count > 0) {
+                  console.log(`[LocalClaw/FC] Promoted ${count} L1 memories to L0 for Nexus ${activeNexusId}`)
+                }
+              })
+            }
+          }).catch(err => {
+            console.warn('[LocalClaw/FC] L1→L0 promotion failed:', err)
+          })
         }
 
         // SOP Evolution: fitness 计算 + 持久化 + rewrite 检测 + Golden Path 蒸馏
@@ -3064,10 +3070,14 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
             finalResponse,
             userPrompt,
             activeSopContent,
-            // 回调：同步更新 NexusEntity.sopEvolutionData 到 Zustand Store
-            (evolutionData) => {
+            // 回调：同步更新 NexusEntity.sopEvolutionData + sopRewriteInfo 到 Zustand Store
+            (evolutionData, rewriteInfo) => {
               if (nexuses && activeNexus) {
-                const updatedNexus = { ...activeNexus, sopEvolutionData: evolutionData }
+                const updatedNexus = {
+                  ...activeNexus,
+                  sopEvolutionData: evolutionData,
+                  ...(rewriteInfo ? { sopRewriteInfo: rewriteInfo } : {}),
+                }
                 nexuses.set(activeNexusId, updatedNexus)
               }
             },
@@ -3076,6 +3086,24 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${n
           })
         }
       }
+    }
+
+    // Memory Flush: ReAct 循环结束后提炼本轮认知
+    if (traceTools.length > 0 && contextEngine.flushMemory) {
+      const flushToolSummaries: import('@/types').ToolCallSummary[] = traceTools.map((t, idx) => ({
+        callId: `flush-${idx}`,
+        toolName: t.name,
+        args: {} as Record<string, unknown>,
+        status: (t.status === 'success' ? 'success' : 'error') as 'success' | 'error',
+        result: t.status === 'success' ? t.result?.slice(0, 500) : undefined,
+        error: t.status === 'error' ? t.result?.slice(0, 500) : undefined,
+        durationMs: t.latency || 0,
+        isMutating: CONFIG.CRITIC_TOOLS.includes(t.name),
+        timestamp: Date.now(),
+      }))
+      contextEngine.flushMemory(flushToolSummaries).catch(err => {
+        console.warn('[LocalClaw/FC] Memory Flush failed:', err)
+      })
     }
 
     // P4: Nexus 经验记录 (无工具调用时也记录 — 纯文字交互也是 Nexus 使用)

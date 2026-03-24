@@ -85,6 +85,9 @@ export function destroy(): void {
 export function onTraceCompleted(_trace: ExecTrace, _nexusId: string): void {
   tasksSinceLastCheck++
 
+  // 每次任务完成后实时刷新表达型 MBTI（不依赖修正案）
+  refreshExpressedMBTI()
+
   if (tasksSinceLastCheck >= SOUL_EVOLUTION_CONFIG.CHECK_INTERVAL_TASKS) {
     tasksSinceLastCheck = 0
 
@@ -192,10 +195,10 @@ function detectBehavioralSignals(
     agg.successRate = agg.totalCalls > 0 ? agg.totalSuccess / agg.totalCalls : 0
   }
 
-  if (grandTotalCalls > 10) {
+  if (grandTotalCalls > SOUL_EVOLUTION_CONFIG.TOOL_PREF_MIN_TOTAL_CALLS) {
     for (const [toolName, agg] of toolAggregates.entries()) {
       // 跨 Nexus 使用 + 占比 > 15% → 工具偏好信号
-      if (agg.nexusIds.length >= 2 && agg.totalCalls / grandTotalCalls > 0.15) {
+      if (agg.nexusIds.length >= SOUL_EVOLUTION_CONFIG.TOOL_PREF_MIN_NEXUS_SPREAD && agg.totalCalls / grandTotalCalls > 0.15) {
         signals.push({
           label: `heavy_${toolName}_usage`,
           type: 'tool_preference',
@@ -212,7 +215,7 @@ function detectBehavioralSignals(
   }
 
   // --- 2. 成功模式信号: 所有 Nexus 的平均成功率极端偏高/低 ---
-  if (scorings.length >= 2) {
+  if (scorings.length >= SOUL_EVOLUTION_CONFIG.SUCCESS_PATTERN_MIN_SCORINGS) {
     const avgSuccess = scorings.reduce((sum, s) => sum + s.scoring.successRate, 0) / scorings.length
     const totalRuns = scorings.reduce((sum, s) => sum + s.scoring.totalRuns, 0)
 
@@ -256,7 +259,7 @@ function detectBehavioralSignals(
     }
   }
 
-  if (recentTotal > 5 && grandTotalCalls > 20) {
+  if (recentTotal > 5 && grandTotalCalls > SOUL_EVOLUTION_CONFIG.STYLE_SHIFT_MIN_TOTAL_CALLS) {
     for (const [toolName, recentCount] of recentToolCounts.entries()) {
       const historicalAgg = toolAggregates.get(toolName)
       if (!historicalAgg) continue

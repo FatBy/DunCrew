@@ -33,6 +33,9 @@ export interface DevicesSlice {
   soulMBTIExpressed: MBTIResult | null   // Layer 2: 行为调整后的表达类型
   soulMBTIAxes: MBTIAxisScores | null    // 四轴原始分数 (-1~+1)
   
+  // 核心协议 LLM 总结
+  soulTruthsSummary: string              // LLM 生成的一句话总结
+  
   // Actions
   setPresenceSnapshot: (snapshot: PresenceSnapshot) => void
   updateDevice: (id: string, updates: Partial<Device>) => void
@@ -53,6 +56,9 @@ export interface DevicesSlice {
   
   // MBTI 双层演化
   updateExpressedMBTI: (expressed: MBTIResult, axes: MBTIAxisScores) => void
+  
+  // 核心协议总结
+  generateSoulSummary: () => Promise<void>
 }
 
 export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
@@ -75,6 +81,7 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
   soulMBTIBase: null,
   soulMBTIExpressed: null,
   soulMBTIAxes: null,
+  soulTruthsSummary: '',
 
   setPresenceSnapshot: (snapshot) => set((state) => {
     // 只更新 presence 相关数据和维度，不覆盖已解析的 soul 内容
@@ -240,5 +247,68 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
   
   updateExpressedMBTI: (expressed, axes) => {
     set({ soulMBTIExpressed: expressed, soulMBTI: expressed, soulMBTIAxes: axes })
+  },
+  
+  generateSoulSummary: async () => {
+    const state = get()
+    const truths = state.soulCoreTruths
+    const boundaries = state.soulBoundaries
+    const vibe = state.soulVibeStatement
+    
+    if (truths.length === 0 && boundaries.length === 0) return
+    
+    // 构建内容 hash 用于缓存失效
+    const contentForHash = truths.map(t => t.title).join('|') + '||' + boundaries.map(b => b.rule).join('|')
+    let contentHash = 0
+    for (let i = 0; i < contentForHash.length; i++) {
+      contentHash = contentForHash.charCodeAt(i) + ((contentHash << 5) - contentHash)
+    }
+    
+    // 检查缓存
+    const cacheKey = 'duncrew_soul_truths_summary'
+    try {
+      const cached = localStorage.getItem(cacheKey)
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (parsed.hash === contentHash && parsed.summary) {
+          set({ soulTruthsSummary: parsed.summary })
+          return
+        }
+      }
+    } catch { /* ignore */ }
+    
+    // 先设置一个规则引擎降级总结
+    const fallbackSummary = `${truths.length} 条核心原则 · ${boundaries.length} 条能力边界`
+    set({ soulTruthsSummary: fallbackSummary })
+    
+    // 异步调 LLM 生成总结
+    try {
+      const { isLLMConfigured, chat } = await import('@/services/llmService')
+      if (!isLLMConfigured()) return
+      
+      const truthsText = truths.map((t, i) => `${i + 1}. ${t.title}: ${t.description || t.principle || ''}`).join('\n')
+      const boundariesText = boundaries.map(b => `- ${b.rule}`).join('\n')
+      
+      const result = await chat([
+        {
+          role: 'system',
+          content: 'You are a concise summarizer. Output ONLY a single Chinese sentence (15-30 characters), no quotes, no punctuation at the end.',
+        },
+        {
+          role: 'user',
+          content: `用一句话总结这个 AI Agent 的核心协议特征（不要列举，要提炼本质）：\n\n核心原则:\n${truthsText}\n\n能力边界:\n${boundariesText}\n\n风格: ${vibe || '无'}`,
+        },
+      ])
+      
+      const summary = result.trim().replace(/^["'「]|["'」。]$/g, '')
+      if (summary && summary.length >= 4 && summary.length <= 60) {
+        set({ soulTruthsSummary: summary })
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify({ hash: contentHash, summary }))
+        } catch { /* ignore */ }
+      }
+    } catch {
+      // LLM 失败，保持降级总结
+    }
   },
 })

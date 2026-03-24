@@ -208,7 +208,9 @@ def init_sqlite_db(db_path: Path) -> sqlite3.Connection:
             nexus_id TEXT,
             tags TEXT DEFAULT '[]',
             metadata TEXT DEFAULT '{}',
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            deleted_at INTEGER,
+            category TEXT DEFAULT 'uncategorized'
         );
         CREATE INDEX IF NOT EXISTS idx_memory_source ON memory(source);
         CREATE INDEX IF NOT EXISTS idx_memory_nexus ON memory(nexus_id);
@@ -252,6 +254,20 @@ def init_sqlite_db(db_path: Path) -> sqlite3.Connection:
         conn.execute("ALTER TABLE memory ADD COLUMN confidence REAL DEFAULT 0.5")
         print("[SQLite] Added 'confidence' column to memory table")
 
+    # V5: 安全地添加 deleted_at 列 (软删除)
+    try:
+        conn.execute("SELECT deleted_at FROM memory LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE memory ADD COLUMN deleted_at INTEGER")
+        print("[SQLite] Added 'deleted_at' column to memory table")
+
+    # V5: 安全地添加 category 列
+    try:
+        conn.execute("SELECT category FROM memory LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE memory ADD COLUMN category TEXT DEFAULT 'uncategorized'")
+        print("[SQLite] Added 'category' column to memory table")
+
     conn.commit()
 
     # V4: 创建向量存储表 (混合搜索)
@@ -259,7 +275,174 @@ def init_sqlite_db(db_path: Path) -> sqlite3.Connection:
         ensure_vector_table(conn)
 
     print(f"[SQLite] Database initialized at {db_path}")
+
+    # V5: 启动容量合并定时任务 (daemon 线程)
+    threading.Thread(
+        target=_memory_capacity_merge_loop,
+        args=(conn,),
+        daemon=True,
+    ).start()
+
     return conn
+
+
+# ============================================
+# V5: 记忆容量合并定时任务
+# ============================================
+
+# 各 category 的容量上限
+_CATEGORY_CAPACITY_LIMITS: dict[str, int] = {
+    'preference': 100,
+    'project': 100,
+    'discovery': 200,
+    'uncategorized': 50,
+}
+
+# preference/project 超限时合并最旧的 N 条为 1 条
+_MERGE_BATCH_SIZE = 5
+# 检查间隔 (秒)
+_CAPACITY_CHECK_INTERVAL = 86400  # 24 小时
+
+
+def _memory_capacity_merge_loop(conn: sqlite3.Connection) -> None:
+    """后台定时检查各 category 容量，超限时合并或淘汰。
+
+    策略：
+    - preference / project (长期记忆): 超限时取最旧的 5 条合并为 1 条
+    - discovery / uncategorized (短期记忆): 超限时软删除最旧的多余条目
+    """
+    print("[MemoryCapacity] Merge loop started (interval: 24h, initial check in 60s)")
+    # 启动后延迟 60 秒再首次检查，等数据库完全就绪
+    time.sleep(60)
+
+    while True:
+        try:
+            _run_capacity_check(conn)
+        except Exception as e:
+            print(f"[MemoryCapacity] Error during capacity check: {e}")
+        time.sleep(_CAPACITY_CHECK_INTERVAL)
+
+
+def _run_capacity_check(conn: sqlite3.Connection) -> None:
+    """单次容量检查和处理"""
+    now_ms = int(time.time() * 1000)
+
+    for category, limit in _CATEGORY_CAPACITY_LIMITS.items():
+        with _db_lock:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM memory WHERE category = ? AND deleted_at IS NULL",
+                (category,),
+            ).fetchone()
+        count = row['cnt'] if row else 0
+
+        if count <= limit:
+            continue
+
+        excess = count - limit
+        print(f"[MemoryCapacity] Category '{category}': {count}/{limit} (+{excess} over limit)")
+
+        if category in ('preference', 'project'):
+            # 合并策略：取最旧的 _MERGE_BATCH_SIZE 条 → 合并为 1 条
+            _merge_oldest(conn, category, now_ms)
+        else:
+            # 淘汰策略：软删除最旧的多余条目
+            _soft_delete_oldest(conn, category, excess, now_ms)
+
+
+def _merge_oldest(conn: sqlite3.Connection, category: str, now_ms: int) -> None:
+    """取最旧的 N 条同类记忆，合并内容为 1 条新记忆，软删除原始条目。
+
+    因为后端无 LLM 访问权限，使用文本拼接作为合并策略。
+    这些记忆本身就是短句认知（如 "用户偏好 pnpm"），拼接后仍然可读。
+    """
+    with _db_lock:
+        rows = conn.execute(
+            "SELECT id, content, tags, metadata, nexus_id FROM memory "
+            "WHERE category = ? AND deleted_at IS NULL "
+            "ORDER BY created_at ASC LIMIT ?",
+            (category, _MERGE_BATCH_SIZE),
+        ).fetchall()
+
+    if len(rows) < 2:
+        return
+
+    # 提取各条内容，去重
+    contents: list[str] = []
+    seen: set[str] = set()
+    all_tags: set[str] = set()
+    source_ids: list[str] = []
+
+    for row in rows:
+        text = row['content'].strip()
+        # 简单去重：完全相同的内容跳过
+        if text.lower() not in seen:
+            contents.append(text)
+            seen.add(text.lower())
+        source_ids.append(row['id'])
+        try:
+            tags = json.loads(row['tags'] or '[]')
+            if isinstance(tags, list):
+                all_tags.update(tags)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if not contents:
+        return
+
+    # 合并内容：用分号连接短句
+    merged_content = '；'.join(contents)
+    # 过长时截断
+    if len(merged_content) > 500:
+        merged_content = merged_content[:497] + '...'
+
+    merged_id = f"mem-merged-{uuid.uuid4().hex[:12]}"
+    merged_tags = json.dumps(list(all_tags | {'merged', f'merged_from_{len(source_ids)}'}))
+    merged_metadata = json.dumps({
+        'category': category,
+        'merged_from': source_ids,
+        'merged_at': now_ms,
+    })
+
+    with _db_lock:
+        # 写入合并后的新条目
+        conn.execute(
+            "INSERT INTO memory (id, source, content, nexus_id, tags, metadata, created_at, category) "
+            "VALUES (?, 'memory', ?, NULL, ?, ?, ?, ?)",
+            (merged_id, merged_content, merged_tags, merged_metadata, now_ms, category),
+        )
+        # 软删除原始条目
+        placeholders = ','.join('?' * len(source_ids))
+        conn.execute(
+            f"UPDATE memory SET deleted_at = ? WHERE id IN ({placeholders})",
+            [now_ms] + source_ids,
+        )
+        conn.commit()
+
+    print(f"[MemoryCapacity] Merged {len(source_ids)} '{category}' memories → {merged_id}")
+
+
+def _soft_delete_oldest(conn: sqlite3.Connection, category: str, excess: int, now_ms: int) -> None:
+    """软删除某类中最旧的 excess 条记忆"""
+    with _db_lock:
+        rows = conn.execute(
+            "SELECT id FROM memory "
+            "WHERE category = ? AND deleted_at IS NULL "
+            "ORDER BY created_at ASC LIMIT ?",
+            (category, excess),
+        ).fetchall()
+
+        if not rows:
+            return
+
+        ids = [r['id'] for r in rows]
+        placeholders = ','.join('?' * len(ids))
+        conn.execute(
+            f"UPDATE memory SET deleted_at = ? WHERE id IN ({placeholders})",
+            [now_ms] + ids,
+        )
+        conn.commit()
+
+    print(f"[MemoryCapacity] Soft-deleted {len(ids)} oldest '{category}' memories")
 
 
 # 全局数据库连接 (线程安全 WAL 模式)
@@ -1815,6 +1998,8 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             self.handle_memory_write(data)
         elif path == '/api/memory/write-batch':
             self.handle_memory_write_batch(data)
+        elif path == '/api/memory/search-grouped':
+            self.handle_memory_search_grouped(data)
         elif path == '/api/memory/prune':
             self.handle_memory_prune(data)
         elif path == '/api/memory/decay':
@@ -1858,6 +2043,12 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         
+        if path.startswith('/api/memory/') and not path.endswith('/checkpoint'):
+            # DELETE /api/memory/{id} - 软删除记忆
+            mem_id = path[12:]  # strip '/api/memory/'
+            if mem_id and not mem_id.startswith('search') and not mem_id.startswith('stats'):
+                self.handle_memory_soft_delete(mem_id)
+                return
         if path.startswith('/api/sessions/') and path.endswith('/checkpoint'):
             session_id = path[14:-11]
             self.handle_session_checkpoint_delete(session_id)
@@ -2037,6 +2228,62 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, TypeError):
             return []
 
+    def handle_memory_soft_delete(self, mem_id: str):
+        """DELETE /api/memory/{id} - 软删除记忆"""
+        db = self._get_db()
+        now_ms = int(time.time() * 1000)
+        with _db_lock:
+            cursor = db.execute("UPDATE memory SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL", (now_ms, mem_id))
+            db.commit()
+        if cursor.rowcount > 0:
+            self.send_json({'status': 'ok', 'id': mem_id})
+        else:
+            self.send_error_json(f'Memory {mem_id} not found or already deleted', 404)
+
+    def handle_memory_search_grouped(self, data: dict):
+        """POST /api/memory/search-grouped - 按 source 分组搜索记忆"""
+        db = self._get_db()
+        query_text = data.get('query', '')
+        nexus_id = data.get('nexusId')
+        groups = data.get('groups', {})
+        # groups 格式: { "memory": 10, "exec_trace": 5, "session": 3 }
+
+        result: dict[str, list] = {}
+
+        for source_name, max_count in groups.items():
+            max_count = min(int(max_count), 100)
+            sql = "SELECT * FROM memory WHERE source = ? AND deleted_at IS NULL"
+            params: list = [source_name]
+
+            if nexus_id:
+                if nexus_id == '__system__':
+                    sql += " AND (nexus_id IS NULL OR nexus_id = '')"
+                else:
+                    sql += " AND nexus_id = ?"
+                    params.append(nexus_id)
+
+            if query_text and query_text != '*':
+                sql += " AND content LIKE ?"
+                params.append(f"%{query_text}%")
+
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(max_count)
+
+            rows = db.execute(sql, params).fetchall()
+            result[source_name] = [{
+                'id': r['id'], 'source': r['source'], 'content': r['content'],
+                'snippet': r['content'],
+                'nexusId': r['nexus_id'],
+                'tags': self.safe_parse_tags(r['tags']),
+                'metadata': json.loads(r['metadata'] or '{}'),
+                'createdAt': r['created_at'],
+                'confidence': r['confidence'] if 'confidence' in r.keys() else 0.5,
+                'category': r['category'] if 'category' in r.keys() else 'uncategorized',
+                'score': 1.0,
+            } for r in rows]
+
+        self.send_json(result)
+
     def handle_memory_write(self, data: dict):
         """POST /api/memory/write - 写入单条记忆"""
         db = self._get_db()
@@ -2047,11 +2294,12 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         tags = json.dumps(data.get('tags', []), ensure_ascii=False)
         metadata = json.dumps(data.get('metadata', {}), ensure_ascii=False)
         confidence = data.get('confidence', 0.5)
+        category = data.get('category', 'uncategorized')
         now = int(time.time() * 1000)
         
         with _db_lock:
-            db.execute("INSERT INTO memory (id, source, content, nexus_id, tags, metadata, created_at, confidence) VALUES (?,?,?,?,?,?,?,?)",
-                       (mem_id, source, content, nexus_id, tags, metadata, now, confidence))
+            db.execute("INSERT INTO memory (id, source, content, nexus_id, tags, metadata, created_at, confidence, category) VALUES (?,?,?,?,?,?,?,?,?)",
+                       (mem_id, source, content, nexus_id, tags, metadata, now, confidence, category))
             db.commit()
 
         # V4: 异步生成向量索引
@@ -2129,14 +2377,18 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
                 FROM memory_fts fts
                 JOIN memory m ON m.rowid = fts.rowid
                 WHERE memory_fts MATCH ?
+                AND m.deleted_at IS NULL
             """
             params: list = [q]
             if source:
                 fts_sql += " AND m.source = ?"
                 params.append(source)
             if nexus_id:
-                fts_sql += " AND m.nexus_id = ?"
-                params.append(nexus_id)
+                if nexus_id == '__system__':
+                    fts_sql += " AND (m.nexus_id IS NULL OR m.nexus_id = '')"
+                else:
+                    fts_sql += " AND m.nexus_id = ?"
+                    params.append(nexus_id)
             fts_sql += " ORDER BY rank LIMIT ?"
             params.append(limit)
             
@@ -2144,19 +2396,29 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
                 rows = db.execute(fts_sql, params).fetchall()
             except Exception:
                 # FTS 查询失败时降级到 LIKE 搜索
-                rows = db.execute(
-                    "SELECT * FROM memory WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
-                    (f"%{q}%", limit)
-                ).fetchall()
+                like_sql = "SELECT * FROM memory WHERE content LIKE ? AND deleted_at IS NULL"
+                like_params: list = [f"%{q}%"]
+                if nexus_id:
+                    if nexus_id == '__system__':
+                        like_sql += " AND (nexus_id IS NULL OR nexus_id = '')"
+                    else:
+                        like_sql += " AND nexus_id = ?"
+                        like_params.append(nexus_id)
+                like_sql += " ORDER BY created_at DESC LIMIT ?"
+                like_params.append(limit)
+                rows = db.execute(like_sql, like_params).fetchall()
         else:
-            sql = "SELECT * FROM memory WHERE 1=1"
+            sql = "SELECT * FROM memory WHERE deleted_at IS NULL"
             params = []
             if source:
                 sql += " AND source = ?"
                 params.append(source)
             if nexus_id:
-                sql += " AND nexus_id = ?"
-                params.append(nexus_id)
+                if nexus_id == '__system__':
+                    sql += " AND (nexus_id IS NULL OR nexus_id = '')"
+                else:
+                    sql += " AND nexus_id = ?"
+                    params.append(nexus_id)
             sql += " ORDER BY created_at DESC LIMIT ?"
             params.append(limit)
             rows = db.execute(sql, params).fetchall()
@@ -3635,6 +3897,7 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
         content = args.get('content', '')
         memory_type = args.get('type', 'general')
         nexus_id = args.get('nexusId', None)
+        category = args.get('category', 'uncategorized')
         
         if not key or not content:
             raise ValueError("key 和 content 参数必填")
@@ -3662,9 +3925,9 @@ class ClawdDataHandler(BaseHTTPRequestHandler):
             full_content = f"[{key}] {content}"
             with _db_lock:
                 db.execute(
-                    "INSERT INTO memory (id, source, content, nexus_id, tags, metadata, created_at) VALUES (?,?,?,?,?,?,?)",
+                    "INSERT INTO memory (id, source, content, nexus_id, tags, metadata, created_at, category) VALUES (?,?,?,?,?,?,?,?)",
                     (mem_id, 'memory', full_content, nexus_id, tags,
-                     json.dumps({'key': key, 'type': memory_type}), now_ms)
+                     json.dumps({'key': key, 'type': memory_type, 'category': category}), now_ms, category)
                 )
                 db.commit()
 

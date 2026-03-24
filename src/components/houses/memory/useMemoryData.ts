@@ -27,6 +27,8 @@ export interface L0MemoryCard {
   tags: string[]
   createdAt: number
   confidence: number
+  /** 记忆分类 */
+  category: 'preference' | 'project_context' | 'discovery' | 'uncategorized'
   /** 关联的 L1 条目数量 */
   l1Count: number
   /** 关联的执行轨迹数量 */
@@ -210,16 +212,27 @@ export function useMemoryData(): MemoryDataState {
     setLoading(true)
 
     try {
-      const allResults = await memoryStore.search({
+      // V5: 优先使用 searchGrouped 按 source 分别限制数量
+      const allResults = await memoryStore.searchGrouped({
         query: '*',
-        maxResults: 500,
-        minScore: 0,
-        useMmr: false,
+        sourceLimits: { memory: 200, exec_trace: 100, session: 50, l1_memory: 50 },
       })
       // 写入 store，固化
       setMemoryCacheRaw(allResults)
     } catch (error) {
-      console.warn('[useMemoryData] Failed to load memory cache:', error)
+      // 降级：使用原有的 search 方法
+      console.warn('[useMemoryData] searchGrouped failed, falling back to search:', error)
+      try {
+        const fallbackResults = await memoryStore.search({
+          query: '*',
+          maxResults: 500,
+          minScore: 0,
+          useMmr: false,
+        })
+        setMemoryCacheRaw(fallbackResults)
+      } catch (fallbackError) {
+        console.warn('[useMemoryData] Fallback search also failed:', fallbackError)
+      }
     } finally {
       setLoading(false)
       refreshLock.current = false
@@ -274,6 +287,13 @@ export function useMemoryData(): MemoryDataState {
           ? rawTraces.filter(tr => tr.nexusId === nexusId).length
           : 0
 
+        // 从 metadata 或 tags 推断 category
+        const rawCategory = (result.metadata?.category as string) || 'uncategorized'
+        const validCategories = ['preference', 'project_context', 'discovery', 'uncategorized'] as const
+        const category = validCategories.includes(rawCategory as typeof validCategories[number])
+          ? rawCategory as typeof validCategories[number]
+          : 'uncategorized'
+
         return {
           id: result.id,
           content: result.content || result.snippet || '',
@@ -283,6 +303,7 @@ export function useMemoryData(): MemoryDataState {
           tags: Array.isArray(result.tags) ? result.tags : [],
           createdAt: result.createdAt || 0,
           confidence,
+          category,
           l1Count,
           traceCount: relatedTraceCount,
           raw: result,
