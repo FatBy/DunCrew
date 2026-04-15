@@ -1,12 +1,13 @@
 import { app } from 'electron'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import * as path from 'path'
+import * as fs from 'fs'
 import * as http from 'http'
 
 const SERVER_PORT = 3001
 const SERVER_HOST = '127.0.0.1'
 const HEALTH_CHECK_URL = `http://${SERVER_HOST}:${SERVER_PORT}/status`
-const MAX_WAIT_MS = 30000
+const MAX_WAIT_MS = 60000
 const POLL_INTERVAL_MS = 500
 const MAX_RESTART_ATTEMPTS = 3
 
@@ -40,17 +41,28 @@ export class PythonManager {
     let args: string[]
     let cwd: string
 
+    // 数据目录解析（优先级从高到低）：
+    // 1. 环境变量 DUNCREW_DATA_PATH
+    // 2. duncrew-server.py 中的默认路径 D:\编程\DunCrew-Data（开发模式）
+    // 3. 用户主目录 ~/DunCrew-Data（生产模式兜底）
+    const dataPath = this.resolveDataPath(isDev)
+    // 确保数据目录存在
+    if (!fs.existsSync(dataPath)) {
+      fs.mkdirSync(dataPath, { recursive: true })
+    }
+
     if (isDev) {
       // 开发模式：直接运行 python
       cmd = 'python'
-      args = ['duncrew-server.py', '--port', String(SERVER_PORT), '--host', SERVER_HOST]
+      args = ['duncrew-server.py', '--port', String(SERVER_PORT), '--host', SERVER_HOST, '--path', dataPath]
       cwd = path.join(__dirname, '..')
     } else {
-      // 生产模式：运行打包好的 exe
-      const exePath = path.join(process.resourcesPath, 'duncrew-server.exe')
+      // 生产模式：运行 PyInstaller onedir 产物
+      const exeName = process.platform === 'win32' ? 'duncrew-server.exe' : 'duncrew-server'
+      const exePath = path.join(process.resourcesPath, 'duncrew-server', exeName)
       cmd = exePath
-      args = ['--port', String(SERVER_PORT), '--host', SERVER_HOST]
-      cwd = process.resourcesPath
+      args = ['--port', String(SERVER_PORT), '--host', SERVER_HOST, '--path', dataPath]
+      cwd = path.join(process.resourcesPath, 'duncrew-server')
     }
 
     console.log(`[PythonManager] Starting: ${cmd} ${args.join(' ')}`)
@@ -157,6 +169,39 @@ export class PythonManager {
         resolve(false)
       })
     })
+  }
+
+  /**
+   * 解析数据目录路径
+   * 优先级：环境变量 > 开发硬编码路径 > 用户主目录
+   */
+  private resolveDataPath(isDev: boolean): string {
+    // 1. 环境变量最高优先
+    const envPath = process.env.DUNCREW_DATA_PATH || process.env.DDOS_DATA_PATH
+    if (envPath && fs.existsSync(envPath)) {
+      console.log(`[PythonManager] Using env data path: ${envPath}`)
+      return envPath
+    }
+
+    // 2. 开发模式：检查已知的开发数据目录
+    if (isDev) {
+      const devCandidates = [
+        path.join(path.dirname(__dirname), '..', 'DunCrew-Data'),  // 项目同级目录
+        'D:\\编程\\DunCrew-Data',                                    // 开发环境固定路径
+      ]
+      for (const candidate of devCandidates) {
+        const resolved = path.resolve(candidate)
+        if (fs.existsSync(resolved)) {
+          console.log(`[PythonManager] Using dev data path: ${resolved}`)
+          return resolved
+        }
+      }
+    }
+
+    // 3. 兜底：用户主目录
+    const homePath = path.join(app.getPath('home'), 'DunCrew-Data')
+    console.log(`[PythonManager] Using home directory path: ${homePath}`)
+    return homePath
   }
 
   private sleep(ms: number): Promise<void> {

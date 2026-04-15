@@ -13,10 +13,14 @@ const STORAGE_KEYS = {
 // 批量持久化控制
 let _lastPersistTime = Date.now()
 
+// updateExecutionStep 节流：streaming delta 极高频，用 RAF + 合并缓冲减少 set 次数
+let _pendingStepUpdates: Map<string, { taskId: string; stepId: string; updates: Partial<ExecutionStep> }> = new Map()
+let _stepUpdateRafId = 0
+
 // 优化建议动作
 export interface OptimizationAction {
-  target: string        // 目标 Nexus/SKILL ID，如 'skill-scout', 'dev-assistant'
-  targetType: 'nexus' | 'skill'
+  target: string        // 目标 Dun/SKILL ID，如 'skill-scout', 'dev-assistant'
+  targetType: 'dun' | 'skill'
   label: string         // 显示标签，如 "优化任务规划"
   prompt: string        // 预填的优化指令
 }
@@ -62,7 +66,14 @@ function loadTaskHistory(): TaskItem[] {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.TASK_HISTORY)
     if (data) {
-      return JSON.parse(data)
+      const tasks: TaskItem[] = JSON.parse(data)
+      // 迁移：旧版 done+executionError → error（v2 状态模型）
+      return tasks.map(t => {
+        if (t.status === 'done' && t.executionError) {
+          return { ...t, status: 'error' as TaskStatus }
+        }
+        return t
+      })
     }
   } catch (e) {
     console.warn('[Sessions] Failed to load task history from localStorage:', e)
@@ -202,10 +213,33 @@ export const createSessionsSlice: StateCreator<SessionsSlice> = (set, get) => ({
   }),
   
   updateActiveExecution: (id, updates) => set((state) => {
-    const newExecutions = state.activeExecutions.map(t =>
-      t.id === id ? { ...t, ...updates } : t
-    )
-    persistTaskHistory(newExecutions)
+    // 终态集合：到达终态后不允许被其他终态覆盖（防止竞态）
+    const TERMINAL: Set<string> = new Set(['done', 'error', 'terminated'])
+
+    const newExecutions = state.activeExecutions.map(t => {
+      if (t.id !== id) return t
+
+      // 终态保护：已到达终态的任务，忽略来自其他终态的 status 覆盖
+      if (TERMINAL.has(t.status) && updates.status && TERMINAL.has(updates.status) && updates.status !== t.status) {
+        console.warn(`[Sessions] 终态保护: 忽略 ${t.status} → ${updates.status} (task=${id})`)
+        // 仅忽略 status 字段，其他字段（如 executionDuration）仍可更新
+        const { status: _ignored, ...rest } = updates
+        return Object.keys(rest).length > 0 ? { ...t, ...rest } : t
+      }
+
+      return { ...t, ...updates }
+    })
+
+    // 状态变更时强制持久化，其他更新走节流
+    const isStatusChange = 'status' in updates
+    if (isStatusChange) {
+      persistTaskHistory(newExecutions)
+    } else {
+      const timeSinceLastPersist = Date.now() - _lastPersistTime
+      if (timeSinceLastPersist > 5000) {
+        persistTaskHistory(newExecutions)
+      }
+    }
     return { activeExecutions: newExecutions }
   }),
   
@@ -236,24 +270,47 @@ export const createSessionsSlice: StateCreator<SessionsSlice> = (set, get) => ({
   }),
   
   // 更新指定任务中的指定执行步骤（用于累积 assistant delta 到单个 thinking step）
-  updateExecutionStep: (taskId, stepId, updates) => set((state) => {
-    const newExecutions = state.activeExecutions.map(t => {
-      if (t.id !== taskId) return t
-      const steps = t.executionSteps || []
-      return {
-        ...t,
-        executionSteps: steps.map(s =>
-          s.id === stepId ? { ...s, ...updates } : s
-        ),
-      }
-    })
-    // 节流持久化：高频更新（如 streaming delta），每 10 秒持久化一次
-    const timeSinceLastPersist = Date.now() - _lastPersistTime
-    if (timeSinceLastPersist > 10000) {
-      persistTaskHistory(newExecutions)
+  // 使用 RAF 攒批：多个 delta 合并为一次 set，避免每 token 都触发重渲染
+  updateExecutionStep: (taskId, stepId, updates) => {
+    const key = `${taskId}:${stepId}`
+    const existing = _pendingStepUpdates.get(key)
+    if (existing) {
+      // 合并更新（content 取最新值）
+      Object.assign(existing.updates, updates)
+    } else {
+      _pendingStepUpdates.set(key, { taskId, stepId, updates: { ...updates } })
     }
-    return { activeExecutions: newExecutions }
-  }),
+
+    if (_stepUpdateRafId === 0) {
+      _stepUpdateRafId = requestAnimationFrame(() => {
+        _stepUpdateRafId = 0
+        const batch = new Map(_pendingStepUpdates)
+        _pendingStepUpdates.clear()
+
+        set((state) => {
+          const newExecutions = state.activeExecutions.map(t => {
+            // 收集这个 task 的所有待更新 step
+            const taskUpdates: Map<string, Partial<ExecutionStep>> = new Map()
+            for (const [, entry] of batch) {
+              if (entry.taskId === t.id) {
+                taskUpdates.set(entry.stepId, entry.updates)
+              }
+            }
+            if (taskUpdates.size === 0) return t
+            const steps = t.executionSteps || []
+            return {
+              ...t,
+              executionSteps: steps.map(s => {
+                const upd = taskUpdates.get(s.id)
+                return upd ? { ...s, ...upd } : s
+              }),
+            }
+          })
+          return { activeExecutions: newExecutions }
+        })
+      })
+    }
+  },
 
   clearTaskHistory: () => {
     localStorage.removeItem(STORAGE_KEYS.TASK_HISTORY)
@@ -286,7 +343,20 @@ export const createSessionsSlice: StateCreator<SessionsSlice> = (set, get) => ({
   },
 
   dismissInterruptedTasksWarning: () => {
-    set({ hasInterruptedTasks: false })
+    const { activeExecutions } = get()
+    const newExecutions = activeExecutions.map(t => {
+      if (t.status === 'executing') {
+        return {
+          ...t,
+          status: 'interrupted' as TaskStatus,
+          executionError: '任务因页面刷新而中断（稍后处理）',
+          executionDuration: Date.now() - (t.timestamp ? new Date(t.timestamp).getTime() : Date.now()),
+        }
+      }
+      return t
+    })
+    persistTaskHistory(newExecutions)
+    set({ activeExecutions: newExecutions, hasInterruptedTasks: false })
   },
 
   // 获取所有中断的任务
@@ -455,13 +525,13 @@ export const createSessionsSlice: StateCreator<SessionsSlice> = (set, get) => ({
 {
   "summary": "2-3句话的能力画像总结",
   "optimizations": [
-    {"target": "nexus-id", "targetType": "nexus", "label": "优化建议标签", "prompt": "具体优化指令"}
+    {"target": "dun-id", "targetType": "dun", "label": "优化建议标签", "prompt": "具体优化指令"}
   ]
 }
 optimizations 规则：
-- target: 推荐优化的 Nexus ID (${(() => { const nx = (get() as any).nexuses; return nx instanceof Map ? Array.from(nx.keys()).join('/') : 'default' })()}) 或 skill 名称
-- targetType: "nexus" 或 "skill"
-- prompt: 给该 Nexus/Skill 的优化指令，包含具体改进建议
+- target: 推荐优化的 Dun ID (${(() => { const nx = (get() as any).duns; return nx instanceof Map ? Array.from(nx.keys()).join('/') : 'default' })()}) 或 skill 名称
+- targetType: "dun" 或 "skill"
+- prompt: 给该 Dun/Skill 的优化指令，包含具体改进建议
 - 必须至少给出 1 条优化建议，最多 2 条
 仅输出 JSON，无其他文字。`,
         },
@@ -491,11 +561,11 @@ optimizations 规则：
 
       // 如果没有解析到优化建议，生成默认建议
       if (optimizations.length === 0 && summary) {
-        const activeNexusId = (get() as any).activeNexusId as string | null
-        const targetId = activeNexusId || 'default'
+        const activeDunId = (get() as any).activeDunId as string | null
+        const targetId = activeDunId || 'default'
         optimizations.push({
           target: targetId,
-          targetType: 'nexus',
+          targetType: 'dun',
           label: '根据分析优化',
           prompt: `根据以下 AI 分析改进执行策略:\n${summary.slice(0, 300)}`,
         })

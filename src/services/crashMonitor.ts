@@ -18,6 +18,8 @@ const MAX_CRASH_LOGS = 10
 
 class CrashMonitor {
   private initialized = false
+  private _unhandledRejectionHandler: ((event: PromiseRejectionEvent) => void) | null = null
+  private _beforeunloadHandler: (() => void) | null = null
 
   /**
    * 初始化崩溃监控
@@ -37,21 +39,23 @@ class CrashMonitor {
       return false
     }
 
-    // 监听未处理的 Promise rejection
-    window.addEventListener('unhandledrejection', (event) => {
+    // 监听未处理的 Promise rejection（命名函数，支持 removeEventListener）
+    this._unhandledRejectionHandler = (event: PromiseRejectionEvent) => {
       const reason = event.reason
       this.logCrash({
         type: 'unhandledrejection',
         message: reason?.message || String(reason) || 'Unhandled Promise rejection',
         stack: reason?.stack,
       })
-    })
+    }
+    window.addEventListener('unhandledrejection', this._unhandledRejectionHandler)
 
-    // 监听 beforeunload 事件，检测非正常退出
-    window.addEventListener('beforeunload', () => {
+    // 监听 beforeunload 事件，检测非正常退出（命名函数，支持 removeEventListener）
+    this._beforeunloadHandler = () => {
       // 标记正常退出
       sessionStorage.setItem('duncrew_clean_exit', 'true')
-    })
+    }
+    window.addEventListener('beforeunload', this._beforeunloadHandler)
 
     // 检查上次是否正常退出
     const cleanExit = sessionStorage.getItem('duncrew_clean_exit')
@@ -160,6 +164,22 @@ class CrashMonitor {
   getLatestCrash(): CrashLog | null {
     const logs = this.getCrashLogs()
     return logs[0] || null
+  }
+
+  /**
+   * 销毁监控，移除事件监听器
+   */
+  destroy(): void {
+    if (this._unhandledRejectionHandler) {
+      window.removeEventListener('unhandledrejection', this._unhandledRejectionHandler)
+      this._unhandledRejectionHandler = null
+    }
+    if (this._beforeunloadHandler) {
+      window.removeEventListener('beforeunload', this._beforeunloadHandler)
+      this._beforeunloadHandler = null
+    }
+    window.onerror = null
+    this.initialized = false
   }
 }
 

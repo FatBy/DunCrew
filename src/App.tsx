@@ -1,29 +1,37 @@
-import { useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { WorldView } from '@/components/WorldView'
 import { Dock } from '@/components/Dock'
 import { HouseContainer } from '@/components/HouseContainer'
 import { ConnectionPanel } from '@/components/ConnectionPanel'
 import { ToastContainer } from '@/components/Toast'
+import { NotificationCenter } from '@/components/NotificationCenter'
+import { LocaleToggle } from '@/components/LocaleToggle'
 import { AIChatPanel } from '@/components/ai/AIChatPanel'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { BuildProposalModal } from '@/components/world/BuildProposalModal'
+import { SkillProposalCard } from '@/components/world/SkillProposalCard'
 import { ApprovalModal } from '@/components/ApprovalModal'
-import { NexusDetailPanel } from '@/components/world/NexusDetailPanel'
+import { DunDetailPanel } from '@/components/world/DunDetailPanel'
 import { InterruptedTasksWarning } from '@/components/InterruptedTasksWarning'
 import { CrashRecoveryBanner } from '@/components/CrashRecoveryBanner'
+import { UpdateBanner } from '@/components/UpdateBanner'
+import { FirstLaunchSetup } from '@/components/FirstLaunchSetup'
 import { useStore } from '@/store'
 import { getHouseById } from '@/houses/registry'
-import { openClawService } from '@/services/OpenClawService'
 import { localClawService } from '@/services/LocalClawService'
 import { skillStatsService } from '@/services/skillStatsService'
 import { memoryStore } from '@/services/memoryStore'
 import { getLocalSoulData, getLocalSkills, getLocalMemories } from '@/utils/localDataProvider'
 import { simpleVisualDNA } from '@/store/slices/worldSlice'
 import { createInitialScoring } from '@/types'
-import { restoreLLMConfigFromServer } from '@/services/llmService'
+import { restoreLLMConfigFromServer, injectStoreConfigReader } from '@/services/llmService'
 import { persistTaskHistory } from '@/store/slices/sessionsSlice'
+import { MEMORY_CACHE_STORAGE_KEY } from '@/store/slices/agentSlice'
 import { getCachedMBTIResult, getCachedAxes } from '@/services/mbtiAnalyzer'
+import { soulEvolutionService } from '@/services/soulEvolutionService'
+import { agentEventBus } from '@/services/agentEventBus'
+import type { ExecTrace } from '@/types'
 
 /**
  * 一次性迁移: 将 localStorage 中旧 ddos_ 前缀的数据移动到 duncrew_ 前缀
@@ -131,12 +139,18 @@ function App() {
   const currentView = useStore((s) => s.currentView)
   const currentHouse = getHouseById(currentView)
 
+  // 首次启动引导页
+  const [showSetup, setShowSetup] = useState(() => {
+    return !localStorage.getItem('duncrew_setup_done')
+  })
+
   // Initialize services on mount
   useEffect(() => {
+    let cancelRetry: (() => void) | null = null
+
     const storeActions = {
       // Connection
       setConnectionStatus: useStore.getState().setConnectionStatus,
-      setConnectionMode: useStore.getState().setConnectionMode,
       setConnectionError: useStore.getState().setConnectionError,
       setReconnectAttempt: useStore.getState().setReconnectAttempt,
       setReconnectCountdown: useStore.getState().setReconnectCountdown,
@@ -182,9 +196,6 @@ function App() {
       // AI 执行状态
       updateExecutionStatus: useStore.getState().updateExecutionStatus,
       
-      // Gateway sessions → DunCrew 对话回填
-      syncGatewaySessionsToConversations: useStore.getState().syncGatewaySessionsToConversations,
-      
       // Native 模式: Agent 任务上下文
       setCurrentTask: useStore.getState().setCurrentTask,
       
@@ -198,23 +209,50 @@ function App() {
       // P3: 危险操作审批
       requestApproval: useStore.getState().requestApproval,
       
-      // P4: Nexus 数据注入
-      setNexusesFromServer: useStore.getState().setNexusesFromServer,
-      setActiveNexus: useStore.getState().setActiveNexus,
-      updateNexusScoring: useStore.getState().updateNexusScoring,
-      bindSkillToNexus: useStore.getState().bindSkillToNexus,
-      getNexuses: () => useStore.getState().nexuses,
-      syncAgentsAsNexuses: useStore.getState().syncAgentsAsNexuses,
-      getConnectionMode: () => useStore.getState().connectionMode,
-      get activeNexusId() { return useStore.getState().activeNexusId },
-      get nexuses() { return useStore.getState().nexuses },
+      // P4: Dun 数据注入
+      setDunsFromServer: useStore.getState().setDunsFromServer,
+      setActiveDun: useStore.getState().setActiveDun,
+      updateDunScoring: useStore.getState().updateDunScoring,
+      updateDun: useStore.getState().updateDun,
+      bindSkillToDun: useStore.getState().bindSkillToDun,
+      getDuns: () => useStore.getState().duns,
+      syncAgentsAsDuns: useStore.getState().syncAgentsAsDuns,
+      get activeDunId() { return useStore.getState().activeDunId },
+      get duns() { return useStore.getState().duns },
     }
 
-    // 注入到 OpenClaw 服务 (兼容模式)
-    openClawService.injectStore(storeActions)
-    
+    // 注入 LinkStation Store 配置读取器到 llmService（避免循环依赖）
+    injectStoreConfigReader(
+      () => useStore.getState().getActiveChatConfig(),
+      () => useStore.getState().getActiveEmbedConfig(),
+      (channel: string) => useStore.getState().getChannelConfig(channel),
+    )
+
+    // 加载联络站持久化数据（含旧配置迁移）
+    useStore.getState().loadLinkStation()
+
     // 注入到 LocalClaw 服务 (Native 模式)
     localClawService.injectStore(storeActions as any)
+
+    // 注册连接生命周期回调 — App 层负责加载业务数据
+    const unsubConnected = localClawService.onConnected(async (isReconnect) => {
+      if (!isReconnect) {
+        // 首次连接: 加载所有持久化数据
+        try {
+          await useStore.getState().loadConversationsFromServer()
+          await useStore.getState().loadDunsFromServer()
+          await useStore.getState().loadBehaviorRecords()
+          await useStore.getState().loadSkillEnvValues()
+          console.log('[App] Loaded persisted data from server')
+        } catch (e) {
+          console.warn('[App] Failed to load persisted data:', e)
+        }
+        // 重新加载启动时可能失败的数据
+        useStore.getState().loadLinkStation()
+        soulEvolutionService.init().catch(() => {})
+      }
+      // 重连时不重新加载全部数据，避免覆盖用户本地操作
+    })
 
     // 注入 SkillStats → Store 响应式桥接
     skillStatsService.injectStoreRefresh(() => {
@@ -226,11 +264,20 @@ function App() {
       useStore.getState().appendMemoryCacheEntries(entries)
     })
 
-    // 自动重连: 恢复上次的连接状态
-    const savedMode = localStorage.getItem('duncrew_connection_mode')
     
     // LLM 配置自动恢复：先尝试从后端恢复，再检查localStorage
     const tryRestoreLLMConfig = async () => {
+      // 如果 LinkStation 已有有效配置，跳过后端恢复
+      try {
+        const storeState = useStore.getState()
+        const linkStationConfig = storeState.getActiveChatConfig?.()
+        if (linkStationConfig?.apiKey && linkStationConfig?.baseUrl && linkStationConfig?.model) {
+          storeState.setLlmConnected(true)
+          console.log('[App] LLM config already available from LinkStation, skipping server restore')
+          return
+        }
+      } catch {}
+
       // 先尝试从后端文件系统恢复（解决跨端口问题）
       const serverConfig = await restoreLLMConfigFromServer()
       
@@ -249,109 +296,97 @@ function App() {
     }
     tryRestoreLLMConfig()
 
-    // 种子 Nexus: 仅在后端未加载 Nexus 时作为 fallback
-    // Phase 4: 实际 Nexus 数据将从 /nexuses API 加载
+    // 种子 Dun: 仅在后端未加载 Dun 时作为 fallback
+    // Phase 4: 实际 Dun 数据将从 /duns API 加载
     // 延迟 3 秒检查，给后端加载留出时间
     setTimeout(() => {
       const state = useStore.getState()
-      // 如果后端已经加载了 nexuses (通过 loadAllDataToStore)，则跳过
-      if (state.nexuses.size === 0) {
-        const seedNexusId = 'skill-scout'
-        useStore.getState().addNexus({
-          id: seedNexusId,
+      // 如果后端已经加载了 duns (通过 loadAllDataToStore)，则跳过
+      if (state.duns.size === 0) {
+        const seedDunId = 'skill-scout'
+        useStore.getState().addDun({
+          id: seedDunId,
           position: { gridX: 3, gridY: -2 },
           scoring: createInitialScoring(),
-          visualDNA: simpleVisualDNA(seedNexusId),
+          visualDNA: simpleVisualDNA(seedDunId),
           label: 'Skill Scout',
           constructionProgress: 1,
           createdAt: Date.now(),
           boundSkillIds: ['skill-scout', 'skill-generator'],
           flavorText: '持续扫描全球 SKILL 社区，发现并安装新能力',
         })
-        console.log('[App] Fallback: Seeded Nexus (backend not available)')
+        console.log('[App] Fallback: Seeded Dun (backend not available)')
       }
     }, 3000)
 
-    if (savedMode) {
-      useStore.getState().setConnectionMode(savedMode as 'native' | 'openclaw')
+    // 迁移旧 localStorage key (ddos_ → duncrew_)
+    migrateLocalStorageKeys()
 
-      if (savedMode === 'native') {
-        // 迁移旧 localStorage key (ddos_ → duncrew_)
-        migrateLocalStorageKeys()
+    // 清理 OpenClaw 遗留 localStorage 数据
+    localStorage.removeItem('openclaw_auth_token')
+    localStorage.removeItem('openclaw_gateway_url')
+    localStorage.removeItem('duncrew_connection_mode')
 
-        // 立即从 localStorage 恢复缓存数据 (无需等待服务器)
-        restoreLocalCacheToStore(storeActions)
+    // 立即从 localStorage 恢复缓存数据 (无需等待服务器)
+    restoreLocalCacheToStore(storeActions)
 
-        // Native 模式: 静默尝试连接本地服务器
-        console.log('[App] Auto-reconnecting to Native server...')
-        localClawService.connect().then(async success => {
-          if (success) {
-            console.log('[App] Auto-reconnect successful')
-            
-            // 从后端加载持久化数据 (会话、Nexus 状态)
-            try {
-              await useStore.getState().loadConversationsFromServer()
-              await useStore.getState().loadNexusesFromServer()
-              await useStore.getState().loadBehaviorRecords()
-              await useStore.getState().loadSkillEnvValues()
-              console.log('[App] Loaded persisted data from server')
-            } catch (e) {
-              console.warn('[App] Failed to load persisted data:', e)
-            }
-          } else {
-            console.log('[App] Auto-reconnect failed, server may not be running')
-            // 静默失败 - 不显示错误状态，保持断开
-            useStore.getState().setConnectionStatus('disconnected')
-            useStore.getState().setSessionsLoading(false)
-            useStore.getState().setChannelsLoading(false)
-            useStore.getState().setDevicesLoading(false)
-          }
-        })
-      } else if (savedMode === 'openclaw') {
-        // OpenClaw 模式: 使用保存的凭据重连
-        const savedToken = localStorage.getItem('openclaw_auth_token')
-        const savedGateway = localStorage.getItem('openclaw_gateway_url')
-        if (savedToken && savedGateway) {
-          console.log('[App] Auto-reconnecting to OpenClaw...')
-          openClawService.setGatewayUrl(savedGateway)
-          openClawService.setAuthToken(savedToken)
-          openClawService.connect()
-          // 恢复本地持久化的对话数据（与 Native 模式一致）
-          useStore.getState().loadConversationsFromServer().catch((e) => {
-            console.warn('[App] Failed to load conversations for OpenClaw mode:', e)
-          })
-          // 恢复 Nexus 持久化数据
-          useStore.getState().loadNexusesFromServer().catch((e) => {
-            console.warn('[App] Failed to load nexuses for OpenClaw mode:', e)
-          })
+    // 自动连接到本地服务器 (指数退避, 首次启动宽容重试)
+    cancelRetry = localClawService.autoConnect(true)
+
+    // Issue #8: 初始化 soulEvolutionService（加载修正案、启动衰减定时器）
+    soulEvolutionService.init().catch((err) => {
+      console.warn('[App] soulEvolutionService.init failed:', err)
+    })
+
+    // Issue #8: 订阅 run_end 事件 → 驱动灵魂演化
+    const unsubSoulEvolution = agentEventBus.subscribe((event) => {
+      if (event.type === 'run_end') {
+        const dunId = event.dunId || (event.data?.dunId as string | undefined) || ''
+        // 从事件数据中重建轻量 ExecTrace（soulEvolutionService 只需 id/task/success）
+        const trace: ExecTrace = {
+          id: event.runId,
+          task: (event.data?.task as string | undefined) || event.runId,
+          tools: [],
+          success: (event.data?.success as boolean | undefined) ?? true,
+          duration: (event.data?.durationMs as number | undefined) ?? 0,
+          timestamp: event.ts,
+          tags: [],
         }
+        soulEvolutionService.onTraceCompleted(trace, dunId)
       }
-    } else {
-      // 首次使用: 所有 loading 设为 false 以显示默认内容
-      useStore.getState().setSessionsLoading(false)
-      useStore.getState().setChannelsLoading(false)
-      useStore.getState().setDevicesLoading(false)
-    }
+    })
 
     // Cleanup on unmount
     return () => {
-      openClawService.disconnect()
+      if (cancelRetry) cancelRetry()
+      unsubConnected()
       localClawService.disconnect()
+      unsubSoulEvolution()
+      soulEvolutionService.destroy()
     }
   }, [])
 
   // 刷新前持久化任务状态，防止数据丢失
   useEffect(() => {
     const handleBeforeUnload = () => {
-      const { activeExecutions, nexuses } = useStore.getState()
+      const { activeExecutions, duns, memoryCacheRaw } = useStore.getState()
       if (activeExecutions.length > 0) {
         persistTaskHistory(activeExecutions)
       }
-      // 安全网：确保 Nexus 数据写入 localStorage
-      if (nexuses.size > 0) {
+      // 安全网：确保 Dun 数据写入 localStorage
+      if (duns.size > 0) {
         try {
-          const arr = Array.from(nexuses.values())
-          localStorage.setItem('duncrew_nexuses', JSON.stringify(arr))
+          const arr = Array.from(duns.values())
+          localStorage.setItem('duncrew_duns', JSON.stringify(arr))
+        } catch (_) { /* ignore */ }
+      }
+      // 安全网：确保记忆缓存写入 localStorage（防抖可能未触发）
+      if (memoryCacheRaw.length > 0) {
+        try {
+          const toCache = memoryCacheRaw
+            .filter(r => r.source === 'memory' || r.source === 'l1_memory')
+            .slice(0, 300)
+          localStorage.setItem(MEMORY_CACHE_STORAGE_KEY, JSON.stringify(toCache))
         } catch (_) { /* ignore */ }
       }
     }
@@ -396,12 +431,14 @@ function App() {
       {/* AI Chat panel - Blueprint AssistantModal */}
       <AIChatPanel />
 
-      {/* Observer: Nexus build proposal modal */}
+      {/* Observer: Dun build proposal modal */}
       <BuildProposalModal />
+      {/* Observer: Skill discovery proposal card */}
+      <SkillProposalCard />
       <ApprovalModal />
 
-      {/* Nexus detail panel */}
-      <NexusDetailPanel />
+      {/* Dun detail panel */}
+      <DunDetailPanel />
 
       {/* Interrupted tasks warning */}
       <InterruptedTasksWarning />
@@ -409,8 +446,24 @@ function App() {
       {/* Crash recovery banner */}
       <CrashRecoveryBanner />
 
+      {/* Auto-update banner */}
+      <UpdateBanner />
+
       {/* Toast notifications */}
       <ToastContainer />
+
+      {/* Notification Center & Locale Toggle - fixed top-right */}
+      <div className="fixed top-3 right-4 z-[9998] flex items-center gap-2">
+        <LocaleToggle />
+        <NotificationCenter />
+      </div>
+
+      {/* 首次启动引导 */}
+      <AnimatePresence>
+        {showSetup && (
+          <FirstLaunchSetup onComplete={() => setShowSetup(false)} />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

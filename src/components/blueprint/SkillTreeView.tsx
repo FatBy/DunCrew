@@ -11,9 +11,11 @@ import { useEffect, useMemo, useRef, useState, useLayoutEffect, useCallback } fr
 import { Network, Sparkles, X, Loader2, RefreshCw, Info } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '@/store'
+import { useT, tt } from '@/i18n'
 import { SkillDetailCard } from '@/components/houses/skill/SkillDetailCard'
 import { SkillDetailsDrawer } from '@/components/houses/skill/SkillDetailsDrawer'
-import type { SkillNode } from '@/types'
+import { mapSkillToUIModel } from '@/utils/skillsHouseMapper'
+import type { SkillNode, DunEntity } from '@/types'
 import type { StructuredSkillAnalysis } from '@/store/slices/channelsSlice'
 
 // ── 粒子数据结构 ──
@@ -54,10 +56,10 @@ function skillHue(name: string): number {
 
 // 静态回退摘要（LLM 未配置或调用失败时使用）
 function fallbackSummary(skills: SkillNode[]): string {
-  if (skills.length === 0) return '核心引擎待命中，等待技能模块挂载...'
+  if (skills.length === 0) return tt('skill.engine_idle')
   const active = skills.filter(s => s.unlocked || s.status === 'active')
-  if (active.length === 0) return `已加载 ${skills.length} 项技能但均未激活。`
-  return `已挂载 ${active.length}/${skills.length} 项活跃技能，能力就绪。`
+  if (active.length === 0) return tt('skill.loaded_inactive').replace('{0}', String(skills.length))
+  return tt('skill.mounted_active').replace('{0}', String(active.length)).replace('{1}', String(skills.length))
 }
 
 // 域覆盖颜色映射
@@ -72,16 +74,17 @@ function coverageColor(coverage: string): string {
 
 function coverageLabel(coverage: string): string {
   switch (coverage) {
-    case 'strong': return '强'
-    case 'moderate': return '中'
-    case 'weak': return '弱'
-    default: return '缺失'
+    case 'strong': return tt('skill.coverage_strong')
+    case 'moderate': return tt('skill.coverage_moderate')
+    case 'weak': return tt('skill.coverage_weak')
+    default: return tt('skill.coverage_missing')
   }
 }
 
 export function SkillTreeView() {
+  const t = useT()
   const skills = useStore((s) => s.skills)
-  const nexuses = useStore((s) => s.nexuses)
+  const duns = useStore((s) => s.duns)
   const openClawSkills = useStore((s) => s.openClawSkills)
   const skillEnvValues = useStore((s) => s.skillEnvValues)
   const setSkillEnvValue = useStore((s) => s.setSkillEnvValue)
@@ -131,11 +134,11 @@ export function SkillTreeView() {
 
   // ── 聚合评分 ──
   const avgScore = useMemo(() => {
-    const arr = Array.from(nexuses.values())
+    const arr: DunEntity[] = Array.from(duns.values())
     if (arr.length === 0) return 0
     const total = arr.reduce((s, n) => s + (n.scoring?.score ?? 0), 0)
     return Math.round(total / arr.length)
-  }, [nexuses])
+  }, [duns])
 
   const activeCount = useMemo(() => skills.filter(s => s.unlocked || s.status === 'active').length, [skills])
 
@@ -405,6 +408,12 @@ export function SkillTreeView() {
     ? skillEnvValues[selectedOpenClaw.name] || emptyEnv
     : emptyEnv
 
+  // 转换为 UISkillModel 供 SkillDetailCard 使用
+  const selectedUIModel = useMemo(() =>
+    selectedOpenClaw ? mapSkillToUIModel(selectedOpenClaw, currentEnvValues) : null,
+    [selectedOpenClaw, currentEnvValues]
+  )
+
   const handleEnvChange = useCallback((key: string, val: string) => {
     if (selectedOpenClaw) setSkillEnvValue(selectedOpenClaw.name, key, val)
   }, [selectedOpenClaw, setSkillEnvValue])
@@ -493,7 +502,7 @@ export function SkillTreeView() {
               )}
               <span className="text-[10px] font-black text-slate-200 tracking-wider mb-2">DunCrew CORE</span>
               <p className="text-[11px] text-stone-400 leading-[1.7] line-clamp-4 max-w-[180px]">
-                {summaryLoading ? '正在分析技能矩阵...' : displaySummary}
+                {summaryLoading ? t('skill.analyzing') : displaySummary}
               </p>
             </div>
 
@@ -523,29 +532,29 @@ export function SkillTreeView() {
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-1.5">
                     <Info className="w-3.5 h-3.5 text-cyan-500" />
-                    <span className="text-xs font-black text-stone-700">评分说明</span>
+                    <span className="text-xs font-black text-stone-700">{t('skill.score_title')}</span>
                   </div>
                   <button onClick={() => setShowScoreTooltip(false)} className="w-5 h-5 rounded-md bg-stone-100 hover:bg-rose-50 flex items-center justify-center transition-colors">
                     <X className="w-3 h-3 text-stone-400" />
                   </button>
                 </div>
                 <div className="space-y-2 text-[11px] text-stone-500 leading-relaxed">
-                  <p><strong className="text-stone-700">SCORE</strong> 是所有 Nexus 的平均执行表现分（0-100）</p>
+                  <p><strong className="text-stone-700">SCORE</strong> {t('skill.score_desc')}</p>
                   <div className="space-y-1">
-                    <p>• 任务<strong className="text-emerald-600">成功</strong>：+3 分（连胜额外加分，复杂任务额外加分）</p>
-                    <p>• 任务<strong className="text-red-500">失败</strong>：-5 分（连败加重扣分）</p>
-                    <p>• 初始分数：50 分</p>
+                    <p>• <strong className="text-emerald-600">{t('skill.score_success')}</strong></p>
+                    <p>• <strong className="text-red-500">{t('skill.score_fail')}</strong></p>
+                    <p>• {t('skill.score_initial')}</p>
                   </div>
                   <div className="pt-1.5 border-t border-stone-100 text-[10px] text-stone-400">
-                    <p>分数越高代表 Agent 执行任务的稳定性越强</p>
+                    <p>{t('skill.score_meaning')}</p>
                     {(() => {
-                      const nexusArr = Array.from(nexuses.values())
-                      const totalRuns = nexusArr.reduce((s, n) => s + (n.scoring?.totalRuns ?? 0), 0)
-                      const totalSuccess = nexusArr.reduce((s, n) => s + (n.scoring?.successCount ?? 0), 0)
+                      const dunArr: DunEntity[] = Array.from(duns.values())
+                      const totalRuns = dunArr.reduce((s, n) => s + (n.scoring?.totalRuns ?? 0), 0)
+                      const totalSuccess = dunArr.reduce((s, n) => s + (n.scoring?.successCount ?? 0), 0)
                       return totalRuns > 0 ? (
-                        <p className="mt-1">累计执行 {totalRuns} 次，成功 {totalSuccess} 次（{Math.round(totalSuccess / totalRuns * 100)}%）</p>
+                        <p className="mt-1">{t('skill.total_runs').replace('{0}', String(totalRuns)).replace('{1}', String(totalSuccess)).replace('{2}', String(Math.round(totalSuccess / totalRuns * 100)))}</p>
                       ) : (
-                        <p className="mt-1">暂无执行记录</p>
+                        <p className="mt-1">{t('skill.no_runs')}</p>
                       )
                     })()}
                   </div>
@@ -571,9 +580,9 @@ export function SkillTreeView() {
 
         {/* ── 点击详情卡片 ── */}
         <AnimatePresence>
-          {selectedSkill && selectedOpenClaw && (
+          {selectedSkill && selectedUIModel && (
             <SkillDetailCard
-              skill={selectedOpenClaw}
+              skill={selectedUIModel}
               x={selectedSkill.sx}
               y={selectedSkill.sy}
               envValues={currentEnvValues}
@@ -598,7 +607,7 @@ export function SkillTreeView() {
           <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
             <div className="text-center">
               <Sparkles className="w-8 h-8 text-stone-400 mx-auto mb-2" />
-              <p className="text-sm text-stone-400">等待技能加载...</p>
+              <p className="text-sm text-stone-400">{t('skill.loading')}</p>
             </div>
           </div>
         )}
@@ -625,9 +634,9 @@ export function SkillTreeView() {
                 <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100 bg-gradient-to-r from-cyan-50/50 to-purple-50/50">
                   <div className="flex items-center gap-2">
                     <Network className="w-4 h-4 text-cyan-500" />
-                    <span className="text-sm font-black text-stone-700">Agent 能力画像</span>
+                    <span className="text-sm font-black text-stone-700">{t('skill.profile_title')}</span>
                     <span className="text-[10px] text-stone-400 bg-stone-100 px-2 py-0.5 rounded-full">
-                      {skills.length} 项技能
+                      {skills.length} {t('skill.skills_unit')}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -635,7 +644,7 @@ export function SkillTreeView() {
                       onClick={() => generateAnalysis('full')}
                       disabled={summaryLoading}
                       className="w-7 h-7 rounded-lg bg-stone-100 hover:bg-cyan-50 flex items-center justify-center transition-colors disabled:opacity-50"
-                      title="重新分析"
+                      title={t('skill.refresh')}
                     >
                       <RefreshCw className={`w-3.5 h-3.5 text-stone-500 ${summaryLoading ? 'animate-spin' : ''}`} />
                     </button>
@@ -653,21 +662,21 @@ export function SkillTreeView() {
                   {summaryLoading ? (
                     <div className="flex flex-col items-center justify-center py-10 gap-3">
                       <Loader2 className="w-6 h-6 text-cyan-400 animate-spin" />
-                      <p className="text-xs text-stone-400">正在分析技能矩阵...</p>
+                      <p className="text-xs text-stone-400">{t('skill.analyzing')}</p>
                     </div>
                   ) : structuredAnalysis ? (
                     <div className="space-y-4">
                       {/* 核心优势 */}
                       {structuredAnalysis.coreStrengths && (
                         <div>
-                          <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1.5">✦ 核心优势</h4>
+                          <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1.5">{t('skill.core_strengths')}</h4>
                           <p className="text-xs text-stone-600 leading-relaxed">{structuredAnalysis.coreStrengths}</p>
                         </div>
                       )}
 
                       {/* 能力域覆盖 */}
                       <div>
-                        <h4 className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">能力域覆盖</h4>
+                        <h4 className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">{t('skill.domain_coverage')}</h4>
                         <div className="grid grid-cols-2 gap-2">
                           {structuredAnalysis.domains.map(domain => (
                             <div key={domain.name} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-stone-50 border border-stone-100">
@@ -675,7 +684,7 @@ export function SkillTreeView() {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center justify-between">
                                   <p className="text-xs font-bold text-stone-700 truncate">{domain.name}</p>
-                                  <span className="text-[10px] text-stone-400 ml-1 flex-shrink-0">{domain.skillCount} 项</span>
+                                  <span className="text-[10px] text-stone-400 ml-1 flex-shrink-0">{t('skill.domain_count').replace('{0}', String(domain.skillCount))}</span>
                                 </div>
                                 <p className="text-[10px] text-stone-400">
                                   {coverageLabel(domain.coverage)}
@@ -690,7 +699,7 @@ export function SkillTreeView() {
                       {/* 薄弱领域 */}
                       {structuredAnalysis.weaknesses && (
                         <div>
-                          <h4 className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1.5">⚠ 薄弱领域</h4>
+                          <h4 className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1.5">{t('skill.weaknesses')}</h4>
                           <p className="text-xs text-stone-600 leading-relaxed">{structuredAnalysis.weaknesses}</p>
                         </div>
                       )}
@@ -702,7 +711,7 @@ export function SkillTreeView() {
                         onClick={() => generateAnalysis('full')}
                         className="mt-3 px-4 py-1.5 text-xs text-cyan-500 bg-cyan-50 rounded-lg hover:bg-cyan-100 transition-colors"
                       >
-                        生成结构化分析
+                        {t('skill.generate_analysis')}
                       </button>
                     </div>
                   )}
@@ -711,7 +720,7 @@ export function SkillTreeView() {
                 {/* 底栏 */}
                 <div className="px-5 py-3 border-t border-stone-100 bg-stone-50/50 flex items-center justify-between">
                   <span className="text-[10px] text-stone-400">
-                    {skills.length} 项技能 / {activeCount} 项活跃
+                    {t('skill.skills_active').replace('{0}', String(skills.length)).replace('{1}', String(activeCount))}
                   </span>
                   <div className="flex items-center gap-3">
                     {avgScore > 0 && (

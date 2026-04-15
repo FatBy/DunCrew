@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { List, X, Bot } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { TableOfContents, type HeadingItem } from './TableOfContents'
+import { useT } from '@/i18n'
 
 function slugify(text: string): string {
   return text
@@ -53,6 +54,7 @@ interface DocumentViewProps {
 }
 
 export function DocumentView({ content, containerWidth = 'main' }: DocumentViewProps) {
+  const t = useT()
   const [tocOpen, setTocOpen] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const isMain = containerWidth === 'main'
@@ -78,12 +80,12 @@ export function DocumentView({ content, containerWidth = 'main' }: DocumentViewP
                 className="flex items-center gap-1.5 text-xs font-mono text-stone-400 hover:text-cyan-400 transition-colors"
               >
                 <List className="w-3.5 h-3.5" />
-                <span>目录 ({headings.length})</span>
+                <span>{t('doc.toc')} ({headings.length})</span>
               </button>
             )}
             {isMain && (
               <span className="text-xs font-mono text-stone-300">
-                {headings.length} 个章节
+                {headings.length} {t('doc.sections_count')}
               </span>
             )}
           </div>
@@ -128,7 +130,7 @@ export function DocumentView({ content, containerWidth = 'main' }: DocumentViewP
                 className="fixed left-0 top-0 bottom-0 w-[280px] bg-white/95 backdrop-blur-sm border-r border-stone-200 z-50 py-4 px-2 overflow-y-auto"
               >
                 <div className="flex items-center justify-between px-2 mb-3">
-                  <span className="text-xs font-mono text-stone-500">文档目录</span>
+                  <span className="text-xs font-mono text-stone-500">{t('doc.toc_title')}</span>
                   <button
                     onClick={() => setTocOpen(false)}
                     className="text-stone-400 hover:text-stone-600 transition-colors"

@@ -12,7 +12,6 @@
 
 import type { Gene, GeneMatch, Capsule, ExecTraceToolCall } from '@/types'
 import { extractSignals, rankGenes, signalOverlap, classifyErrorType } from '@/utils/signalMatcher'
-import { nexusRuleEngine } from './nexusRuleEngine'
 import { getServerUrl } from '@/utils/env'
 
 const SERVER_URL = getServerUrl()
@@ -470,7 +469,7 @@ class GenePoolService {
       let weight = 1.0
 
       // 同 Nexus 产生的基因: 更可信
-      if (currentNexusId && match.gene.source.nexusId === currentNexusId) {
+      if (currentNexusId && match.gene.source.dunId === currentNexusId) {
         weight *= 1.5
       } else if (match.gene.signals_match.some(s => s.toLowerCase() === toolName.toLowerCase())) {
         // 不同 Nexus 但匹配同工具名: 中等可信
@@ -531,14 +530,14 @@ class GenePoolService {
   /**
    * 记录基因使用结果 (Capsule)，并更新基因元数据
    */
-  recordCapsule(geneId: string, trigger: string[], outcome: 'success' | 'failure', nexusId?: string): void {
+  recordCapsule(geneId: string, trigger: string[], outcome: 'success' | 'failure', dunId?: string): void {
     // 记录胶囊
     const capsule: Capsule = {
       id: `capsule-${Date.now()}`,
       geneId,
       trigger,
       outcome,
-      nexusId,
+      dunId,
       timestamp: Date.now(),
     }
     this.capsules.push(capsule)
@@ -559,12 +558,7 @@ class GenePoolService {
         gene.metadata.successCount++
         gene.metadata.confidence = Math.min(CONFIDENCE_CAP, gene.metadata.confidence + CONFIDENCE_BOOST)
 
-        // 优化1: Gene → Rule 反馈信号
-        // 基因成功使用 → 通知规则引擎降级相关错误规则
-        const toolSignal = gene.signals_match.find(s => !s.includes(' ') && s.length < 30)
-        if (toolSignal && nexusId) {
-          nexusRuleEngine.deactivateRelatedRules(nexusId, toolSignal)
-        }
+        // 优化1: Gene → Rule 反馈信号 (Rule Engine 已移除)
       } else {
         // 优化2: 按错误类型分级衰减
         const errorContext = trigger.join(' ')
@@ -602,7 +596,7 @@ class GenePoolService {
    * 从执行追踪中自动收割基因
    * 检测 error → ... → success 模式 (同一工具名)
    */
-  harvestGene(traceTools: ExecTraceToolCall[], _userPrompt: string, nexusId?: string): void {
+  harvestGene(traceTools: ExecTraceToolCall[], _userPrompt: string, dunId?: string): void {
     if (traceTools.length < 2) return
 
     // 按 order 排序
@@ -664,7 +658,7 @@ class GenePoolService {
           preconditions,
           source: {
             traceId: `trace-${sorted[0].order}`,
-            nexusId,
+            dunId,
             createdAt: Date.now(),
           },
           metadata: {

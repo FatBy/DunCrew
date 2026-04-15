@@ -83,8 +83,8 @@ export function SoulCoreAvatar({ mbtiResult, identity, loading }: SoulCoreAvatar
         </div>
         <div className="text-xs text-gray-400 font-mono mt-1">
           {mbtiResult
-            ? `${mbtiResult.group} / ${identity?.name || 'AI Agent'}`
-            : identity?.essence || 'Digital Soul Core'}
+            ? `${mbtiResult.group} / ${identity?.name || '智能体'}`
+            : identity?.essence || '数字灵魂核心'}
         </div>
         {mbtiResult && (
           <div className="mt-4 flex gap-2 justify-center flex-wrap">

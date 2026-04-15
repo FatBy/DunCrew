@@ -3,7 +3,7 @@ chcp 65001 >nul
 title DunCrew Standalone
 
 :: 设置数据目录
-set DUNCREW_DATA_PATH=%USERPROFILE%\.duncrew
+set DUNCREW_DATA_PATH=%USERPROFILE%\DunCrew-Data
 
 echo.
 echo  DunCrew Standalone Server

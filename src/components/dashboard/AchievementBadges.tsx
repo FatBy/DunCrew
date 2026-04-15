@@ -4,11 +4,11 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { nexusAchievementService } from '@/services/nexusAchievementService'
-import { ACHIEVEMENTS, type AchievementId, type AchievementDef } from './nexusGrowth'
+import { dunAchievementService } from '@/services/dunAchievementService'
+import { ACHIEVEMENTS, type AchievementId, type AchievementDef } from './dunGrowth'
 
 interface AchievementBadgesProps {
-  nexusId: string
+  dunId: string
 }
 
 const TIER_COLORS: Record<string, string> = {
@@ -17,13 +17,13 @@ const TIER_COLORS: Record<string, string> = {
   bronze: '#d97706',
 }
 
-export function AchievementBadges({ nexusId }: AchievementBadgesProps) {
+export function AchievementBadges({ dunId }: AchievementBadgesProps) {
   const [earned, setEarned] = useState<AchievementId[]>([])
   const [selectedBadge, setSelectedBadge] = useState<AchievementDef | null>(null)
 
   useEffect(() => {
-    setEarned(nexusAchievementService.getAchievements(nexusId))
-  }, [nexusId])
+    setEarned(dunAchievementService.getAchievements(dunId))
+  }, [dunId])
 
   if (earned.length === 0 && ACHIEVEMENTS.length === 0) return null
 

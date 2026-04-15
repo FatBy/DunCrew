@@ -15,7 +15,7 @@
  * - confidence >= 0.65
  * - signals >= 2
  *
- * 追踪粒度：按 nexusId + toolName 聚合（而非按 callId），支持跨循环信号积累
+ * 追踪粒度：按 dunId + toolName 聚合（而非按 callId），支持跨循环信号积累
  * 持久化：localStorage，页面刷新不丢失
  *
  * L0 衰减：半衰期 30 天
@@ -24,8 +24,8 @@
 import type { ConfidenceSignal, L1MemoryEntry } from '@/types'
 import { CONFIDENCE_SIGNALS, L0_PROMOTION_CONFIG } from '@/types'
 import { memoryStore } from './memoryStore'
-import { chat, isLLMConfigured } from './llmService'
-import { PROMOTION_PROMPT, parsePromotionResult } from '@/utils/memoryPromotion'
+import { chatBackground, isLLMConfigured } from './llmService'
+import { PROMOTION_PROMPT, parsePromotionResult, classifyMemoryContent } from '@/utils/memoryPromotion'
 import { getServerUrl } from '@/utils/env'
 
 const TRACKER_STORAGE_KEY = 'duncrew_confidence_tracker'
@@ -118,7 +118,7 @@ class ConfidenceTrackerService {
       const entries = Array.from(this.trackedEntries.values())
       const trimmed = entries
         .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, 500)
+        .slice(0, 2000)  // localStorage 5MB 配额，2000 条约 1-2MB
       localStorage.setItem(TRACKER_STORAGE_KEY, JSON.stringify(trimmed))
     } catch {
       console.warn('[ConfidenceTracker] Failed to save to storage')
@@ -128,12 +128,13 @@ class ConfidenceTrackerService {
   // ═══ 条目管理 ═══
 
   /** 创建新的追踪条目 */
-  trackEntry(memoryId: string, nexusId: string, content: string, initialConfidence?: number): void {
+  async trackEntry(memoryId: string, dunId: string, content: string, initialConfidence?: number): Promise<void> {
+    await this.readyPromise
     if (this.trackedEntries.has(memoryId)) return
 
     const entry: L1MemoryEntry = {
       id: memoryId,
-      nexusId,
+      dunId,
       content,
       confidence: initialConfidence ?? L0_PROMOTION_CONFIG.INITIAL_CONFIDENCE,
       signals: [],
@@ -147,20 +148,34 @@ class ConfidenceTrackerService {
   }
 
   /** 获取追踪条目 */
-  getEntry(memoryId: string): L1MemoryEntry | undefined {
+  async getEntry(memoryId: string): Promise<L1MemoryEntry | undefined> {
+    await this.readyPromise
     return this.trackedEntries.get(memoryId)
   }
 
-  /** 获取某个 Nexus 的所有追踪条目 */
-  getEntriesByNexus(nexusId: string): L1MemoryEntry[] {
+  /** 获取某个 Dun 的所有追踪条目 */
+  async getEntriesByDun(dunId: string): Promise<L1MemoryEntry[]> {
+    await this.readyPromise
     return Array.from(this.trackedEntries.values())
-      .filter(e => e.nexusId === nexusId)
+      .filter(e => e.dunId === dunId)
+  }
+
+  /** 批量获取追踪条目（单次 await，替代逐条 getEntry 的 N+1 调用） */
+  async getEntriesBatch(ids: string[]): Promise<Map<string, L1MemoryEntry>> {
+    await this.readyPromise
+    const result = new Map<string, L1MemoryEntry>()
+    for (const id of ids) {
+      const entry = this.trackedEntries.get(id)
+      if (entry) result.set(id, entry)
+    }
+    return result
   }
 
   // ═══ 信号收集 ═══
 
   /** 添加置信度信号 */
-  addSignal(memoryId: string, signal: ConfidenceSignal): void {
+  async addSignal(memoryId: string, signal: ConfidenceSignal): Promise<void> {
+    await this.readyPromise
     const entry = this.trackedEntries.get(memoryId)
     if (!entry) return
 
@@ -171,8 +186,8 @@ class ConfidenceTrackerService {
   }
 
   /** 环境验证信号 (Critic 验证结果) */
-  addEnvironmentSignal(memoryId: string, verified: boolean): void {
-    this.addSignal(memoryId, {
+  async addEnvironmentSignal(memoryId: string, verified: boolean): Promise<void> {
+    await this.addSignal(memoryId, {
       type: 'environment',
       delta: verified ? CONFIDENCE_SIGNALS.ENVIRONMENT_ASSERTION : -CONFIDENCE_SIGNALS.ENVIRONMENT_ASSERTION * 0.5,
       source: verified ? 'critic_verified' : 'critic_failed',
@@ -181,8 +196,8 @@ class ConfidenceTrackerService {
   }
 
   /** 人类反馈信号 */
-  addHumanFeedback(memoryId: string, positive: boolean): void {
-    this.addSignal(memoryId, {
+  async addHumanFeedback(memoryId: string, positive: boolean): Promise<void> {
+    await this.addSignal(memoryId, {
       type: 'human_feedback',
       delta: positive ? CONFIDENCE_SIGNALS.HUMAN_POSITIVE : CONFIDENCE_SIGNALS.HUMAN_NEGATIVE,
       source: positive ? 'user_approved' : 'user_rejected',
@@ -191,8 +206,8 @@ class ConfidenceTrackerService {
   }
 
   /** 系统失败信号 */
-  addFailureSignal(memoryId: string): void {
-    this.addSignal(memoryId, {
+  async addFailureSignal(memoryId: string): Promise<void> {
+    await this.addSignal(memoryId, {
       type: 'system_failure',
       delta: CONFIDENCE_SIGNALS.SYSTEM_FAILURE,
       source: 'tool_failure',
@@ -201,8 +216,8 @@ class ConfidenceTrackerService {
   }
 
   /** 基因匹配信号 */
-  addGeneMatchSignal(memoryId: string): void {
-    this.addSignal(memoryId, {
+  async addGeneMatchSignal(memoryId: string): Promise<void> {
+    await this.addSignal(memoryId, {
       type: 'environment',
       delta: CONFIDENCE_SIGNALS.GENE_MATCH,
       source: 'gene_match',
@@ -211,8 +226,8 @@ class ConfidenceTrackerService {
   }
 
   /** 同类工具重复成功信号 */
-  addRepeatedSuccessSignal(memoryId: string): void {
-    this.addSignal(memoryId, {
+  async addRepeatedSuccessSignal(memoryId: string): Promise<void> {
+    await this.addSignal(memoryId, {
       type: 'environment',
       delta: CONFIDENCE_SIGNALS.REPEATED_SUCCESS,
       source: 'repeated_success',
@@ -223,11 +238,13 @@ class ConfidenceTrackerService {
   // ═══ 晋升评估 ═══
 
   /**
-   * 评估某个 Nexus 下可晋升到 L0 的记忆条目
+   * 评估某个 Dun 下可晋升到 L0 的记忆条目
    * 条件：confidence >= PROMOTION_THRESHOLD && signals.length >= MIN_SIGNALS
    */
-  evaluatePromotions(nexusId: string): L1MemoryEntry[] {
-    return this.getEntriesByNexus(nexusId).filter(entry =>
+  async evaluatePromotions(dunId: string): Promise<L1MemoryEntry[]> {
+    await this.readyPromise
+    const entries = await this.getEntriesByDun(dunId)
+    return entries.filter(entry =>
       !entry.promotedToL0 &&
       entry.confidence >= L0_PROMOTION_CONFIG.PROMOTION_THRESHOLD &&
       entry.signals.length >= L0_PROMOTION_CONFIG.MIN_SIGNALS_FOR_PROMOTION,
@@ -235,30 +252,30 @@ class ConfidenceTrackerService {
   }
 
   /** 安全版：await readyPromise 后再评估晋升 */
-  async evaluatePromotionsSafe(nexusId: string): Promise<L1MemoryEntry[]> {
-    await this.readyPromise
-    return this.evaluatePromotions(nexusId)
+  async evaluatePromotionsSafe(dunId: string): Promise<L1MemoryEntry[]> {
+    return this.evaluatePromotions(dunId)
   }
 
   /**
    * 将高置信度 L1 记忆晋升到 L0 全局记忆
-   * V2: 聚合同 Nexus 的多条 L1 记忆，调用 LLM 生成语义摘要后通过 writeWithDedup 写入
+   * V2: 聚合同 Dun 的多条 L1 记忆，调用 LLM 生成语义摘要后通过 writeWithDedup 写入
    */
   async promoteToL0(entries: L1MemoryEntry[]): Promise<number> {
+    await this.readyPromise
     if (entries.length === 0) return 0
 
-    // 按 nexusId 分组
-    const byNexus = new Map<string, L1MemoryEntry[]>()
+    // 按 dunId 分组
+    const byDun = new Map<string, L1MemoryEntry[]>()
     for (const entry of entries) {
       if (entry.promotedToL0) continue
-      const group = byNexus.get(entry.nexusId) || []
+      const group = byDun.get(entry.dunId) || []
       group.push(entry)
-      byNexus.set(entry.nexusId, group)
+      byDun.set(entry.dunId, group)
     }
 
     let promoted = 0
 
-    for (const [nexusId, groupEntries] of byNexus) {
+    for (const [dunId, groupEntries] of byDun) {
       const rawContents = groupEntries.map(e => e.content).join('\n')
       const avgConfidence = groupEntries.reduce((sum, e) => sum + e.confidence, 0) / groupEntries.length
 
@@ -266,16 +283,16 @@ class ConfidenceTrackerService {
       let summarizedContent: string | null = null
       if (isLLMConfigured()) {
         try {
-          const summaryResult = await chat([
+          const summaryResult = await chatBackground([
             { role: 'system', content: PROMOTION_PROMPT },
             { role: 'user', content: rawContents.slice(0, 2000) },
-          ])
+          ], { priority: 6 })
 
           summarizedContent = parsePromotionResult(summaryResult?.trim() || '')
 
           // LLM 判断不值得保留则标记并跳过
           if (!summarizedContent) {
-            console.log(`[ConfidenceTracker] LLM judged entries not worth promoting for Nexus ${nexusId}, skipping`)
+            console.log(`[ConfidenceTracker] LLM judged entries not worth promoting for Dun ${dunId}, skipping`)
             for (const entry of groupEntries) {
               entry.promotedToL0 = true
               entry.updatedAt = Date.now()
@@ -292,7 +309,7 @@ class ConfidenceTrackerService {
 
       // fallback 也可能返回空（无有价值内容）
       if (!summarizedContent) {
-        console.log(`[ConfidenceTracker] Fallback found no valuable content for Nexus ${nexusId}, skipping`)
+        console.log(`[ConfidenceTracker] Fallback found no valuable content for Dun ${dunId}, skipping`)
         for (const entry of groupEntries) {
           entry.promotedToL0 = true
           entry.updatedAt = Date.now()
@@ -304,14 +321,16 @@ class ConfidenceTrackerService {
       const writeSuccess = await memoryStore.writeWithDedup({
         source: 'memory',
         content: summarizedContent,
-        tags: ['l0_promoted', `from_nexus:${nexusId}`],
+        dunId: dunId, // 确保作为独立字段传递，支持按 Dun 搜索
+        tags: ['l0_promoted', `from_dun:${dunId}`],
         metadata: {
-          sourceNexusId: nexusId,
+          sourceDunId: dunId,
           sourceEntryIds: groupEntries.map(e => e.id),
           confidence: avgConfidence,
           signalCount: groupEntries.reduce((sum, e) => sum + e.signals.length, 0),
           promotedAt: Date.now(),
           entryCount: groupEntries.length,
+          category: classifyMemoryContent(summarizedContent).category,
         },
       })
 
@@ -321,7 +340,7 @@ class ConfidenceTrackerService {
           entry.updatedAt = Date.now()
         }
         promoted += groupEntries.length
-        console.log(`[ConfidenceTracker] Promoted ${groupEntries.length} L1 → L0 for Nexus ${nexusId}: "${summarizedContent.slice(0, 80)}..."`)
+        console.log(`[ConfidenceTracker] Promoted ${groupEntries.length} L1 → L0 for Dun ${dunId}: "${summarizedContent.slice(0, 80)}..."`)
       }
     }
 
@@ -334,7 +353,6 @@ class ConfidenceTrackerService {
 
   /** 安全版：await readyPromise 后再执行晋升 */
   async promoteToL0Safe(entries: L1MemoryEntry[]): Promise<number> {
-    await this.readyPromise
     return this.promoteToL0(entries)
   }
 
@@ -393,7 +411,8 @@ class ConfidenceTrackerService {
    * 已晋升的 L0 条目：confidence 按半衰期衰减
    * 长期未更新的条目：自动清理
    */
-  applyDecay(): void {
+  async applyDecay(): Promise<void> {
+    await this.readyPromise
     const now = Date.now()
     const halfLifeMs = L0_PROMOTION_CONFIG.DECAY_HALF_LIFE_DAYS * 24 * 60 * 60 * 1000
     const maxAgeMs = halfLifeMs * 4 // 4 倍半衰期后清理
@@ -409,11 +428,17 @@ class ConfidenceTrackerService {
         continue
       }
 
-      // 对已晋升的条目应用衰减
+      // 对已晋升的条目应用衰减（使用增量时间，避免复合衰减）
       if (entry.promotedToL0) {
-        const decayFactor = Math.pow(0.5, ageMs / halfLifeMs)
-        entry.confidence *= decayFactor
-        // 衰减后低于阈值不需要特殊处理，只是标记置信度下降
+        const lastDecayAt = entry.lastDecayAt || entry.updatedAt || entry.createdAt
+        const deltaMs = now - lastDecayAt
+
+        // 增量时间 > 0 才应用衰减，避免刚更新的条目被重复衰减
+        if (deltaMs > 0) {
+          const decayFactor = Math.pow(0.5, deltaMs / halfLifeMs)
+          entry.confidence *= decayFactor
+          entry.lastDecayAt = now // 记录本次衰减时间，下次基于此计算增量
+        }
       }
     }
 
@@ -429,15 +454,17 @@ class ConfidenceTrackerService {
   }
 
   /** 启动周期性衰减 (每 6 小时) */
-  startDecayLoop(): void {
+  async startDecayLoop(): Promise<void> {
+    await this.readyPromise
     if (this.decayTimer) return
     const DECAY_INTERVAL_MS = 6 * 60 * 60 * 1000 // 6 小时
-    this.decayTimer = setInterval(() => this.applyDecay(), DECAY_INTERVAL_MS)
+    this.decayTimer = setInterval(() => void this.applyDecay(), DECAY_INTERVAL_MS)
     console.log('[ConfidenceTracker] Decay loop started (interval: 6h)')
   }
 
   /** 停止衰减循环 */
-  stopDecayLoop(): void {
+  async stopDecayLoop(): Promise<void> {
+    await this.readyPromise
     if (this.decayTimer) {
       clearInterval(this.decayTimer)
       this.decayTimer = null
@@ -447,34 +474,35 @@ class ConfidenceTrackerService {
   // ═══ 批量操作 ═══
 
   /**
-   * 按 nexusId + toolName 聚合追踪（而非按 callId）
-   * 同一个 Nexus 下多次成功使用同一个工具 → 给同一个条目追加信号
+   * 按 dunId + toolName 聚合追踪（而非按 callId）
+   * 同一个 Dun 下多次成功使用同一个工具 → 给同一个条目追加信号
    */
   /**
-   * 按 nexusId + toolName 聚合追踪（而非按 callId）
-   * 同一个 Nexus 下多次成功使用同一个工具 → 给同一个条目追加信号
+   * 按 dunId + toolName 聚合追踪（而非按 callId）
+   * 同一个 Dun 下多次成功使用同一个工具 → 给同一个条目追加信号
    *
    * @param userIntent 用户原始意图（来自 userPrompt），用于提升 L1 内容质量
    */
-  trackToolResults(
-    nexusId: string,
+  async trackToolResults(
+    dunId: string,
     toolResults: Array<{ callId: string; toolName: string; status: 'success' | 'error'; result?: string }>,
     userIntent?: string,
-  ): string[] {
+  ): Promise<string[]> {
+    await this.readyPromise
     const trackedIds: string[] = []
 
     // 批量操作期间跳过中间持久化
     this._skipPersist = true
     try {
       for (const tr of toolResults) {
-        const memoryId = `l1-${nexusId}-${tr.toolName}`
+        const memoryId = `l1-${dunId}-${tr.toolName}`
         const existingEntry = this.trackedEntries.get(memoryId)
 
         if (existingEntry) {
           if (tr.status === 'success') {
-            this.addRepeatedSuccessSignal(memoryId)
+            await this.addRepeatedSuccessSignal(memoryId)
           } else {
-            this.addFailureSignal(memoryId)
+            await this.addFailureSignal(memoryId)
           }
           // 只在 content 还是工具原始输出格式时才用意图覆盖
           // 已有 [toolName] 前缀说明之前已写入过高价值意图，不再覆盖
@@ -487,12 +515,12 @@ class ConfidenceTrackerService {
           const content = userIntent
             ? `[${tr.toolName}] ${userIntent}`
             : `${tr.toolName}: ${(tr.result || '').slice(0, 200)}`
-          this.trackEntry(memoryId, nexusId, content)
+          await this.trackEntry(memoryId, dunId, content)
 
           if (tr.status === 'success') {
-            this.addEnvironmentSignal(memoryId, true)
+            await this.addEnvironmentSignal(memoryId, true)
           } else {
-            this.addFailureSignal(memoryId)
+            await this.addFailureSignal(memoryId)
           }
         }
 
@@ -507,7 +535,8 @@ class ConfidenceTrackerService {
   }
 
   /** 获取统计信息 */
-  getStats(): { total: number; promoted: number; avgConfidence: number } {
+  async getStats(): Promise<{ total: number; promoted: number; avgConfidence: number }> {
+    await this.readyPromise
     const entries = Array.from(this.trackedEntries.values())
     const promoted = entries.filter(e => e.promotedToL0).length
     const avgConfidence = entries.length > 0
@@ -517,10 +546,18 @@ class ConfidenceTrackerService {
     return { total: entries.length, promoted, avgConfidence }
   }
 
+  /** 销毁服务：停止衰减循环并清理状态 */
+  async destroy(): Promise<void> {
+    await this.readyPromise
+    await this.stopDecayLoop()
+    this.saveToStorage()
+  }
+
   /** 清空 (测试用) */
-  clear(): void {
+  async clear(): Promise<void> {
+    await this.readyPromise
     this.trackedEntries.clear()
-    this.stopDecayLoop()
+    await this.stopDecayLoop()
     localStorage.removeItem(TRACKER_STORAGE_KEY)
   }
 }

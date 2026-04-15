@@ -3,25 +3,23 @@
  *
  * 设计宪法:
  * - bg-white/bg-stone-50 亮色主体
- * - 三 Tab：执行中 / 实时 / 监控矩阵
+ * - 三 Tab：执行中 / 监控矩阵 / 日记
  * - text-[10px] font-black uppercase tracking-widest 表头
  */
 
 import { useState } from 'react'
-import { Loader2, Activity, Clock, BarChart3, BookOpen } from 'lucide-react'
+import { Loader2, Clock, BarChart3, BookOpen } from 'lucide-react'
 import { useStore } from '@/store'
 import { useShallow } from 'zustand/react/shallow'
 import { TaskMonitorView } from '@/components/blueprint/TaskMonitorView'
-import { AgentRunStatePanel } from './task/AgentRunStatePanel'
 import { ExecutionFocusView } from './task/ExecutionFocusView'
 import { SilentAnalysisView } from './task/SilentAnalysisView'
 import { DiaryView } from './task/DiaryView'
 
-type TabType = 'executing' | 'live' | 'matrix' | 'diary'
+type TabType = 'executing' | 'matrix' | 'diary'
 
-const TABS: { id: TabType; label: string; icon: typeof Activity }[] = [
+const TABS: { id: TabType; label: string; icon: typeof Clock }[] = [
   { id: 'executing', label: '执行中', icon: Clock },
-  { id: 'live', label: '实时', icon: Activity },
   { id: 'matrix', label: '监控矩阵', icon: BarChart3 },
   { id: 'diary', label: '日记', icon: BookOpen },
 ]
@@ -80,8 +78,6 @@ export function TaskHouse() {
       {/* ── 主视图 ── */}
       <div className="flex-1 overflow-y-auto bg-[#fefaf6]">
         {activeTab === 'matrix' && <TaskMonitorView />}
-
-        {activeTab === 'live' && <AgentRunStatePanel />}
 
         {activeTab === 'executing' && (
           <>

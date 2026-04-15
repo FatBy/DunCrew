@@ -13,11 +13,16 @@ import {
   MessageSquare, X, Paperclip, Send,
 } from 'lucide-react'
 import { useStore } from '@/store'
+import { useT } from '@/i18n'
 import { agentEventBus } from '@/services/agentEventBus'
-import type { AgentRunState, ChatMessage } from '@/types'
+import type { AgentRunState, ChatMessage, AgentEventEnvelope } from '@/types'
+
+// 生命周期事件类型 - 立即更新
+const LIFECYCLE_EVENTS = ['run_start', 'run_end', 'phase_change']
 
 // ── 消息气泡 ──
 function MessageBubble({ msg, streaming }: { msg: ChatMessage; streaming?: boolean }) {
+  const t = useT()
   const isUser = msg.role === 'user'
 
   return (
@@ -39,7 +44,7 @@ function MessageBubble({ msg, streaming }: { msg: ChatMessage; streaming?: boole
 
       <div className="flex-1 min-w-0">
         <span className="text-stone-400 text-xs font-bold mb-1 ml-1">
-          {isUser ? '你' : 'AI'}
+          {isUser ? t('assistant.you') : 'AI'}
         </span>
         <div
           className={`
@@ -83,12 +88,27 @@ export function AssistantModal({ onClose }: AssistantModalProps) {
 
   // ── 订阅 agentEventBus 获取 reasoningBuffer ──
   const [runState, setRunState] = useState<AgentRunState>(agentEventBus.getState())
+  const rafRef = useRef(0)
 
   useEffect(() => {
-    const unsub = agentEventBus.subscribe(() => {
-      setRunState({ ...agentEventBus.getState() })
+    const unsub = agentEventBus.subscribe((event: AgentEventEnvelope) => {
+      // 生命周期事件立即更新
+      if (LIFECYCLE_EVENTS.includes(event.type)) {
+        setRunState({ ...agentEventBus.getState() })
+        return
+      }
+      // 高频事件 RAF 节流
+      if (!rafRef.current) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = 0
+          setRunState({ ...agentEventBus.getState() })
+        })
+      }
     })
-    return unsub
+    return () => {
+      unsub()
+      cancelAnimationFrame(rafRef.current)
+    }
   }, [])
 
   // ── 跳动秒表 ──
@@ -140,13 +160,15 @@ export function AssistantModal({ onClose }: AssistantModalProps) {
     [handleSend],
   )
 
+  const t = useT()
+
   // ── 格式化时间 ──
   const formatTime = (ts: number) => {
     const diff = Date.now() - ts
-    if (diff < 60_000) return '刚刚'
-    if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`
-    if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 小时前`
-    return new Date(ts).toLocaleDateString('zh-CN')
+    if (diff < 60_000) return t('assistant.just_now')
+    if (diff < 3600_000) return `${Math.floor(diff / 60_000)} ${t('assistant.minutes_ago')}`
+    if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} ${t('assistant.hours_ago')}`
+    return new Date(ts).toLocaleDateString()
   }
 
   return (
@@ -169,7 +191,7 @@ export function AssistantModal({ onClose }: AssistantModalProps) {
                 onClick={abortChat}
                 className="px-3 py-1 text-xs font-bold text-red-500 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
               >
-                停止
+                {t('assistant.stop')}
               </button>
             )}
             <button
@@ -212,7 +234,7 @@ export function AssistantModal({ onClose }: AssistantModalProps) {
                       <div className="absolute left-0 top-3 bottom-3 w-1 bg-amber-400 rounded-r-md" />
                     )}
                     <h4 className="text-stone-800 font-bold text-sm truncate">
-                      {conv.title || '新会话'}
+                      {conv.title || t('assistant.new_conversation')}
                     </h4>
                     {lastMsg && (
                       <p className="text-stone-500 text-xs mt-1 truncate">
@@ -295,7 +317,7 @@ export function AssistantModal({ onClose }: AssistantModalProps) {
                   onKeyDown={handleKeyDown}
                   className="flex-1 bg-transparent border-none focus:ring-0 focus:outline-none resize-none py-2 px-2 text-stone-700 text-sm placeholder:text-stone-300"
                   rows={1}
-                  placeholder="输入消息或快捷命令..."
+                  placeholder={t('assistant.input_placeholder')}
                 />
                 <button
                   onClick={handleSend}

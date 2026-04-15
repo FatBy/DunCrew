@@ -4,6 +4,7 @@
  * 设计宪法:
  * - Tab 1: 赛博青色神经元网络 (SkillTreeView)
  * - Tab 2: 技工学院 (SkillsHouseView) — DD-OS 风格的技能看板
+ * - 右上角: 安装/创建操作按钮
  */
 
 import { useMemo, useState } from 'react'
@@ -75,9 +76,9 @@ export function SkillHouse() {
         </div>
       </div>
 
-      {/* ── Layer 1: Stats HUD (右上, 仅神经元模式) ── */}
+      {/* ── Layer 1: Stats HUD (右上, 仅神经元 Tab) ── */}
       {activeTab === 'neuron' && (
-        <div className="absolute top-4 right-4 z-20 pointer-events-none">
+        <div className="absolute top-4 right-4 z-20 pointer-events-auto">
           <div className="bg-white/90 backdrop-blur-xl border border-stone-200 rounded-xl px-4 py-3 shadow-sm">
             <div className="space-y-2 min-w-[80px]">
               <div>
@@ -92,8 +93,6 @@ export function SkillHouse() {
           </div>
         </div>
       )}
-
-
     </div>
   )
 }

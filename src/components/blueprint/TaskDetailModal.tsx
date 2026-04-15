@@ -14,6 +14,7 @@ import {
   Clock,
 } from 'lucide-react'
 import type { TaskItem, ExecutionStep } from '@/types'
+import { useT, type TranslationKey } from '@/i18n'
 
 interface TaskDetailModalProps {
   task: TaskItem
@@ -21,15 +22,15 @@ interface TaskDetailModalProps {
 }
 
 // ── 状态配色 ──
-const STATUS_STYLE: Record<string, { label: string; cls: string }> = {
-  executing: { label: '执行中', cls: 'bg-amber-50 text-amber-600 border-amber-200' },
-  done:      { label: '已完成', cls: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
-  terminated:{ label: '已终止', cls: 'bg-red-50 text-red-500 border-red-200' },
-  interrupted:{ label: '已中断', cls: 'bg-red-50 text-red-500 border-red-200' },
-  pending:   { label: '等待中', cls: 'bg-stone-50 text-stone-400 border-stone-200' },
-  queued:    { label: '排队中', cls: 'bg-stone-50 text-stone-400 border-stone-200' },
-  retrying:  { label: '重试中', cls: 'bg-amber-50 text-amber-600 border-amber-200' },
-  paused:    { label: '已暂停', cls: 'bg-stone-50 text-stone-500 border-stone-200' },
+const STATUS_STYLE: Record<string, { label: TranslationKey; cls: string }> = {
+  executing: { label: 'detail.status_executing', cls: 'bg-amber-50 text-amber-600 border-amber-200' },
+  done:      { label: 'detail.status_done', cls: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
+  terminated:{ label: 'detail.status_terminated', cls: 'bg-red-50 text-red-500 border-red-200' },
+  interrupted:{ label: 'detail.status_interrupted', cls: 'bg-red-50 text-red-500 border-red-200' },
+  pending:   { label: 'detail.status_pending', cls: 'bg-stone-50 text-stone-400 border-stone-200' },
+  queued:    { label: 'detail.status_queued', cls: 'bg-stone-50 text-stone-400 border-stone-200' },
+  retrying:  { label: 'detail.status_retrying', cls: 'bg-amber-50 text-amber-600 border-amber-200' },
+  paused:    { label: 'detail.status_paused', cls: 'bg-stone-50 text-stone-500 border-stone-200' },
 }
 
 // ── 时间格式化 ──
@@ -207,6 +208,7 @@ function StepCard({ step, index }: { step: ExecutionStep; index: number }) {
 
 // ── 主组件 ──
 export function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
+  const t = useT()
   const statusCfg = STATUS_STYLE[task.status] ?? STATUS_STYLE.pending
   const steps = task.executionSteps ?? []
 
@@ -225,7 +227,7 @@ export function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
         <div className="p-6 border-b border-stone-100 shrink-0">
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-black text-stone-800 truncate">{task.title || '任务详情'}</h2>
+              <h2 className="text-lg font-black text-stone-800 truncate">{task.title || t('detail.title')}</h2>
               <p className="text-sm text-stone-500 mt-1 line-clamp-2">{task.description}</p>
             </div>
             <button
@@ -239,7 +241,7 @@ export function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
           {/* 元信息条 */}
           <div className="flex flex-wrap items-center gap-3 mt-4">
             <span className={`flex items-center gap-1 px-2.5 py-1 border rounded-full text-[10px] font-bold ${statusCfg.cls}`}>
-              {statusCfg.label}
+              {t(statusCfg.label)}
             </span>
 
             {task.executionDuration != null && (
@@ -251,19 +253,19 @@ export function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
 
             {task.startedAt && (
               <span className="text-[10px] text-stone-400">
-                开始: {fmtTime(task.startedAt)}
+                {t('detail.started')} {fmtTime(task.startedAt)}
               </span>
             )}
 
             {task.completedAt && (
               <span className="text-[10px] text-stone-400">
-                结束: {fmtTime(task.completedAt)}
+                {t('detail.ended')} {fmtTime(task.completedAt)}
               </span>
             )}
 
             {steps.length > 0 && (
               <span className="text-[10px] text-stone-400 ml-auto">
-                共 {steps.length} 步
+                {steps.length} {t('detail.steps_count')}
               </span>
             )}
           </div>
@@ -280,16 +282,16 @@ export function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
           ) : (
             <div className="text-center py-12">
               <Brain className="w-10 h-10 text-stone-300 mx-auto mb-3" />
-              <p className="text-sm text-stone-400">暂无执行步骤记录</p>
+              <p className="text-sm text-stone-400">{t('detail.no_steps')}</p>
               {task.executionOutput && (
                 <div className="mt-4 p-4 bg-stone-50 border border-stone-200 rounded-xl text-left max-w-lg mx-auto">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-stone-400 block mb-2">执行输出</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-stone-400 block mb-2">{t('detail.exec_output')}</span>
                   <CollapsibleText text={task.executionOutput} />
                 </div>
               )}
               {task.executionError && (
                 <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl text-left max-w-lg mx-auto">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-red-500 block mb-2">错误信息</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-red-500 block mb-2">{t('detail.error_info')}</span>
                   <pre className="text-xs font-mono text-red-600 whitespace-pre-wrap">{task.executionError}</pre>
                 </div>
               )}
@@ -302,17 +304,17 @@ export function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
           <div className="p-4 border-t border-stone-100 bg-stone-50/50 shrink-0">
             <div className="flex items-center gap-6 text-[10px] font-bold text-stone-400 uppercase tracking-widest">
               <span>
-                工具调用: {steps.filter(s => s.type === 'tool_call').length} 次
+                {t('detail.tool_calls')} {steps.filter(s => s.type === 'tool_call').length} {t('detail.tool_calls_unit')}
               </span>
               <span>
-                成功: {steps.filter(s => s.type === 'tool_result' && !s.content.toLowerCase().includes('error')).length}
+                {t('detail.success_count')} {steps.filter(s => s.type === 'tool_result' && !s.content.toLowerCase().includes('error')).length}
               </span>
               <span>
-                失败: {steps.filter(s => s.type === 'tool_result' && s.content.toLowerCase().includes('error')).length}
+                {t('detail.fail_count')} {steps.filter(s => s.type === 'tool_result' && s.content.toLowerCase().includes('error')).length}
               </span>
               {task.executionDuration != null && (
                 <span className="ml-auto">
-                  总耗时: {fmtDuration(task.executionDuration)}
+                  {t('detail.total_duration')} {fmtDuration(task.executionDuration)}
                 </span>
               )}
             </div>

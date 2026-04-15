@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { Sparkles, RefreshCw, AlertCircle } from 'lucide-react'
 import { useStore } from '@/store'
 import { isLLMConfigured } from '@/services/llmService'
+import { useT } from '@/i18n'
 import type { ViewType } from '@/types'
 
 interface AISummaryCardProps {
@@ -10,6 +11,7 @@ interface AISummaryCardProps {
 }
 
 export function AISummaryCard({ view }: AISummaryCardProps) {
+  const t = useT()
   const generateSummary = useStore((s) => s.generateSummary)
   const getSummary = useStore((s) => s.getSummary)
   const summary = getSummary(view)
@@ -27,7 +29,7 @@ export function AISummaryCard({ view }: AISummaryCardProps) {
       <div className="mb-4 px-4 py-3 bg-stone-100/80 border border-stone-200 rounded-lg">
         <div className="flex items-center gap-2 text-xs font-mono text-stone-400">
           <Sparkles className="w-3.5 h-3.5" />
-          <span>AI 未配置 - 前往设置页面配置 LLM API 以启用智能分析</span>
+          <span>{t('ai.summary_not_configured')}</span>
         </div>
       </div>
     )
@@ -43,7 +45,7 @@ export function AISummaryCard({ view }: AISummaryCardProps) {
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-          <span className="text-xs font-mono text-amber-300/80">AI 洞察</span>
+          <span className="text-xs font-mono text-amber-300/80">{t('ai.summary_title')}</span>
         </div>
         <button
           onClick={() => {
@@ -73,7 +75,7 @@ export function AISummaryCard({ view }: AISummaryCardProps) {
           {summary.content}
         </p>
       ) : (
-        <p className="text-xs font-mono text-stone-300">点击刷新生成 AI 分析</p>
+        <p className="text-xs font-mono text-stone-300">{t('ai.summary_click_refresh')}</p>
       )}
     </motion.div>
   )

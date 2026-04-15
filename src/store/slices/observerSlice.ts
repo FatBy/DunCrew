@@ -4,10 +4,15 @@ import type {
   TriggerPattern, 
   BuildProposal, 
   VisualDNA,
-  ExecTrace
+  ExecTrace,
+  SkillProposal
 } from '@/types'
-import { chat, getLLMConfig } from '@/services/llmService'
+import { chatBackground, getLLMConfig } from '@/services/llmService'
 import { localServerService } from '@/services/localServerService'
+import { analyzeToolPatterns, type TraceStats } from '@/services/skillDiscoveryEngine'
+import { analyzeIntentPatterns } from '@/services/dunDiscoveryEngine'
+import type { DunEntity, ObserverInsight } from '@/types'  // #12: 用于从 store 获取 dunes
+import { memoryStore } from '@/services/memoryStore'
 
 // ============================================
 // 常量配置 - 双引擎阈值
@@ -15,8 +20,9 @@ import { localServerService } from '@/services/localServerService'
 
 const BEHAVIOR_WINDOW_SIZE = 50        // 保留最近 N 条行为记录
 const ANALYSIS_COOLDOWN_MS = 60000     // 分析冷却 (60秒，原 20秒)
-const CONFIDENCE_THRESHOLD = 0.5       // 触发置信度阈值 (原 0.6)
 const REJECTION_COOLDOWN_MS = 300000   // 拒绝后冷却 5 分钟
+const SKILL_REJECTION_COOLDOWN_MS = 300000  // Skill 提案拒绝后冷却 5 分钟 [Q8]
+const REJECTION_EXPIRY_MS = 24 * 60 * 60 * 1000  // #21: 拒绝记录过期时间 24h
 const OBSERVER_DATA_KEY = 'observer_behavior_records'  // 后端持久化 key
 const OBSERVER_FLUSH_DEBOUNCE = 10000  // 持久化防抖 10 秒
 
@@ -37,67 +43,69 @@ const SERVER_URL = getServerUrl()
 // Slice 类型定义
 // ============================================
 
-interface TraceStats {
-  totalExecutions: number
-  toolFrequency: Record<string, number>
-  nexusFrequency: Record<string, number>
-  avgTurnsPerExecution: number
-  totalErrors: number
-  timeRangeDays: number
-}
-
 export interface ObserverSlice {
   // State
   behaviorRecords: BehaviorRecord[]
   currentProposal: BuildProposal | null
   lastAnalysisTime: number
-  isAnalyzing: boolean
-  nexusPanelOpen: boolean
-  selectedNexusForPanel: string | null
-  pendingNexusChatInput: string | null  // 预填的 Nexus 对话输入
-  // 双引擎状态
-  lastRuleCheckTime: number
-  cachedTraces: ExecTrace[]
-  cachedStats: TraceStats | null
+  isAutoAnalyzing: boolean   // #6: 自动分析互斥锁
+  isUserAnalyzing: boolean   // #6: 用户操作互斥锁
+  dunPanelOpen: boolean
+  selectedDunForPanel: string | null
+  pendingDunChatInput: string | null  // 预填的 Dun 对话输入
+  // Skill 提案状态 [Q6][Q8]
+  currentSkillProposal: SkillProposal | null
+  /** discoveryType+tools签名 → rejection timestamp [Q8] */
+  rejectedSkillPatterns: Map<string, number>
   // 去重状态
   rejectedPatterns: Map<string, number>  // pattern type → rejection time
-  lastRejectionTime: number
 
   // Actions
   addBehaviorRecord: (record: Omit<BehaviorRecord, 'id' | 'timestamp' | 'keywords'>) => void
   loadBehaviorRecords: () => Promise<void>
   analyze: () => Promise<TriggerPattern | null>
-  analyzeWithRuleEngine: () => Promise<TriggerPattern | null>
-  analyzeWithLLM: (traces: ExecTrace[], stats: TraceStats) => Promise<TriggerPattern | null>
   fetchRecentTraces: () => Promise<{ traces: ExecTrace[]; stats: TraceStats } | null>
   createProposal: (trigger: TriggerPattern) => void
   acceptProposal: () => BuildProposal | null
   rejectProposal: () => void
   clearProposal: () => void
-  checkDuplicateNexus: (suggestedSkills: string[]) => boolean
+  checkDuplicateDun: (suggestedSkills: string[]) => boolean
+  
+  // Skill 提案操作 [Q8]
+  acceptSkillProposal: () => Promise<SkillProposal | null>
+  rejectSkillProposal: () => void
+  clearSkillProposal: () => void
   
   // Panel Actions
-  openNexusPanel: (nexusId: string) => void
-  openNexusPanelWithInput: (nexusId: string, input: string) => void  // 打开面板并预填输入
-  closeNexusPanel: () => void
+  openDunPanel: (dunId: string) => void
+  openDunPanelWithInput: (dunId: string, input: string) => void  // 打开面板并预填输入
+  closeDunPanel: () => void
   clearPendingInput: () => void  // 清除预填输入
   
-  // Chat → Nexus (旧版，创建 Proposal)
-  generateNexusFromChat: (messages: Array<{ role: string; content: string }>) => Promise<void>
+  // Chat → Dun (旧版，创建 Proposal)
+  generateDunFromChat: (messages: Array<{ role: string; content: string }>) => Promise<void>
   
   // Observer → Builder: 分析对话并返回结果供建构者使用
-  analyzeConversationForBuilder: (messages: Array<{ role: string; content: string }>) => Promise<NexusAnalysisResult | null>
+  analyzeConversationForBuilder: (messages: Array<{ role: string; content: string }>) => Promise<DunAnalysisResult | null>
+
+  // ── 洞察系统 ──
+  insights: ObserverInsight[]
+  insightForDunCreation: ObserverInsight | null
+  dismissInsight: (id: string) => void
+  createDunFromInsight: (id: string) => void
+  enhanceDunFromInsight: (id: string) => Promise<void>
+  clearInsightForDunCreation: () => void
 }
 
 // Observer 分析结果类型（供 Builder 使用）
-export interface NexusAnalysisResult {
+export interface DunAnalysisResult {
   name: string
   description: string
   sopContent: string           // 完整 Markdown SOP
   confidence: number
   suggestedSkills: string[]    // 建议绑定的技能/工具
   tags: string[]               // 分类标签
-  triggers: string[]           // 触发词（用户说什么会激活这个 Nexus）
+  triggers: string[]           // 触发词（用户说什么会激活这个 Dun）
   objective: string            // 核心目标
   metrics: string[]            // 质量指标
   strategy: string             // 执行策略
@@ -109,6 +117,38 @@ export interface NexusAnalysisResult {
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+// #12: 从 store 获取 dunes（延迟导入避免循环依赖）
+function getDunsFromStore(): Map<string, DunEntity> | null {
+  try {
+    // 使用动态导入避免循环依赖
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const store = require('@/store') as { useStore: () => { duns: Map<string, DunEntity> } }
+    return store.useStore().duns || null
+  } catch {
+    return null
+  }
+}
+
+// ---- 已消费 Trace ID 追踪（防止同一批 trace 重复触发 Dun 提案）----
+
+const CONSUMED_TRACE_IDS_KEY = 'duncrew_consumed_trace_ids'
+
+function loadConsumedTraceIds(): Set<string> {
+  try {
+    const saved = localStorage.getItem(CONSUMED_TRACE_IDS_KEY)
+    if (saved) return new Set(JSON.parse(saved))
+  } catch { /* ignore */ }
+  return new Set()
+}
+
+function saveConsumedTraceIds(ids: Set<string>): void {
+  try {
+    // 只保留最近 500 条，防止 localStorage 膨胀
+    const arr = [...ids].slice(-500)
+    localStorage.setItem(CONSUMED_TRACE_IDS_KEY, JSON.stringify(arr))
+  } catch { /* ignore */ }
 }
 
 // Observer 持久化: 防抖 flush
@@ -123,6 +163,16 @@ function scheduleObserverFlush(records: BehaviorRecord[]): void {
       console.warn('[Observer] Failed to persist behavior records to backend')
     })
   }, OBSERVER_FLUSH_DEBOUNCE)
+}
+
+// #20: HMR 清理 - 防止热更新时定时器泄漏
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    if (_observerFlushTimer) {
+      clearTimeout(_observerFlushTimer)
+      _observerFlushTimer = null
+    }
+  })
 }
 
 /**
@@ -151,10 +201,19 @@ function generateVisualDNASync(id: string): VisualDNA {
 }
 
 /**
- * 提取工具调用序列作为"管道签名"
+ * 计算两段文本的 bigram 相似度 (Dice coefficient) [Q3]
  */
-function extractToolPipeline(trace: ExecTrace): string {
-  return trace.tools.map(t => t.name).join('→')
+function ngramSimilarity(textA: string, textB: string): number {
+  const bigramsA = new Set<string>()
+  const bigramsB = new Set<string>()
+  const normalizedA = textA.toLowerCase()
+  const normalizedB = textB.toLowerCase()
+  for (let i = 0; i < normalizedA.length - 1; i++) bigramsA.add(normalizedA.slice(i, i + 2))
+  for (let i = 0; i < normalizedB.length - 1; i++) bigramsB.add(normalizedB.slice(i, i + 2))
+  if (bigramsA.size === 0 || bigramsB.size === 0) return 0
+  let intersection = 0
+  for (const bigram of bigramsA) { if (bigramsB.has(bigram)) intersection++ }
+  return (2 * intersection) / (bigramsA.size + bigramsB.size)
 }
 
 /**
@@ -192,13 +251,13 @@ function generatePurposeSummary(trigger: TriggerPattern): string {
 }
 
 // ============================================
-// 对话转 Nexus 提示词 (升级版 - 完整 Nexus 格式)
+// 对话转 Dun 提示词 (升级版 - 完整 Dun 格式)
 // ============================================
 
-const CHAT_TO_NEXUS_PROMPT = `你是 DunCrew 的"提炼器"。分析用户与 AI 的对话记录，提炼出可复用的 Nexus（自动化执行节点）。
+const CHAT_TO_DUN_PROMPT = `你是 DunCrew 的"提炼器"。分析用户与 AI 的对话记录，提炼出可复用的 Dun（自动化执行节点）。
 
-## Nexus 是什么
-Nexus 是 DunCrew 的核心工作单元，类似于"专家角色+标准作业程序"的组合。每个 Nexus 应该：
+## Dun 是什么
+Dun 是 DunCrew 的核心工作单元，类似于"专家角色+标准作业程序"的组合。每个 Dun 应该：
 - 有清晰的功能定位和适用场景
 - 包含可执行的详细 SOP（标准作业程序）
 - 绑定必要的工具/技能
@@ -215,11 +274,11 @@ Nexus 是 DunCrew 的核心工作单元，类似于"专家角色+标准作业程
 {
   "canCreate": true,
   "suggestedName": "2-6个中文字，体现功能用途。好的例子：'代码审查'、'漫改剧制作'、'文档整理'",
-  "description": "一句话描述这个 Nexus 的核心功能和适用场景",
+  "description": "一句话描述这个 Dun 的核心功能和适用场景",
   "suggestedSkills": ["工具名1", "工具名2", "工具名3"],
   "tags": ["分类标签1", "分类标签2"],
   "triggers": ["触发词1", "触发词2", "触发词3"],
-  "objective": "这个 Nexus 要达成的核心目标（一句话）",
+  "objective": "这个 Dun 要达成的核心目标（一句话）",
   "metrics": ["质量指标1：具体标准", "质量指标2：具体标准"],
   "strategy": "执行策略概述（如何组织工作流程）",
   "sopContent": "## 完整的 Markdown 格式 SOP\\n\\n详细的标准作业程序，包含：\\n- 执行流程步骤\\n- 每步的具体操作说明\\n- 关键注意事项\\n- 质量检查点\\n- 常见问题处理\\n\\n至少300字，可以包含代码块、表格、列表等",
@@ -241,43 +300,13 @@ sopContent 必须是详细可执行的操作指南，包含：
 只输出 JSON，不要其他内容。`
 
 // ============================================
-// LLM 模式分析提示词 (语义引擎)
-// ============================================
-
-const ANALYST_SYSTEM_PROMPT = `你是 DunCrew 系统的"观察者"。分析用户的执行日志，识别可固化的行为模式。
-
-输入格式：执行统计 + 工具频率 + 执行追踪样本
-
-判定标准：
-1. **频率性 (frequency)**：用户反复解决同一类问题
-2. **复杂性 (complexity)**：执行复杂的多步骤任务
-3. **依赖性 (dependency)**：固定的工具调用链（如: search→read→write）
-4. **周期性 (periodic)**：周期性行为模式
-
-如果发现模式，返回 JSON：
-{
-  "detected": true,
-  "type": "frequency" | "complexity" | "dependency" | "periodic",
-  "summary": "简短描述这个模式（10-20字）",
-  "reasoning": "为什么需要固化这个模式",
-  "suggestedName": "建议的 Nexus 名称（2-5个中文字，体现功能特点，如'文档助手'、'代码审查'、'日志分析'）",
-  "suggestedSkills": ["工具名1", "工具名2"],
-  "suggestedSOP": "为这个 Nexus 编写系统提示词，告诉它如何处理此类任务。必须是可执行的指令说明，50-150字。",
-  "confidence": 0.1 ~ 1.0
-}
-
-如果没有明显模式，返回：{"detected": false}
-
-只输出 JSON。`
-
-// ============================================
 // Slice 创建函数
 // ============================================
-// Nexus 名称生成器
+// Dun 名称生成器
 // ============================================
 
 /**
- * 根据触发模式生成有意义的 Nexus 名称
+ * 根据触发模式生成有意义的 Dun 名称
  */
 function generateMeaningfulName(trigger: TriggerPattern): string {
   // 常见工具到功能名称的映射
@@ -303,6 +332,7 @@ function generateMeaningfulName(trigger: TriggerPattern): string {
     'dependency': '工具链',
     'periodic': '定时任务',
     'cross-skill': '技能组合',
+    'intent-cluster': '意图模式',
   }
 
   // 尝试从建议的技能中推断名称
@@ -340,15 +370,17 @@ export const createObserverSlice: StateCreator<
   behaviorRecords: [],
   currentProposal: null,
   lastAnalysisTime: 0,
-  isAnalyzing: false,
-  nexusPanelOpen: false,
-  selectedNexusForPanel: null,
-  pendingNexusChatInput: null,
-  lastRuleCheckTime: 0,
-  cachedTraces: [],
-  cachedStats: null,
+  isAutoAnalyzing: false,   // #6: 自动分析互斥锁
+  isUserAnalyzing: false,   // #6: 用户操作互斥锁
+  dunPanelOpen: false,
+  selectedDunForPanel: null,
+  pendingDunChatInput: null,
+  currentSkillProposal: null,
+  rejectedSkillPatterns: new Map(),
   rejectedPatterns: new Map(),
-  lastRejectionTime: 0,
+  // ── 洞察系统 ──
+  insights: [],
+  insightForDunCreation: null,
 
   // Actions
   addBehaviorRecord: (record) => {
@@ -365,11 +397,12 @@ export const createObserverSlice: StateCreator<
         newRecord,
       ]
 
-      // 检查是否应该触发分析
+      // 检查是否应该触发分析 (#19: 增加 currentSkillProposal 检查)
       const shouldTriggerAnalysis = 
         (Date.now() - state.lastAnalysisTime > ANALYSIS_COOLDOWN_MS) &&
-        !state.isAnalyzing &&
-        !state.currentProposal
+        !state.isAutoAnalyzing &&
+        !state.currentProposal &&
+        !state.currentSkillProposal
 
       if (shouldTriggerAnalysis) {
         // 异步触发双引擎分析
@@ -411,7 +444,7 @@ export const createObserverSlice: StateCreator<
         stats: data.stats || {
           totalExecutions: 0,
           toolFrequency: {},
-          nexusFrequency: {},
+          dunFrequency: {},
           avgTurnsPerExecution: 0,
           totalErrors: 0,
           timeRangeDays: RULE_ENGINE.FREQUENCY_DAYS,
@@ -424,343 +457,311 @@ export const createObserverSlice: StateCreator<
   },
 
   /**
-   * 主分析入口 - 双引擎协同
+   * 主分析入口 - 双路径分叉 [Q6][Q9]
+   * 路径 A: Skill 发现（工具维度）— 始终执行
+   * 路径 B: Dun 发现（意图维度）— 始终执行
+   * 兜底: LLM 语义引擎（两条路径都无 Dun 结果时）
    */
   analyze: async () => {
-    const { isAnalyzing, currentProposal, lastRejectionTime } = get()
-    
-    if (isAnalyzing) return null
-    if (currentProposal?.status === 'pending') return null
-    
-    // 如果用户最近拒绝过提案，增加冷却时间
-    if (Date.now() - lastRejectionTime < REJECTION_COOLDOWN_MS) {
-      console.log('[Observer] In rejection cooldown period, skipping analysis')
-      return null
+    const { lastAnalysisTime, isAutoAnalyzing, currentProposal } = get()
+    if (isAutoAnalyzing) return null
+    if (currentProposal) return null  // #5: 防止覆盖用户正在查看的 proposal
+    if (Date.now() - lastAnalysisTime < ANALYSIS_COOLDOWN_MS) return null
+
+    // #21: 清理过期的拒绝记录（24h 过期）
+    const now = Date.now()
+    const { rejectedPatterns, rejectedSkillPatterns } = get()
+    const cleanedPatterns = new Map([...rejectedPatterns].filter(([_, t]) => now - t < REJECTION_EXPIRY_MS))
+    const cleanedSkillPatterns = new Map([...rejectedSkillPatterns].filter(([_, t]) => now - t < REJECTION_EXPIRY_MS))
+    if (cleanedPatterns.size !== rejectedPatterns.size || cleanedSkillPatterns.size !== rejectedSkillPatterns.size) {
+      set({ rejectedPatterns: cleanedPatterns, rejectedSkillPatterns: cleanedSkillPatterns })
+      console.log(`[Observer] Cleaned expired rejection records`)
     }
-    
-    set({ isAnalyzing: true, lastAnalysisTime: Date.now() })
-    console.log('[Observer] Starting dual-engine analysis...')
+
+    set({ isAutoAnalyzing: true })  // #7: lastAnalysisTime 移到成功后
+    console.log('[Observer] Starting dual-path analysis...')
 
     try {
-      // Phase 1: 规则引擎 (本地, 不消耗 Token)
-      const ruleTrigger = await get().analyzeWithRuleEngine()
-      if (ruleTrigger) {
-        console.log('[Observer] Rule engine detected pattern:', ruleTrigger.type)
-        get().createProposal(ruleTrigger)
-        return ruleTrigger
-      }
+      // ═══ 统一获取数据（一次 HTTP）[Q9] ═══
+      const data = await get().fetchRecentTraces()
+      if (!data) return null
+      const { traces, stats } = data
 
-      // Phase 2: LLM 语义引擎 (消耗 Token, 仅在规则引擎无结果时)
-      const config = getLLMConfig()
-      if (!config.apiKey) {
-        console.log('[Observer] No LLM API key, skipping semantic analysis')
+      if (traces.length < RULE_ENGINE.MIN_TRACES_FOR_ANALYSIS) {
+        console.log(`[Observer] Not enough traces (${traces.length} < ${RULE_ENGINE.MIN_TRACES_FOR_ANALYSIS})`)
         return null
       }
 
-      const { cachedTraces, cachedStats } = get()
-      if (cachedTraces.length >= RULE_ENGINE.MIN_TRACES_FOR_ANALYSIS && cachedStats) {
-        const llmTrigger = await get().analyzeWithLLM(cachedTraces, cachedStats)
-        if (llmTrigger) {
-          console.log('[Observer] LLM engine detected pattern:', llmTrigger.type)
-          get().createProposal(llmTrigger)
-          return llmTrigger
+      // ═══ 路径 A: Skill 发现（工具维度）— 始终执行 [Q6] ═══
+      const skillProposal = analyzeToolPatterns(traces, stats)
+      if (skillProposal) {
+        // 检查拒绝冷却 [Q8]
+        const skillKey = `${skillProposal.discoveryType}:${[...skillProposal.tools].sort().join(',')}`
+        const lastRejection = get().rejectedSkillPatterns.get(skillKey)
+        if (!lastRejection || Date.now() - lastRejection >= SKILL_REJECTION_COOLDOWN_MS) {
+          // 查询后端已有技能列表，避免对已存在的技能重复弹出提案
+          const skillNameCandidate = skillProposal.suggestedName
+            .replace(/[^a-zA-Z0-9_\-]/g, '-')
+            .replace(/-{2,}/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .toLowerCase()
+          let alreadyExists = false
+          try {
+            const listRes = await fetch(`${SERVER_URL}/skills`)
+            if (listRes.ok) {
+              const listData: Array<{ id: string; name: string }> = await listRes.json()
+              const existingIds = listData.map(s => s.id.toLowerCase())
+              if (existingIds.includes(skillNameCandidate)) {
+                alreadyExists = true
+                // 自动加入冷却，防止下次再弹
+                const newPatterns = new Map(get().rejectedSkillPatterns)
+                newPatterns.set(skillKey, Date.now())
+                set({ rejectedSkillPatterns: newPatterns })
+                console.log(`[Observer/SkillDiscovery] Skill "${skillNameCandidate}" already exists, skipping proposal`)
+              }
+            }
+          } catch (e) {
+            // 查询失败不阻塞，正常弹出
+          }
+
+          if (!alreadyExists) {
+            console.log('[Observer/SkillDiscovery] Found:', skillProposal.suggestedName)
+            set({ currentSkillProposal: skillProposal })
+            // #17: Path A 有结果时跳过 Path B，直接返回
+            set({ isAutoAnalyzing: false, lastAnalysisTime: Date.now() })
+            return null
+          }
         }
       }
 
+      // ═══ 路径 B: Dun 发现（意图维度）→ 写记忆 + 生成洞察 ═══
+      const consumedTraceIds = loadConsumedTraceIds()
+      const freshTraces = traces.filter(t => !consumedTraceIds.has(t.id))
+      const intentTrigger = freshTraces.length >= RULE_ENGINE.MIN_TRACES_FOR_ANALYSIS
+        ? analyzeIntentPatterns(freshTraces)
+        : null
+      if (intentTrigger && intentTrigger.intentCluster) {
+        const cluster = intentTrigger.intentCluster
+        console.log('[Observer/DunDiscovery] Found intent cluster:', cluster.coreKeywords)
+
+        // 标记 cluster 中的 trace 为已消费
+        const consumed = loadConsumedTraceIds()
+        for (const traceId of cluster.traceIds) {
+          consumed.add(traceId)
+        }
+        saveConsumedTraceIds(consumed)
+
+        // ── 层 1：写入记忆系统 ──
+        const toolFrequency: Record<string, number> = {}
+        for (const chain of cluster.toolChains) {
+          for (const tool of chain) {
+            toolFrequency[tool] = (toolFrequency[tool] || 0) + 1
+          }
+        }
+        const topTools = Object.entries(toolFrequency)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 5)
+          .map(([name]) => name)
+
+        const mostCommonChain = (() => {
+          const chainSigs: Record<string, number> = {}
+          for (const chain of cluster.toolChains) {
+            const sig = chain.join('→')
+            chainSigs[sig] = (chainSigs[sig] || 0) + 1
+          }
+          return Object.entries(chainSigs).sort(([, a], [, b]) => b - a)[0]?.[0] || topTools.join('→')
+        })()
+
+        const sortedTasks = [...cluster.taskDescriptions].sort((a, b) => a.length - b.length)
+        const representativeTask = sortedTasks[0] || ''
+
+        const memoryContent = [
+          `[行为模式] 近 ${cluster.timeSpanDays} 天内执行了 ${cluster.size} 次相似任务`,
+          `关键词：${cluster.coreKeywords.join('、')}`,
+          `常用工具链：${mostCommonChain}`,
+          `成功率：${Math.round(cluster.successRate * 100)}%，平均 ${Math.round(cluster.avgTurnCount)} 轮完成`,
+          `代表性任务：${representativeTask.slice(0, 80)}`,
+        ].join('\n')
+
+        try {
+          await memoryStore.writeWithDedup({
+            source: 'memory',
+            content: memoryContent,
+            tags: ['observer-insight', ...cluster.coreKeywords.slice(0, 5)],
+          })
+          console.log('[Observer] Insight written to memory')
+        } catch (err) {
+          console.warn('[Observer] Failed to write insight to memory:', err)
+        }
+
+        // ── 层 2：生成 UI 洞察 ──
+        const confidence = intentTrigger.confidence || 0.5
+
+        // 匹配已有 Dun（三条 OR 规则）
+        let relatedDunId: string | undefined
+        let relatedDunLabel: string | undefined
+        const dunesMap = getDunsFromStore()
+        if (dunesMap && dunesMap.size > 0) {
+          let bestMatchScore = 0
+          for (const [dunId, dun] of dunesMap) {
+            const existingSkills = dun.boundSkillIds || []
+            const dunTriggers = dun.triggers || []
+            const dunObjective = dun.objective || ''
+
+            // 规则 1：工具重叠 ≥ 50%
+            const skillOverlap = topTools.filter(s => existingSkills.includes(s)).length
+            const skillOverlapRatio = topTools.length > 0 ? skillOverlap / topTools.length : 0
+            const rule1 = skillOverlapRatio >= 0.5
+
+            // 规则 2：语义相似 > 0.5
+            const rule2 = dunObjective && representativeTask
+              ? ngramSimilarity(representativeTask, dunObjective) > 0.5
+              : false
+
+            // 规则 3：关键词与 triggers 重叠 ≥ 2
+            const keywordOverlap = cluster.coreKeywords.filter(kw =>
+              dunTriggers.some(trigger => trigger.toLowerCase().includes(kw.toLowerCase()))
+            ).length
+            const rule3 = keywordOverlap >= 2
+
+            if (rule1 || rule2 || rule3) {
+              const matchScore = (rule1 ? skillOverlapRatio : 0)
+                + (rule2 ? 0.3 : 0)
+                + (rule3 ? keywordOverlap * 0.1 : 0)
+              if (matchScore > bestMatchScore) {
+                bestMatchScore = matchScore
+                relatedDunId = dunId
+                relatedDunLabel = dun.label || dunId
+              }
+            }
+          }
+        }
+
+        // 展示阈值：confidence ≥ 0.6 且 cluster.size ≥ 5
+        if (confidence >= 0.6 && cluster.size >= 5) {
+          const insight: ObserverInsight = {
+            id: `insight-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            cluster,
+            confidence,
+            suggestedSkills: topTools,
+            coreKeywords: cluster.coreKeywords,
+            representativeTask,
+            relatedDunId,
+            relatedDunLabel,
+            memoryWritten: true,
+            createdAt: Date.now(),
+          }
+
+          // 合并到 insights 队列（最多 3 条，按 confidence × size 排序取 Top 3）
+          const existingInsights = get().insights.filter(
+            i => Date.now() - i.createdAt < 7 * 24 * 60 * 60 * 1000
+          )
+          const allInsights = [...existingInsights, insight]
+            .sort((a, b) => (b.confidence * b.cluster.size) - (a.confidence * a.cluster.size))
+            .slice(0, 3)
+
+          set({ insights: allInsights })
+          console.log('[Observer] Insight added to UI queue:', insight.coreKeywords)
+        }
+
+        set({ isAutoAnalyzing: false, lastAnalysisTime: Date.now() })
+        return intentTrigger
+      }
+
       console.log('[Observer] No significant pattern detected')
+      set({ isAutoAnalyzing: false, lastAnalysisTime: Date.now() })  // #7: 成功后设置
       return null
 
     } catch (error) {
       console.warn('[Observer] Analysis failed:', error)
       return null
     } finally {
-      set({ isAnalyzing: false })
-    }
-  },
-
-  /**
-   * 规则引擎分析 (本地, 零 Token 消耗)
-   */
-  analyzeWithRuleEngine: async () => {
-    console.log('[Observer/Rule] Starting rule-based analysis...')
-    
-    // 获取最近的执行日志
-    const data = await get().fetchRecentTraces()
-    if (!data) return null
-    
-    const { traces, stats } = data
-    set({ cachedTraces: traces, cachedStats: stats })
-    
-    if (traces.length < RULE_ENGINE.MIN_TRACES_FOR_ANALYSIS) {
-      console.log(`[Observer/Rule] Not enough traces (${traces.length} < ${RULE_ENGINE.MIN_TRACES_FOR_ANALYSIS})`)
-      return null
-    }
-
-    // ========== 规则 1: 频率触发 ==========
-    const topTools = Object.entries(stats.toolFrequency)
-      .filter(([, count]) => count >= RULE_ENGINE.FREQUENCY_THRESHOLD)
-      .sort(([, a], [, b]) => b - a)
-    
-    if (topTools.length > 0) {
-      const [toolName, count] = topTools[0]
-      const confidence = Math.min(0.5 + (count - RULE_ENGINE.FREQUENCY_THRESHOLD) * 0.1, 0.9)
-      const suggestedSkills = topTools.slice(0, 3).map(([t]) => t)
-      
-      console.log(`[Observer/Rule] Frequency trigger: ${toolName} used ${count} times`)
-      
-      return {
-        type: 'frequency' as const,
-        confidence,
-        evidence: [
-          `工具 "${toolName}" 在 ${RULE_ENGINE.FREQUENCY_DAYS} 天内被调用 ${count} 次`,
-          `高频工具: ${topTools.slice(0, 3).map(([t, c]) => `${t}(${c})`).join(', ')}`
-        ],
-        detectedAt: Date.now(),
-        suggestedSkills,
-        suggestedSOP: `你的核心任务是熟练使用 ${suggestedSkills.join('、')} 工具。请根据用户的自然语言需求，选择合适的工具完成操作。优先使用 ${toolName}，它是用户最常用的工具。`,
-      }
-    }
-
-    // ========== 规则 2: 复杂度触发 ==========
-    const complexTraces = traces.filter(t => (t.turnCount || 0) >= RULE_ENGINE.COMPLEXITY_TURNS)
-    if (complexTraces.length >= 2) {
-      const avgTurns = complexTraces.reduce((sum, t) => sum + (t.turnCount || 0), 0) / complexTraces.length
-      const confidence = Math.min(0.5 + (avgTurns - RULE_ENGINE.COMPLEXITY_TURNS) * 0.05, 0.85)
-      
-      // 从复杂任务中提取常用工具
-      const complexToolFreq: Record<string, number> = {}
-      for (const trace of complexTraces) {
-        for (const tool of trace.tools) {
-          complexToolFreq[tool.name] = (complexToolFreq[tool.name] || 0) + 1
-        }
-      }
-      const suggestedSkills = Object.entries(complexToolFreq)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 5)
-        .map(([t]) => t)
-      
-      console.log(`[Observer/Rule] Complexity trigger: ${complexTraces.length} complex executions`)
-      
-      return {
-        type: 'complexity' as const,
-        confidence,
-        evidence: [
-          `发现 ${complexTraces.length} 次复杂执行 (平均 ${avgTurns.toFixed(1)} 轮)`,
-          `示例任务: ${complexTraces[0].task.slice(0, 50)}...`
-        ],
-        detectedAt: Date.now(),
-        suggestedSkills,
-        suggestedSOP: `你是一个复杂任务处理专家。当用户提出多步骤任务时，先分析任务结构，制定执行计划，然后逐步完成。常用工具: ${suggestedSkills.join('、')}。遇到问题时主动反思并调整策略。`,
-      }
-    }
-
-    // ========== 规则 3: 依赖触发 (工具链检测) ==========
-    const pipelineFreq: Record<string, number> = {}
-    for (const trace of traces) {
-      if (trace.tools.length >= 2) {
-        const pipeline = extractToolPipeline(trace)
-        pipelineFreq[pipeline] = (pipelineFreq[pipeline] || 0) + 1
-      }
-    }
-    
-    const frequentPipelines = Object.entries(pipelineFreq)
-      .filter(([, count]) => count >= RULE_ENGINE.DEPENDENCY_MIN_OCCURRENCES)
-      .sort(([, a], [, b]) => b - a)
-    
-    if (frequentPipelines.length > 0) {
-      const [pipeline, count] = frequentPipelines[0]
-      const tools = pipeline.split('→')
-      const confidence = Math.min(0.55 + count * 0.1, 0.85)
-      
-      console.log(`[Observer/Rule] Dependency trigger: pipeline "${pipeline}" appeared ${count} times`)
-      
-      return {
-        type: 'dependency' as const,
-        confidence,
-        evidence: [
-          `工具链 "${pipeline}" 重复出现 ${count} 次`,
-          `涉及工具: ${tools.join(', ')}`
-        ],
-        detectedAt: Date.now(),
-        suggestedSkills: tools,
-        suggestedSOP: `你的标准作业流程(SOP)是执行以下工具链：${tools.join(' → ')}。请按顺序规划并调用这些工具完成任务。在每一步完成后验证结果，确保下一步有正确的输入。`,
-      }
-    }
-
-    // ========== 规则 4: 跨技能成功检测 ==========
-    // 检测成功使用 2+ 种不同工具的执行记录，若此模式出现 ≥2 次则触发
-    const crossSkillTraces = traces.filter(t => {
-      if (!t.success) return false
-      const uniqueTools = new Set(t.tools.map(tool => tool.name))
-      return uniqueTools.size >= 2
-    })
-
-    if (crossSkillTraces.length >= 2) {
-      // 统计跨技能组合出现频率
-      const comboFreq: Record<string, { count: number; tools: string[] }> = {}
-      for (const trace of crossSkillTraces) {
-        const toolNames = [...new Set(trace.tools.map(t => t.name))].sort()
-        const comboKey = toolNames.join('+')
-        if (!comboFreq[comboKey]) {
-          comboFreq[comboKey] = { count: 0, tools: toolNames }
-        }
-        comboFreq[comboKey].count++
-      }
-
-      const topCombo = Object.entries(comboFreq)
-        .filter(([, v]) => v.count >= 2)
-        .sort(([, a], [, b]) => b.count - a.count)[0]
-
-      if (topCombo) {
-        const [, { count, tools }] = topCombo
-        const confidence = Math.min(0.5 + count * 0.1, 0.85)
-
-        console.log(`[Observer/Rule] Cross-skill trigger: ${tools.join('+')} appeared ${count} times`)
-
-        return {
-          type: 'cross-skill' as const,
-          confidence,
-          evidence: [
-            `跨技能组合 "${tools.join(' + ')}" 成功执行 ${count} 次`,
-            `建议名称: ${tools.slice(0, 2).join('×')}协作`,
-          ],
-          detectedAt: Date.now(),
-          suggestedSkills: tools,
-          suggestedSOP: `你是一个多工具协作专家。你的核心能力是组合使用 ${tools.join('、')} 来完成复杂任务。接收用户需求后，判断需要哪些工具的协作，制定执行计划并逐步完成。`,
-        }
-      }
-    }
-
-    console.log('[Observer/Rule] No rule-based pattern detected')
-    return null
-  },
-
-  /**
-   * LLM 语义引擎分析
-   */
-  analyzeWithLLM: async (traces: ExecTrace[], stats: TraceStats) => {
-    console.log('[Observer/LLM] Starting semantic analysis...')
-    
-    // 准备分析数据
-    const summaryData = {
-      totalExecutions: stats.totalExecutions,
-      avgTurns: stats.avgTurnsPerExecution.toFixed(1),
-      topTools: Object.entries(stats.toolFrequency)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 5)
-        .map(([t, c]) => `${t}: ${c}次`),
-      recentTasks: traces.slice(0, 10).map(t => ({
-        task: t.task.slice(0, 80),
-        tools: t.tools.map(tool => tool.name).join('→'),
-        turns: t.turnCount || 'N/A',
-        success: t.success,
-      })),
-    }
-
-    const userPrompt = `执行统计 (过去 ${RULE_ENGINE.FREQUENCY_DAYS} 天):
-- 总执行次数: ${summaryData.totalExecutions}
-- 平均轮次: ${summaryData.avgTurns}
-- 高频工具: ${summaryData.topTools.join(', ')}
-
-最近执行样本:
-${summaryData.recentTasks.map((t, i) => 
-  `${i + 1}. "${t.task}" → [${t.tools}] (${t.turns}轮, ${t.success ? '成功' : '失败'})`
-).join('\n')}
-
-请分析是否存在可固化的行为模式。`
-
-    try {
-      const response = await chat(
-        [
-          { role: 'system', content: ANALYST_SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt }
-        ],
-        { temperature: 0.3 } as any
-      )
-
-      const jsonMatch = response.match(/\{[\s\S]*\}/)
-      if (!jsonMatch) {
-        console.warn('[Observer/LLM] Invalid JSON response')
-        return null
-      }
-      
-      const result = JSON.parse(jsonMatch[0])
-      console.log('[Observer/LLM] Analysis result:', result)
-
-      if (result.detected && result.confidence >= CONFIDENCE_THRESHOLD) {
-        return {
-          type: result.type,
-          confidence: result.confidence,
-          evidence: [
-            result.summary,
-            result.reasoning,
-            result.suggestedName ? `建议名称: ${result.suggestedName}` : ''
-          ].filter(Boolean),
-          detectedAt: Date.now(),
-          suggestedSkills: result.suggestedSkills || [],
-          suggestedSOP: result.suggestedSOP || '',
-        }
-      }
-
-      return null
-    } catch (error) {
-      console.warn('[Observer/LLM] Analysis failed:', error)
-      return null
+      set({ isAutoAnalyzing: false })
     }
   },
 
   createProposal: (trigger) => {
-    // 从 trigger 提取技能
     const boundSkillIds = trigger.suggestedSkills || []
-    
-    // 检查是否已存在相似的 Nexus
-    if (get().checkDuplicateNexus(boundSkillIds)) {
-      console.log('[Observer] Skipping proposal - duplicate Nexus exists')
+
+    // ── 工具维度去重（保留原有逻辑）──
+    if (get().checkDuplicateDun(boundSkillIds)) {
+      console.log('[Observer] Skipping proposal - duplicate Dun (skill overlap)')
       return
     }
-    
-    // 检查最近是否拒绝过相同类型的提案
+
+    // ── 意图维度去重 [Q3] (#12: 从 store 读取) ──
+    if (trigger.discoveredObjective) {
+      const dunesMap = getDunsFromStore()
+      if (dunesMap) {
+        for (const dun of dunesMap.values()) {
+          const existingText = dun.objective || dun.label || ''
+          if (!existingText) continue
+          const similarity = ngramSimilarity(trigger.discoveredObjective, existingText)
+          if (similarity > 0.6) {
+            console.log(`[Observer] Skipping proposal - duplicate objective (similarity: ${similarity.toFixed(2)})`)
+            return
+          }
+        }
+      }
+    }
+
+    // ── 拒绝冷却检查（使用更精确的键：type + 名称签名）──
     const { rejectedPatterns } = get()
-    const lastRejection = rejectedPatterns.get(trigger.type)
+    const specificKey = trigger.suggestedName ? `${trigger.type}:${trigger.suggestedName}` : null
+    const typeRejection = rejectedPatterns.get(trigger.type)
+    const specificRejection = specificKey ? rejectedPatterns.get(specificKey) : null
+    const lastRejection = Math.max(typeRejection || 0, specificRejection || 0)
     if (lastRejection && Date.now() - lastRejection < REJECTION_COOLDOWN_MS) {
-      console.log(`[Observer] Skipping proposal - ${trigger.type} was recently rejected`)
+      console.log(`[Observer] Skipping proposal - ${trigger.type}${trigger.suggestedName ? ':' + trigger.suggestedName : ''} was recently rejected`)
       return
     }
-    
+
+    // ── 生成提案 ──
     const proposalId = generateId()
-    
-    // 从 evidence 中提取名称建议
-    const nameFromEvidence = trigger.evidence.find(e => e.startsWith('建议名称:'))
     let suggestedName: string
-    
-    if (nameFromEvidence) {
-      suggestedName = nameFromEvidence.replace('建议名称:', '').trim()
-      // 验证名称质量：如果是无意义的标识符，使用更好的默认值
+    let purposeSummary: string
+
+    if (trigger.discoveredObjective) {
+      // 意图驱动：使用意图信息（可能已被 LLM 合成增强）
+      suggestedName = trigger.suggestedName || generateMeaningfulName(trigger)
+
+      // ★ 兜底校验：即使 LLM 合成失败，也不产出垃圾名称
+      const hasNoiseChars = /[[\]·*—…~`!@#$%^&()+={}|\\/<>]/.test(suggestedName)
+      const isTooLong = suggestedName.length > 8
+      if (hasNoiseChars || isTooLong) {
+        suggestedName = generateMeaningfulName(trigger)
+      }
+
+      purposeSummary = trigger.discoveredObjective
+    } else {
+      // 兜底：旧逻辑（LLM 引擎产出的）
+      const nameFromEvidence = trigger.evidence.find(e => e.startsWith('建议名称:'))
+      suggestedName = nameFromEvidence
+        ? nameFromEvidence.replace('建议名称:', '').trim()
+        : generateMeaningfulName(trigger)
       if (/^[A-Z0-9-_]+$/.test(suggestedName) || suggestedName.length > 10) {
         suggestedName = generateMeaningfulName(trigger)
       }
-    } else {
-      suggestedName = generateMeaningfulName(trigger)
+      purposeSummary = generatePurposeSummary(trigger)
     }
 
-    // 生成功能目标概述
-    const purposeSummary = generatePurposeSummary(trigger)
-    
-    // 从 trigger 提取 SOP
     const sopContent = trigger.suggestedSOP || ''
-    
+
     const proposal: BuildProposal = {
       id: proposalId,
       triggerPattern: trigger,
       suggestedName,
       previewVisualDNA: generateVisualDNASync(proposalId),
       purposeSummary,
-      boundSkillIds,           // 新增：技能列表
-      sopContent,              // 新增：SOP 内容
+      boundSkillIds,
+      sopContent,
+      suggestedObjective: trigger.discoveredObjective || '',
+      suggestedTriggers: trigger.suggestedTriggers || [],
+      suggestedMetrics: trigger.suggestedMetrics || [],
       status: 'pending',
       createdAt: Date.now(),
     }
-    
+
     console.log('[Observer] Proposal created:', proposal)
     set({ currentProposal: proposal })
   },
@@ -774,6 +775,16 @@ ${summaryData.recentTasks.map((t, i) =>
       status: 'accepted',
     }
     
+    // 接受提案后，标记相关 trace 为已消费，防止同一 trace 再次触发提案
+    const trigger = currentProposal.triggerPattern
+    if (trigger.intentCluster) {
+      const consumed = loadConsumedTraceIds()
+      for (const traceId of trigger.intentCluster.traceIds) {
+        consumed.add(traceId)
+      }
+      saveConsumedTraceIds(consumed)
+    }
+    
     set({ currentProposal: accepted })
     return accepted
   },
@@ -782,10 +793,23 @@ ${summaryData.recentTasks.map((t, i) =>
     const { currentProposal, rejectedPatterns } = get()
     if (!currentProposal) return
     
-    // 记录拒绝的模式类型和时间
-    const patternType = currentProposal.triggerPattern.type
+    // 记录拒绝：同时标记具体签名和类型，防止同一模式冷却后再次触发
+    const trigger = currentProposal.triggerPattern
+    const patternType = trigger.type
     const newRejectedPatterns = new Map(rejectedPatterns)
     newRejectedPatterns.set(patternType, Date.now())
+    // 额外标记具体名称签名（更精确的冷却）
+    if (trigger.suggestedName) {
+      newRejectedPatterns.set(`${patternType}:${trigger.suggestedName}`, Date.now())
+    }
+    // 被拒绝的提案中的 trace 也标记为已消费，防止重复触发
+    if (trigger.intentCluster) {
+      const consumed = loadConsumedTraceIds()
+      for (const traceId of trigger.intentCluster.traceIds) {
+        consumed.add(traceId)
+      }
+      saveConsumedTraceIds(consumed)
+    }
     
     set({
       currentProposal: {
@@ -793,10 +817,9 @@ ${summaryData.recentTasks.map((t, i) =>
         status: 'rejected',
       },
       rejectedPatterns: newRejectedPatterns,
-      lastRejectionTime: Date.now(),
     })
     
-    console.log(`[Observer] Proposal rejected, pattern "${patternType}" on cooldown for ${REJECTION_COOLDOWN_MS / 1000}s`)
+    console.log(`[Observer] Proposal rejected, pattern "${patternType}${trigger.suggestedName ? ':' + trigger.suggestedName : ''}" on cooldown for ${REJECTION_COOLDOWN_MS / 1000}s`)
     
     setTimeout(() => {
       set({ currentProposal: null })
@@ -807,85 +830,244 @@ ${summaryData.recentTasks.map((t, i) =>
     set({ currentProposal: null })
   },
 
-  /**
-   * 检查是否已存在相似的 Nexus（基于技能重叠度）
-   */
-  checkDuplicateNexus: (suggestedSkills: string[]) => {
-    // 从 localStorage 获取已有的 Nexus
-    try {
-      const stored = localStorage.getItem('duncrew_nexuses')
-      if (!stored) return false
-      
-      const nexuses = JSON.parse(stored) as Array<{ boundSkillIds?: string[]; label?: string }>
-      if (!nexuses || nexuses.length === 0) return false
-      
-      // 检查是否有 Nexus 的技能与建议技能高度重叠
-      for (const nexus of nexuses) {
-        const existingSkills = nexus.boundSkillIds || []
-        if (existingSkills.length === 0) continue
-        
-        // 计算重叠度
-        const overlap = suggestedSkills.filter(s => existingSkills.includes(s)).length
-        const overlapRatio = overlap / Math.max(suggestedSkills.length, 1)
-        
-        if (overlapRatio >= 0.5) {
-          console.log(`[Observer] Found duplicate Nexus "${nexus.label}" with ${Math.round(overlapRatio * 100)}% skill overlap`)
-          return true
-        }
-      }
-      
-      return false
-    } catch {
-      return false
+  // ── Skill 提案操作 [Q8] ──
+
+  acceptSkillProposal: async () => {
+    const { currentSkillProposal, rejectedSkillPatterns } = get()
+    if (!currentSkillProposal || currentSkillProposal.status !== 'pending') return null
+
+    // 先标记为 accepted，让 UI 立即响应
+    const accepted: SkillProposal = {
+      ...currentSkillProposal,
+      status: 'accepted',
     }
+    set({ currentSkillProposal: accepted })
+
+    // 调用后端 API 真正创建技能
+    try {
+      const skillName = currentSkillProposal.suggestedName
+        .replace(/[^a-zA-Z0-9_\-]/g, '-')
+        .replace(/-{2,}/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .toLowerCase() || `skill-${Date.now()}`
+
+      const response = await fetch(`${SERVER_URL}/skills/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: skillName,
+          description: currentSkillProposal.description,
+          type: 'instruction',
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        console.warn('[Observer] Failed to create skill:', errorData.error || response.status)
+        
+        // 409 Conflict: 技能已存在，标记为 rejected 并加入冷却列表，防止再次提案
+        if (response.status === 409) {
+          const rejectKey = `${currentSkillProposal.discoveryType}:${currentSkillProposal.tools.sort().join(',')}`
+          const newPatterns = new Map(rejectedSkillPatterns)
+          newPatterns.set(rejectKey, Date.now())
+          set({
+            currentSkillProposal: { ...currentSkillProposal, status: 'rejected' },
+            rejectedSkillPatterns: newPatterns,
+          })
+          console.log(`[Observer] Skill already exists (409), pattern "${rejectKey}" added to cooldown`)
+          setTimeout(() => set({ currentSkillProposal: null }), 500)
+          return null
+        }
+        
+        // 其他错误（网络、500等），恢复为 pending 让用户可以重试
+        set({ currentSkillProposal: { ...currentSkillProposal, status: 'pending' } })
+        return null
+      }
+
+      console.log('[Observer] Skill created successfully:', skillName)
+    } catch (error) {
+      console.warn('[Observer] Skill creation network error:', error)
+      // 网络错误，恢复为 pending
+      set({ currentSkillProposal: { ...currentSkillProposal, status: 'pending' } })
+      return null
+    }
+
+    // 记录已接受的签名，防止同一模式再次触发
+    const acceptKey = `${currentSkillProposal.discoveryType}:${currentSkillProposal.tools.sort().join(',')}`
+    const newPatterns = new Map(rejectedSkillPatterns)
+    newPatterns.set(acceptKey, Date.now())
+    set({ rejectedSkillPatterns: newPatterns })
+
+    // 延迟清除提案
+    setTimeout(() => set({ currentSkillProposal: null }), 1000)
+
+    return accepted
+  },
+
+  rejectSkillProposal: () => {
+    const { currentSkillProposal, rejectedSkillPatterns } = get()
+    if (!currentSkillProposal) return
+
+    // 记录拒绝签名：discoveryType + tools 组合 [Q8]
+    const rejectKey = `${currentSkillProposal.discoveryType}:${[...currentSkillProposal.tools].sort().join(',')}`
+    const newRejected = new Map(rejectedSkillPatterns)
+    newRejected.set(rejectKey, Date.now())
+
+    set({
+      currentSkillProposal: { ...currentSkillProposal, status: 'rejected' },
+      rejectedSkillPatterns: newRejected,
+    })
+
+    console.log(`[Observer] Skill proposal rejected, key "${rejectKey}" on cooldown for ${SKILL_REJECTION_COOLDOWN_MS / 1000}s`)
+
+    setTimeout(() => set({ currentSkillProposal: null }), 500)
+  },
+
+  clearSkillProposal: () => {
+    set({ currentSkillProposal: null })
+  },
+
+  /**
+   * 检查是否已存在相似的 Dun（基于技能重叠度）
+   * #12: 从 Zustand store 读取 dunes
+   */
+  checkDuplicateDun: (suggestedSkills: string[]) => {
+    const dunesMap = getDunsFromStore()
+    if (!dunesMap || dunesMap.size === 0) return false
+    
+    // 检查是否有 Dun 的技能与建议技能高度重叠
+    for (const dun of dunesMap.values()) {
+      const existingSkills = dun.boundSkillIds || []
+      if (existingSkills.length === 0) continue
+      
+      // 计算重叠度
+      const overlap = suggestedSkills.filter(s => existingSkills.includes(s)).length
+      const overlapRatio = overlap / Math.max(suggestedSkills.length, 1)
+      
+      if (overlapRatio >= 0.5) {
+        console.log(`[Observer] Found duplicate Dun "${dun.label}" with ${Math.round(overlapRatio * 100)}% skill overlap`)
+        return true
+      }
+    }
+    
+    return false
   },
   
   // Panel Actions
-  openNexusPanel: (nexusId) => {
+  openDunPanel: (dunId) => {
     set({
-      nexusPanelOpen: true,
-      selectedNexusForPanel: nexusId,
+      dunPanelOpen: true,
+      selectedDunForPanel: dunId,
     })
   },
 
-  openNexusPanelWithInput: (nexusId, input) => {
+  openDunPanelWithInput: (dunId, input) => {
     set({
-      nexusPanelOpen: true,
-      selectedNexusForPanel: nexusId,
-      pendingNexusChatInput: input,
+      dunPanelOpen: true,
+      selectedDunForPanel: dunId,
+      pendingDunChatInput: input,
     })
   },
 
-  closeNexusPanel: () => {
+  closeDunPanel: () => {
     set({
-      nexusPanelOpen: false,
-      selectedNexusForPanel: null,
-      pendingNexusChatInput: null,
+      dunPanelOpen: false,
+      selectedDunForPanel: null,
+      pendingDunChatInput: null,
     })
   },
 
   clearPendingInput: () => {
-    set({ pendingNexusChatInput: null })
+    set({ pendingDunChatInput: null })
+  },
+
+  // ── 洞察 Actions ──
+
+  dismissInsight: (id) => {
+    set((state) => ({
+      insights: state.insights.filter(i => i.id !== id),
+    }))
+  },
+
+  createDunFromInsight: (id) => {
+    const insight = get().insights.find(i => i.id === id)
+    if (!insight) return
+    // 将洞察数据存入 store，由 UI 层读取并打开 CreateDunModal
+    set((state) => ({
+      insightForDunCreation: insight,
+      insights: state.insights.filter(i => i.id !== id),
+    }))
+  },
+
+  enhanceDunFromInsight: async (id) => {
+    const insight = get().insights.find(i => i.id === id)
+    if (!insight || !insight.relatedDunId) return
+
+    const mostCommonChain = (() => {
+      const chainSigs: Record<string, number> = {}
+      for (const chain of insight.cluster.toolChains) {
+        const sig = chain.join('→')
+        chainSigs[sig] = (chainSigs[sig] || 0) + 1
+      }
+      return Object.entries(chainSigs).sort(([, a], [, b]) => b - a)[0]?.[0] || ''
+    })()
+
+    const keyInsight = [
+      `近 ${insight.cluster.timeSpanDays} 天检测到 ${insight.cluster.size} 次相似执行。`,
+      `常用工具链：${mostCommonChain}（成功率 ${Math.round(insight.cluster.successRate * 100)}%）。`,
+      `代表性任务：${insight.representativeTask.slice(0, 100)}`,
+    ].join('')
+
+    try {
+      const dunName = insight.relatedDunLabel || insight.relatedDunId
+      const response = await fetch(`${SERVER_URL}/duns/${encodeURIComponent(dunName)}/experience`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          task: 'Observer 行为模式洞察',
+          tools_used: insight.suggestedSkills,
+          outcome: 'success',
+          key_insight: keyInsight,
+        }),
+      })
+
+      if (response.ok) {
+        console.log(`[Observer] Enhanced Dun "${dunName}" with insight experience`)
+      } else {
+        console.warn(`[Observer] Failed to enhance Dun: ${response.status}`)
+      }
+    } catch (err) {
+      console.warn('[Observer] Failed to enhance Dun:', err)
+    }
+
+    // 移除已行动的洞察
+    set((state) => ({
+      insights: state.insights.filter(i => i.id !== id),
+    }))
+  },
+
+  clearInsightForDunCreation: () => {
+    set({ insightForDunCreation: null })
   },
 
   /**
-   * 从当前对话生成 Nexus 提案（手动触发）
+   * 从当前对话生成 Dun 提案（手动触发）
    */
-  generateNexusFromChat: async (messages) => {
-    const { isAnalyzing, currentProposal } = get()
-    if (isAnalyzing || currentProposal?.status === 'pending') return
+  generateDunFromChat: async (messages) => {
+    const { isUserAnalyzing, currentProposal } = get()  // #6: 使用 isUserAnalyzing
+    if (isUserAnalyzing || currentProposal?.status === 'pending') return
 
     // 过滤有效对话（排除系统消息和空消息）
     const validMessages = messages.filter(
       m => (m.role === 'user' || m.role === 'assistant') && m.content.trim()
     )
     if (validMessages.length < 2) {
-      console.warn('[Observer] Not enough messages to generate Nexus')
+      console.warn('[Observer] Not enough messages to generate Dun')
       return
     }
 
-    set({ isAnalyzing: true })
-    console.log('[Observer] Generating Nexus from chat...')
+    set({ isUserAnalyzing: true })  // #6: 使用 isUserAnalyzing
+    console.log('[Observer] Generating Dun from chat...')
 
     try {
       const config = getLLMConfig()
@@ -900,13 +1082,18 @@ ${summaryData.recentTasks.map((t, i) =>
         .map(m => `[${m.role}]: ${m.content.slice(0, 300)}`)
         .join('\n')
 
-      const response = await chat(
+      const response = await chatBackground(
         [
-          { role: 'system', content: CHAT_TO_NEXUS_PROMPT },
+          { role: 'system', content: CHAT_TO_DUN_PROMPT },
           { role: 'user', content: `以下是用户与 AI 的对话记录：\n\n${conversationText}\n\n请分析并提炼。` }
         ],
-        { temperature: 0.3 } as any
+        { priority: 8 },
       )
+
+      if (!response) {
+        console.warn('[Observer] chatBackground returned null (rate-limited or failed)')
+        return
+      }
 
       const jsonMatch = response.match(/\{[\s\S]*\}/)
       if (!jsonMatch) {
@@ -918,7 +1105,7 @@ ${summaryData.recentTasks.map((t, i) =>
       console.log('[Observer] Chat analysis result:', result)
 
       if (!result.canCreate) {
-        console.log('[Observer] Chat not suitable for Nexus:', result.reason)
+        console.log('[Observer] Chat not suitable for Dun:', result.reason)
         return
       }
 
@@ -936,21 +1123,21 @@ ${summaryData.recentTasks.map((t, i) =>
       }
 
       get().createProposal(trigger)
-      console.log('[Observer] Nexus proposal created from chat')
+      console.log('[Observer] Dun proposal created from chat')
     } catch (error) {
-      console.warn('[Observer] Failed to generate Nexus from chat:', error)
+      console.warn('[Observer] Failed to generate Dun from chat:', error)
     } finally {
-      set({ isAnalyzing: false })
+      set({ isUserAnalyzing: false })  // #6: 使用 isUserAnalyzing
     }
   },
 
   /**
-   * 观察者分析对话，返回结果供建构者（CreateNexusModal）使用
+   * 观察者分析对话，返回结果供建构者（CreateDunModal）使用
    * 这是 Observer → Builder 的核心桥接方法
    */
-  analyzeConversationForBuilder: async (messages): Promise<NexusAnalysisResult | null> => {
-    const { isAnalyzing } = get()
-    if (isAnalyzing) return null
+  analyzeConversationForBuilder: async (messages): Promise<DunAnalysisResult | null> => {
+    const { isUserAnalyzing } = get()  // #6: 使用 isUserAnalyzing
+    if (isUserAnalyzing) return null
 
     // 过滤有效对话
     const validMessages = messages.filter(
@@ -962,7 +1149,7 @@ ${summaryData.recentTasks.map((t, i) =>
       return null
     }
 
-    set({ isAnalyzing: true })
+    set({ isUserAnalyzing: true })  // #6: 使用 isUserAnalyzing
     console.log('[Observer] 🔍 Analyzing conversation for Builder...')
 
     try {
@@ -978,13 +1165,18 @@ ${summaryData.recentTasks.map((t, i) =>
         .map(m => `[${m.role}]: ${m.content.slice(0, 500)}`)
         .join('\n')
 
-      const response = await chat(
+      const response = await chatBackground(
         [
-          { role: 'system', content: CHAT_TO_NEXUS_PROMPT },
+          { role: 'system', content: CHAT_TO_DUN_PROMPT },
           { role: 'user', content: `以下是用户与 AI 的对话记录：\n\n${conversationText}\n\n请分析并提炼。` }
         ],
-        { temperature: 0.3 } as any
+        { priority: 8 },
       )
+
+      if (!response) {
+        console.warn('[Observer] chatBackground returned null (rate-limited or failed)')
+        return null
+      }
 
       const jsonMatch = response.match(/\{[\s\S]*\}/)
       if (!jsonMatch) {
@@ -996,7 +1188,7 @@ ${summaryData.recentTasks.map((t, i) =>
       console.log('[Observer] 📋 Analysis result for Builder:', result)
 
       if (!result.canCreate) {
-        console.log('[Observer] Chat not suitable for Nexus:', result.reason)
+        console.log('[Observer] Chat not suitable for Dun:', result.reason)
         // 即使 LLM 认为不适合，也返回部分信息让用户决定
         return null
       }
@@ -1018,7 +1210,7 @@ ${summaryData.recentTasks.map((t, i) =>
       console.warn('[Observer] Failed to analyze conversation:', error)
       return null
     } finally {
-      set({ isAnalyzing: false })
+      set({ isUserAnalyzing: false })  // #6: 使用 isUserAnalyzing
     }
   },
 })

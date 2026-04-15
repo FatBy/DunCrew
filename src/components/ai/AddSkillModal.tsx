@@ -7,6 +7,7 @@ import { searchSkills, type MatchResult } from '@/services/smartMatchService'
 import { searchOnlineSkills, getAllOnlineSkills, type RegistrySkillResult } from '@/services/onlineSearchService'
 import { installSkill } from '@/services/installService'
 import { MatchResultCard } from './MatchResultCard'
+import { useT } from '@/i18n'
 
 type TabType = 'local' | 'online'
 
@@ -17,6 +18,7 @@ interface AddSkillModalProps {
 }
 
 export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps) {
+  const t = useT()
   const [activeTab, setActiveTab] = useState<TabType>('local')
   const [input, setInput] = useState('')
   const [searchResults, setSearchResults] = useState<MatchResult[]>([])
@@ -101,7 +103,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
         }, 1000)
       }
     } catch (error) {
-      setInstallStatus({ id: skill.id, success: false, message: '安装失败' })
+      setInstallStatus({ id: skill.id, success: false, message: t('addskill.install_failed') })
     } finally {
       setInstallingId(null)
     }
@@ -174,7 +176,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
               )}
             >
               <HardDrive className="w-3.5 h-3.5" />
-              已安装
+              {t('addskill.tab_local')}
             </button>
             <button
               onClick={() => setActiveTab('online')}
@@ -186,7 +188,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
               )}
             >
               <Globe className="w-3.5 h-3.5" />
-              在线搜索
+              {t('addskill.tab_online')}
             </button>
           </div>
 
@@ -207,7 +209,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                 {/* 搜索输入框 */}
                 <div>
                   <label className="block text-xs font-mono text-stone-400 mb-2">
-                    描述你想要的功能
+                    {t('addskill.search_label')}
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -216,7 +218,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                      placeholder="如：操作Word文档、深度调研、代码审查"
+                      placeholder={t('addskill.local_placeholder')}
                       className="flex-1 px-4 py-2.5 bg-stone-100/80 border border-stone-200 rounded-lg
                                text-sm font-mono text-stone-700 placeholder-stone-300
                                focus:border-amber-500/40 focus:outline-none transition-colors"
@@ -240,14 +242,14 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                 {isSearching && (
                   <div className="flex items-center justify-center gap-2 py-4 text-stone-300">
                     <Loader2 className="w-4 h-4 animate-spin text-amber-400/60" />
-                    <span className="text-xs font-mono">AI 正在匹配...</span>
+                    <span className="text-xs font-mono">{t('addskill.matching')}</span>
                   </div>
                 )}
 
                 {!isSearching && hasSearched && searchResults.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-[11px] font-mono text-stone-300">
-                      推荐结果 (点击选择)
+                      {t('addskill.results_hint')}
                     </p>
                     {searchResults.map((result, i) => (
                       <MatchResultCard
@@ -264,7 +266,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                 {!isSearching && hasSearched && searchResults.length === 0 && (
                   <div className="text-center py-3">
                     <p className="text-xs font-mono text-stone-300">
-                      未找到匹配技能，可从下方列表选择
+                      {t('addskill.no_match')}
                     </p>
                   </div>
                 )}
@@ -273,7 +275,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                 {activeSkills.length > 0 && (
                   <div>
                     <p className="text-[11px] font-mono text-stone-300 mb-2">
-                      {hasSearched ? '全部已加载 SKILL' : '已加载的 SKILL (点击选择)'}
+                      {hasSearched ? t('addskill.all_loaded') : t('addskill.loaded_hint')}
                     </p>
                     <div className="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto">
                       {activeSkills.slice(0, 20).map((skill) => (
@@ -296,8 +298,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
 
                 {/* 帮助提示 */}
                 <p className="text-[10px] text-stone-300 leading-relaxed">
-                  SKILL 通过 <code className="text-amber-300/60">skills/*/SKILL.md</code> 文件定义。
-                  可以在「技能屋」中浏览和管理已安装的 SKILL。
+                  {t('addskill.help_text')}
                 </p>
               </>
             )}
@@ -308,7 +309,7 @@ export function AddSkillModal({ isOpen, onClose, onConfirm }: AddSkillModalProps
                 {/* 在线搜索输入框 */}
                 <div>
                   <label className="block text-xs font-mono text-stone-400 mb-2">
-                    搜索在线 SKILL
+                    {t('addskill.online_search_label')}
                   </label>
                   <div className="flex gap-2">
                     <input

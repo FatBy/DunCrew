@@ -18,6 +18,7 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+data/llm_config.json
 
 # Logs
 *.log
@@ -25,12 +26,25 @@ npm-debug.log*
 
 # Temp
 nul
+tmp/
+temp_*/
+temp_*.py
+_*.js
+_*.cjs
+_*.py
+_*.txt
+*.bak
+*.spec
+~$*
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 .venv/
+
+# Library Processor
+library_processor/
 
 # Local embedding models (bge-large-zh-v1.5, ~650MB)
 models/
@@ -43,19 +57,32 @@ src-tauri/gen/
 # Electron build output
 dist-electron/
 
-# Temp scripts
-fix_app.js
-fix_app.py
-fix_urls.js
-fix_urls.py
-fix_urls2.js
-debug_urls.js
+# Workplace (生成的文档、数据、临时文件)
+workplace/
+
+# Scripts (运行脚本、测试脚本)
+scripts/
 
 # Misc
 *.pptx
 vibe_images/
 .specs/
-fix_urls.py
-fix_urls2.js
-debug_urls.js
-.specs/
+.aone_copilot/
+.qoder/
+
+# Temp docs/generated files not for repo
+QUEST_SOUL_GENERATION.md
+github-profile-README.md
+duncrew-server.spec
+docs/observer-insight-redesign.md
+
+# Landing/homepage (separate projects)
+homepage/
+landing-page/
+
+# Memory analysis artifacts
+memory/exec_traces/*.py
+memory/exec_traces/*.txt
+
+# Screenshots (use public/screenshots if needed)
+screenshots/

@@ -68,10 +68,11 @@ const DIARY_STORAGE_KEY = 'duncrew_diary_last_generated'
 class DiaryServiceImpl {
   /** 检查某天的日记是否已生成 */
   async isDiaryGenerated(dateStr: string): Promise<boolean> {
+    // 使用通配符查询避免 FTS5 将 "date:YYYY-MM-DD" 误解为列过滤语法
     const diaries = await memoryStore.search({
-      query: `date:${dateStr}`,
+      query: '*',
       sources: ['diary'],
-      maxResults: 1,
+      maxResults: 200,
       minScore: 0,
       useMmr: false,
     })
@@ -162,16 +163,20 @@ class DiaryServiceImpl {
 
   /**
    * 为指定日期生成日记
+   * @param date - 目标日期
+   * @param skipDuplicateCheck - 为 true 时跳过 isDiaryGenerated 检查（调用方已确认不重复）
    * @returns 生成的日记内容，如果当天无 session 记忆则返回 null
    */
-  async generateDiary(date: Date): Promise<string | null> {
+  async generateDiary(date: Date, skipDuplicateCheck = false): Promise<string | null> {
     const dateStr = formatDate(date)
 
     // 检查是否已生成
-    const alreadyGenerated = await this.isDiaryGenerated(dateStr)
-    if (alreadyGenerated) {
-      console.log(`[DiaryService] Diary for ${dateStr} already exists, skipping`)
-      return null
+    if (!skipDuplicateCheck) {
+      const alreadyGenerated = await this.isDiaryGenerated(dateStr)
+      if (alreadyGenerated) {
+        console.log(`[DiaryService] Diary for ${dateStr} already exists, skipping`)
+        return null
+      }
     }
 
     // 拉取当天 session 记忆
@@ -227,6 +232,92 @@ class DiaryServiceImpl {
   }
 
   /**
+   * 自动补全所有缺失的日记
+   *
+   * 从 memoryStore 中拉取所有 session 记忆，提取出有对话记录的日期，
+   * 对比已有日记，为缺失的日期逐一生成日记。
+   * 今天的日记不会自动生成（因为当天还在进行中）。
+   */
+  async autoGenerateMissingDiaries(): Promise<void> {
+    // 使用 localStorage 记录上次完整检查的日期，避免每次启动都全量扫描
+    const FULL_CHECK_KEY = 'duncrew_diary_last_full_check'
+    const todayStr = formatDate(new Date())
+    const lastFullCheck = localStorage.getItem(FULL_CHECK_KEY)
+    if (lastFullCheck === todayStr) return
+
+    try {
+      // 1. 拉取所有 session 记忆，提取有对话的日期
+      const allSessions = await memoryStore.search({
+        query: '*',
+        sources: ['session'],
+        maxResults: 500,
+        minScore: 0,
+        useMmr: false,
+      })
+
+      if (allSessions.length === 0) {
+        localStorage.setItem(FULL_CHECK_KEY, todayStr)
+        return
+      }
+
+      // 2. 收集所有有 session 记忆的日期（排除今天）
+      const sessionDates = new Set<string>()
+      for (const session of allSessions) {
+        if (session.createdAt) {
+          const dateStr = formatDate(new Date(session.createdAt))
+          if (dateStr !== todayStr) {
+            sessionDates.add(dateStr)
+          }
+        }
+      }
+
+      if (sessionDates.size === 0) {
+        localStorage.setItem(FULL_CHECK_KEY, todayStr)
+        return
+      }
+
+      // 3. 获取已有日记的日期集合
+      const existingDiaries = await memoryStore.search({
+        query: '*',
+        sources: ['diary'],
+        maxResults: 200,
+        minScore: 0,
+        useMmr: false,
+      })
+      const existingDates = new Set<string>()
+      for (const diary of existingDiaries) {
+        if (Array.isArray(diary.tags)) {
+          const dateTag = diary.tags.find(t => t.startsWith('date:'))
+          if (dateTag) {
+            existingDates.add(dateTag.replace('date:', ''))
+          }
+        }
+      }
+
+      // 4. 找出缺失的日期，按日期升序生成
+      const missingDates = Array.from(sessionDates)
+        .filter(d => !existingDates.has(d))
+        .sort()
+
+      if (missingDates.length > 0) {
+        console.log(`[DiaryService] Found ${missingDates.length} missing diaries: ${missingDates.join(', ')}`)
+      }
+
+      for (const dateStr of missingDates) {
+        try {
+          await this.generateDiary(new Date(dateStr + 'T12:00:00'), true)
+        } catch (error) {
+          console.warn(`[DiaryService] Failed to generate diary for ${dateStr}:`, error)
+        }
+      }
+
+      localStorage.setItem(FULL_CHECK_KEY, todayStr)
+    } catch (error) {
+      console.warn('[DiaryService] Auto-generate missing diaries failed:', error)
+    }
+  }
+
+  /**
    * 获取所有已生成的日记列表
    */
   async listDiaries(): Promise<DiaryEntry[]> {
@@ -268,6 +359,20 @@ class DiaryServiceImpl {
     const sessions = await this.fetchSessionsForDay(today)
     if (sessions.length === 0) {
       return null
+    }
+
+    // 删除已有的今天日记条目，避免重复
+    const existing = await memoryStore.search({
+      query: '*',
+      sources: ['diary'],
+      maxResults: 200,
+      minScore: 0,
+      useMmr: false,
+    })
+    for (const entry of existing) {
+      if (Array.isArray(entry.tags) && entry.tags.includes(`date:${dateStr}`)) {
+        await memoryStore.delete(entry.id)
+      }
     }
 
     const diaryContent = await this.generateDiaryContent(sessions, dateStr)

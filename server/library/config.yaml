@@ -1,0 +1,34 @@
+# server/library/config.yaml
+# Library 独立配置，不依赖前端 localStorage
+
+llm:
+  api_key: ""                        # 留空则从环境变量 LIBRARY_LLM_API_KEY 读取
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  model: "qwen-turbo"
+  temperature: 0.3
+  max_tokens: 2000
+  max_concurrent: 3
+  retry_limit: 2
+  timeout: 60
+
+parsing:
+  pdf_strategy: "pymupdf"           # pymupdf | mineru
+  max_file_size_mb: 100
+  skip_pptx_under_chars: 100
+
+cleaning:
+  fix_broken_lines: true
+  remove_headers_footers: true
+  remove_watermarks: true
+  normalize_fullwidth: true
+  extract_key_data: true
+
+dedup:
+  similarity_threshold: 0.80
+  keep_strategy: "newest"            # newest | largest
+  cross_format_dedup: true
+
+grouping:
+  max_chars_per_unit: 8000
+  min_chars_per_unit: 500
+  merge_small_docs: true

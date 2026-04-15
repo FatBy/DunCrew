@@ -1,25 +1,36 @@
-import { useEffect } from 'react'
-import { motion } from 'framer-motion'
-import { Sparkles, RefreshCw, AlertCircle, Inbox, Wand2 } from 'lucide-react'
+import { useState, useEffect, memo } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Sparkles, RefreshCw, AlertCircle, Inbox, Wand2, Search, X, Plus, Zap, Check } from 'lucide-react'
 import { useStore } from '@/store'
 import { isLLMConfigured } from '@/services/llmService'
 import type { OptimizationAction } from '@/store/slices/sessionsSlice'
+import type { ObserverInsight } from '@/types'
 
-export function SilentAnalysisView() {
+export const SilentAnalysisView = memo(function SilentAnalysisView() {
   const silentAnalysis = useStore((s) => s.silentAnalysis)
   const shouldRefresh = useStore((s) => s.shouldRefreshAnalysis)
   const generateAnalysis = useStore((s) => s.generateSilentAnalysis)
-  const activeExecutions = useStore((s) => s.activeExecutions)
-  const openNexusPanelWithInput = useStore((s) => s.openNexusPanelWithInput)
+  // 只提取 doneCount 而非整个数组，避免执行步骤更新时触发重渲染
+  const doneCount = useStore((s) =>
+    s.activeExecutions.filter(t => t.status === 'done' || t.status === 'terminated').length
+  )
+  const openDunPanelWithInput = useStore((s) => s.openDunPanelWithInput)
   const configured = isLLMConfigured()
 
-  const doneCount = activeExecutions.filter(
-    t => t.status === 'done' || t.status === 'terminated'
-  ).length
+  // ── 洞察系统 ──
+  const insights = useStore((s) => s.insights)
+  const dismissInsight = useStore((s) => s.dismissInsight)
+  const createDunFromInsight = useStore((s) => s.createDunFromInsight)
+  const enhanceDunFromInsight = useStore((s) => s.enhanceDunFromInsight)
+
+  // 过滤 7 天过期的洞察
+  const activeInsights = insights.filter(
+    i => Date.now() - i.createdAt < 7 * 24 * 60 * 60 * 1000
+  )
 
   // 应用优化建议
   const handleApplyOptimization = (opt: OptimizationAction) => {
-    openNexusPanelWithInput(opt.target, opt.prompt)
+    openDunPanelWithInput(opt.target, opt.prompt)
   }
 
   // 自动触发静默分析
@@ -34,7 +45,7 @@ export function SilentAnalysisView() {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-lg"
+        className="w-full max-w-lg space-y-6"
       >
         {doneCount === 0 ? (
           /* 无历史任务 - 空状态 */
@@ -105,7 +116,7 @@ export function SilentAnalysisView() {
                 ? silentAnalysis.optimizations
                 : [{
                     target: 'default',
-                    targetType: 'nexus' as const,
+                    targetType: 'dun' as const,
                     label: '根据分析优化',
                     prompt: `根据以下 AI 分析改进执行策略:\n${silentAnalysis.content.slice(0, 300)}`,
                   }]
@@ -138,7 +149,133 @@ export function SilentAnalysisView() {
             )}
           </div>
         )}
+
+        {/* ── Observer 洞察区块（独立于 doneCount，始终可展示）── */}
+        {activeInsights.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Search className="w-3.5 h-3.5 text-stone-400" />
+              <span className="text-xs font-mono text-stone-400 uppercase tracking-wider">
+                行为模式
+              </span>
+            </div>
+
+            <AnimatePresence mode="popLayout">
+              {activeInsights.map((insight) => (
+                <InsightCard
+                  key={insight.id}
+                  insight={insight}
+                  onDismiss={dismissInsight}
+                  onCreateDun={createDunFromInsight}
+                  onEnhanceDun={enhanceDunFromInsight}
+                />
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
       </motion.div>
     </div>
+  )
+})
+
+/** 单张洞察卡片 */
+function InsightCard({ insight, onDismiss, onCreateDun, onEnhanceDun }: {
+  insight: ObserverInsight
+  onDismiss: (id: string) => void
+  onCreateDun: (id: string) => void
+  onEnhanceDun: (id: string) => Promise<void>
+}) {
+  const [enhancing, setEnhancing] = useState(false)
+  const [enhanced, setEnhanced] = useState(false)
+
+  const handleEnhance = async () => {
+    setEnhancing(true)
+    await onEnhanceDun(insight.id)
+    setEnhanced(true)
+    setTimeout(() => onDismiss(insight.id), 1200)
+  }
+
+  // 最常用工具链
+  const chainSigs: Record<string, number> = {}
+  for (const chain of insight.cluster.toolChains) {
+    const sig = chain.join('→')
+    chainSigs[sig] = (chainSigs[sig] || 0) + 1
+  }
+  const topChain = Object.entries(chainSigs).sort(([, a], [, b]) => b - a)[0]?.[0] || ''
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10, transition: { duration: 0.2 } }}
+      className="rounded-lg border border-stone-200 bg-stone-50/80 p-4"
+    >
+      {/* 关键词标签 */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {insight.coreKeywords.slice(0, 4).map((kw) => (
+            <span
+              key={kw}
+              className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-stone-200/60 text-stone-500"
+            >
+              {kw}
+            </span>
+          ))}
+        </div>
+        <button
+          onClick={() => onDismiss(insight.id)}
+          className="p-1 text-stone-300 hover:text-stone-500 transition-colors"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* 统计摘要 */}
+      <div className="text-xs font-mono text-stone-500 space-y-1 mb-3">
+        <p>
+          {insight.cluster.size} 次相似任务 / 成功率 {Math.round(insight.cluster.successRate * 100)}%
+        </p>
+        {topChain && (
+          <p className="text-stone-400 truncate">{topChain}</p>
+        )}
+      </div>
+
+      {/* 关联 Dun 提示 */}
+      {insight.relatedDunLabel && (
+        <p className="text-[11px] font-mono text-amber-500/80 mb-3">
+          与 [{insight.relatedDunLabel}] 相关
+        </p>
+      )}
+
+      {/* 行动按钮 */}
+      <div className="flex items-center gap-2">
+        {insight.relatedDunId && (
+          <button
+            onClick={handleEnhance}
+            disabled={enhancing || enhanced}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-mono
+              bg-amber-500/10 hover:bg-amber-500/20 text-amber-600/80 hover:text-amber-600
+              border border-amber-500/20 rounded-md transition-all disabled:opacity-50"
+          >
+            {enhanced ? (
+              <><Check className="w-3 h-3" /> 已更新</>
+            ) : enhancing ? (
+              <><RefreshCw className="w-3 h-3 animate-spin" /> 更新中</>
+            ) : (
+              <><Zap className="w-3 h-3" /> 增强经验</>
+            )}
+          </button>
+        )}
+        <button
+          onClick={() => onCreateDun(insight.id)}
+          className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-mono
+            bg-stone-100 hover:bg-stone-200 text-stone-500 hover:text-stone-700
+            border border-stone-200 rounded-md transition-all"
+        >
+          <Plus className="w-3 h-3" /> 创建 Dun
+        </button>
+      </div>
+    </motion.div>
   )
 }

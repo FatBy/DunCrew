@@ -16,7 +16,7 @@ export class MinimalistGrid implements GridRenderer {
   // Nexus 位置缓存
   private nexusSet = new Set<string>()
 
-  updateNexusPositions(positions: GridPosition[]): void {
+  updateDunPositions(positions: GridPosition[]): void {
     this.nexusSet.clear()
     for (const p of positions) {
       this.nexusSet.add(`${p.gridX},${p.gridY}`)

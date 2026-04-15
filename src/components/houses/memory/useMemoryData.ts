@@ -11,7 +11,8 @@ import { useStore } from '@/store'
 import { memoryStore } from '@/services/memoryStore'
 import { confidenceTracker } from '@/services/confidenceTracker'
 import { fileRegistry } from '@/services/fileRegistry'
-import type { MemorySearchResult, NexusEntity, L1MemoryEntry } from '@/types'
+import { cleanThinkTags, classifyMemoryContent } from '@/utils/memoryPromotion'
+import type { MemorySearchResult, DunEntity, L1MemoryEntry } from '@/types'
 
 // ============================================
 // 视图模型类型
@@ -22,8 +23,8 @@ export interface L0MemoryCard {
   id: string
   content: string
   snippet: string
-  nexusId: string | undefined
-  nexusLabel: string | undefined
+  dunId: string | undefined
+  dunLabel: string | undefined
   tags: string[]
   createdAt: number
   confidence: number
@@ -41,8 +42,8 @@ export interface L0MemoryCard {
 export interface TraceEntry {
   id: string
   timestamp: number
-  nexusId: string | undefined
-  nexusLabel: string | undefined
+  dunId: string | undefined
+  dunLabel: string | undefined
   /** 操作类型 */
   operationType: 'read' | 'write' | 'edit' | 'command' | 'unknown'
   /** 操作摘要 */
@@ -168,11 +169,11 @@ function extractCodePreview(result: MemorySearchResult): string | undefined {
   return result.snippet?.slice(0, 300) || undefined
 }
 
-/** 构建 nexusId → label 的查找表 */
-function buildNexusLabelMap(nexuses: Map<string, NexusEntity>): Map<string, string> {
+/** 构建 dunId → label 的查找表 */
+function buildDunLabelMap(duns: Map<string, DunEntity>): Map<string, string> {
   const labelMap = new Map<string, string>()
-  for (const [id, nexus] of nexuses) {
-    labelMap.set(id, nexus.label || id)
+  for (const [id, dun] of duns) {
+    labelMap.set(id, dun.label || id)
   }
   return labelMap
 }
@@ -182,7 +183,7 @@ function buildNexusLabelMap(nexuses: Map<string, NexusEntity>): Map<string, stri
 // ============================================
 
 export function useMemoryData(): MemoryDataState {
-  const nexuses = useStore(s => s.nexuses)
+  const duns = useStore(s => s.duns)
   const connectionStatus = useStore(s => s.connectionStatus)
   const isConnected = connectionStatus === 'connected'
 
@@ -198,11 +199,19 @@ export function useMemoryData(): MemoryDataState {
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null)
   const [lensData, setLensData] = useState<LensData | null>(null)
 
+  // tracker stats 异步状态（避免在 useMemo 中调用 async 方法）
+  const [trackerStats, setTrackerStats] = useState<{
+    total: number; promoted: number; avgConfidence: number
+  }>({ total: 0, promoted: 0, avgConfidence: 0 })
+
+  // 预加载的 tracked entries（避免在 useMemo 中调用 async getEntry）
+  const [trackedEntriesMap, setTrackedEntriesMap] = useState<Map<string, { confidence: number }>>(new Map())
+
   // 防止并发刷新
   const refreshLock = useRef(false)
 
-  // nexus label 查找表
-  const nexusLabelMap = useMemo(() => buildNexusLabelMap(nexuses), [nexuses])
+  // dun label 查找表
+  const dunLabelMap = useMemo(() => buildDunLabelMap(duns), [duns])
 
   // ── 初次加载（仅在 store 未加载时 fetch） ──
 
@@ -246,6 +255,36 @@ export function useMemoryData(): MemoryDataState {
     }
   }, [isConnected, memoryCacheLoaded, loadMemoryCache])
 
+  // 异步获取 confidenceTracker 统计数据
+  useEffect(() => {
+    let mounted = true
+    confidenceTracker.getStats().then(stats => {
+      if (mounted) setTrackerStats(stats)
+    })
+    return () => { mounted = false }
+  }, [memoryCacheVersion])
+
+  // 异步预加载 tracked entries（供 l0Memories useMemo 使用）
+  // 使用 getEntriesBatch 单次 await，替代逐条 getEntry 的 N+1 调用
+  useEffect(() => {
+    let mounted = true
+    const loadEntries = async () => {
+      const ids = memoryCacheRaw
+        .filter(r => r.source === 'memory' && r.id)
+        .map(r => r.id)
+      const batchResult = await confidenceTracker.getEntriesBatch(ids)
+      if (mounted) {
+        const mapped = new Map<string, { confidence: number }>()
+        for (const [k, v] of batchResult) {
+          mapped.set(k, { confidence: v.confidence })
+        }
+        setTrackedEntriesMap(mapped)
+      }
+    }
+    loadEntries()
+    return () => { mounted = false }
+  }, [memoryCacheRaw, memoryCacheVersion])
+
   // ── 按 source 分类（从 store 缓存或搜索结果） ──
 
   const activeData = searchResults ?? memoryCacheRaw
@@ -282,35 +321,38 @@ export function useMemoryData(): MemoryDataState {
   const l0Memories = useMemo<L0MemoryCard[]>(() => {
     return rawL0
       .map(result => {
-        const nexusId = result.nexusId
-        const trackedEntry = result.id ? confidenceTracker.getEntry(result.id) : undefined
+        const dunId = result.dunId
+        const trackedEntry = result.id ? trackedEntriesMap.get(result.id) : undefined
         const confidence = trackedEntry?.confidence
           ?? (result.metadata?.confidence as number | undefined)
           ?? result.confidence
           ?? result.score
           ?? 0.5
 
-        // 按 nexusId 聚合 L1 和 Trace 计数
-        const l1Count = nexusId
-          ? rawL1.filter(l1 => l1.nexusId === nexusId).length
+        // 按 dunId 聚合 L1 和 Trace 计数
+        const l1Count = dunId
+          ? rawL1.filter(l1 => l1.dunId === dunId).length
           : 0
-        const relatedTraceCount = nexusId
-          ? rawTraces.filter(tr => tr.nexusId === nexusId).length
+        const relatedTraceCount = dunId
+          ? rawTraces.filter(tr => tr.dunId === dunId).length
           : 0
 
-        // 从 metadata 或 tags 推断 category
-        const rawCategory = (result.metadata?.category as string) || 'uncategorized'
+        // 从 metadata 或 tags 推断 category（历史数据 fallback 到实时分类）
+        const rawContent = result.content || result.snippet || ''
+        const cleanedContent = cleanThinkTags(rawContent)
+
+        const rawCategory = (result.metadata?.category as string) || ''
         const validCategories = ['preference', 'project_context', 'discovery', 'uncategorized'] as const
         const category = validCategories.includes(rawCategory as typeof validCategories[number])
           ? rawCategory as typeof validCategories[number]
-          : 'uncategorized'
+          : classifyMemoryContent(cleanedContent).category
 
         return {
           id: result.id,
-          content: result.content || result.snippet || '',
-          snippet: result.snippet || '',
-          nexusId,
-          nexusLabel: nexusId ? nexusLabelMap.get(nexusId) : undefined,
+          content: cleanedContent,
+          snippet: cleanThinkTags(result.snippet || ''),
+          dunId,
+          dunLabel: dunId ? dunLabelMap.get(dunId) : undefined,
           tags: Array.isArray(result.tags) ? result.tags : [],
           createdAt: result.createdAt || 0,
           confidence,
@@ -321,7 +363,7 @@ export function useMemoryData(): MemoryDataState {
         }
       })
       .sort((a, b) => b.createdAt - a.createdAt)
-  }, [rawL0, rawL1, rawTraces, nexusLabelMap])
+  }, [rawL0, rawL1, rawTraces, dunLabelMap, trackedEntriesMap])
 
   // ── 执行轨迹视图模型 ──
 
@@ -334,8 +376,8 @@ export function useMemoryData(): MemoryDataState {
         return {
           id: result.id,
           timestamp: result.createdAt || 0,
-          nexusId: result.nexusId,
-          nexusLabel: result.nexusId ? nexusLabelMap.get(result.nexusId) : undefined,
+          dunId: result.dunId,
+          dunLabel: result.dunId ? dunLabelMap.get(result.dunId) : undefined,
           operationType: inferOperationType(actionName || result.snippet || ''),
           summary: cleanTraceSummary(result.snippet || result.content || ''),
           filePath: extractFilePath(result),
@@ -344,7 +386,7 @@ export function useMemoryData(): MemoryDataState {
         }
       })
       .sort((a, b) => b.timestamp - a.timestamp)
-  }, [rawTraces, nexusLabelMap])
+  }, [rawTraces, dunLabelMap])
 
   // ── 概念图谱 ──
 
@@ -353,24 +395,24 @@ export function useMemoryData(): MemoryDataState {
     const edges: GraphEdge[] = []
     const nodeIdSet = new Set<string>()
 
-    // 1. Core 节点：从有记忆关联的 nexus 中提取
-    const nexusMemoryCount = new Map<string, number>()
+    // 1. Core 节点：从有记忆关联的 dun 中提取
+    const dunMemoryCount = new Map<string, number>()
     for (const mem of rawL0) {
-      if (mem.nexusId) {
-        nexusMemoryCount.set(mem.nexusId, (nexusMemoryCount.get(mem.nexusId) || 0) + 1)
+      if (mem.dunId) {
+        dunMemoryCount.set(mem.dunId, (dunMemoryCount.get(mem.dunId) || 0) + 1)
       }
     }
     for (const tr of rawTraces) {
-      if (tr.nexusId) {
-        nexusMemoryCount.set(tr.nexusId, (nexusMemoryCount.get(tr.nexusId) || 0) + 1)
+      if (tr.dunId) {
+        dunMemoryCount.set(tr.dunId, (dunMemoryCount.get(tr.dunId) || 0) + 1)
       }
     }
 
-    for (const [nexusId, count] of nexusMemoryCount) {
-      const coreId = `core:${nexusId}`
+    for (const [dunId, count] of dunMemoryCount) {
+      const coreId = `core:${dunId}`
       nodes.push({
         id: coreId,
-        label: nexusLabelMap.get(nexusId) || nexusId,
+        label: dunLabelMap.get(dunId) || dunId,
         type: 'core',
         weight: count,
       })
@@ -378,29 +420,29 @@ export function useMemoryData(): MemoryDataState {
     }
 
     // 2. Tag 节点：从 L0 记忆的 tags 去重提取
-    const tagNexusLinks = new Map<string, Set<string>>()
+    const tagDunLinks = new Map<string, Set<string>>()
     for (const mem of rawL0) {
-      if (!Array.isArray(mem.tags) || !mem.nexusId) continue
+      if (!Array.isArray(mem.tags) || !mem.dunId) continue
       for (const tag of mem.tags) {
-        if (!tagNexusLinks.has(tag)) {
-          tagNexusLinks.set(tag, new Set())
+        if (!tagDunLinks.has(tag)) {
+          tagDunLinks.set(tag, new Set())
         }
-        tagNexusLinks.get(tag)!.add(mem.nexusId)
+        tagDunLinks.get(tag)!.add(mem.dunId)
       }
     }
 
-    for (const [tag, linkedNexuses] of tagNexusLinks) {
+    for (const [tag, linkedDuns] of tagDunLinks) {
       const tagId = `tag:${tag}`
       nodes.push({
         id: tagId,
         label: `#${tag}`,
         type: 'tag',
-        weight: linkedNexuses.size,
+        weight: linkedDuns.size,
       })
       nodeIdSet.add(tagId)
 
-      for (const nexusId of linkedNexuses) {
-        const coreId = `core:${nexusId}`
+      for (const dunId of linkedDuns) {
+        const coreId = `core:${dunId}`
         if (nodeIdSet.has(coreId)) {
           edges.push({ source: tagId, target: coreId })
         }
@@ -408,56 +450,56 @@ export function useMemoryData(): MemoryDataState {
     }
 
     // 3. File 节点：从 exec_trace 和 fileRegistry 提取
-    const fileNexusLinks = new Map<string, Set<string>>()
+    const fileDunLinks = new Map<string, Set<string>>()
 
     for (const tr of rawTraces) {
       const filePath = extractFilePath(tr)
-      if (!filePath || !tr.nexusId) continue
+      if (!filePath || !tr.dunId) continue
       const fileName = filePath.split('/').pop() || filePath
-      if (!fileNexusLinks.has(fileName)) {
-        fileNexusLinks.set(fileName, new Set())
+      if (!fileDunLinks.has(fileName)) {
+        fileDunLinks.set(fileName, new Set())
       }
-      fileNexusLinks.get(fileName)!.add(tr.nexusId)
+      fileDunLinks.get(fileName)!.add(tr.dunId)
     }
 
     const knownFiles = fileRegistry.getKnownFiles()
     for (const entry of knownFiles) {
-      if (!entry.nexusId) continue
+      if (!entry.dunId) continue
       const fileName = entry.path.split('/').pop() || entry.path
-      if (!fileNexusLinks.has(fileName)) {
-        fileNexusLinks.set(fileName, new Set())
+      if (!fileDunLinks.has(fileName)) {
+        fileDunLinks.set(fileName, new Set())
       }
-      fileNexusLinks.get(fileName)!.add(entry.nexusId)
+      fileDunLinks.get(fileName)!.add(entry.dunId)
     }
 
-    for (const [fileName, linkedNexuses] of fileNexusLinks) {
+    for (const [fileName, linkedDuns] of fileDunLinks) {
       const fileId = `file:${fileName}`
       nodes.push({
         id: fileId,
         label: fileName,
         type: 'file',
-        weight: linkedNexuses.size,
+        weight: linkedDuns.size,
       })
       nodeIdSet.add(fileId)
 
-      for (const nexusId of linkedNexuses) {
-        const coreId = `core:${nexusId}`
+      for (const dunId of linkedDuns) {
+        const coreId = `core:${dunId}`
         if (nodeIdSet.has(coreId)) {
           edges.push({ source: fileId, target: coreId })
         }
       }
     }
 
-    // 4. Tag 之间的横向连接：共享同一个 nexus 的 tag 互相连接
+    // 4. Tag 之间的横向连接：共享同一个 dun 的 tag 互相连接
     const tagIds = nodes.filter(n => n.type === 'tag').map(n => n.id)
     for (let i = 0; i < tagIds.length; i++) {
       for (let j = i + 1; j < tagIds.length; j++) {
         const tagA = tagIds[i].replace('tag:', '')
         const tagB = tagIds[j].replace('tag:', '')
-        const nexusesA = tagNexusLinks.get(tagA)
-        const nexusesB = tagNexusLinks.get(tagB)
-        if (nexusesA && nexusesB) {
-          const hasOverlap = [...nexusesA].some(n => nexusesB.has(n))
+        const dunsA = tagDunLinks.get(tagA)
+        const dunsB = tagDunLinks.get(tagB)
+        if (dunsA && dunsB) {
+          const hasOverlap = [...dunsA].some(n => dunsB.has(n))
           if (hasOverlap) {
             edges.push({ source: tagIds[i], target: tagIds[j] })
           }
@@ -466,12 +508,11 @@ export function useMemoryData(): MemoryDataState {
     }
 
     return { graphNodes: nodes, graphEdges: edges }
-  }, [rawL0, rawTraces, nexusLabelMap])
+  }, [rawL0, rawTraces, dunLabelMap])
 
   // ── 活跃神经元统计 ──
 
   const neuronStats = useMemo<NeuronStats>(() => {
-    const trackerStats = confidenceTracker.getStats()
     const totalL1 = Math.max(trackerStats.total, rawL1.length)
     const promotedCount = trackerStats.promoted
     const solidificationPercent = totalL1 > 0
@@ -484,7 +525,7 @@ export function useMemoryData(): MemoryDataState {
       averageConfidence: trackerStats.avgConfidence,
       solidificationPercent,
     }
-  }, [rawL1.length])
+  }, [trackerStats, rawL1.length])
 
   // ── 透视镜：选中 L0 记忆后加载关联数据 ──
 
@@ -509,33 +550,33 @@ export function useMemoryData(): MemoryDataState {
       loading: true,
     })
 
-    const targetNexusId = selectedCard.nexusId
+    const targetDunId = selectedCard.dunId
 
-    // 按 nexusId 过滤关联轨迹
-    const relatedTraces = targetNexusId
-      ? traces.filter(t => t.nexusId === targetNexusId)
+    // 按 dunId 过滤关联轨迹
+    const relatedTraces = targetDunId
+      ? traces.filter(t => t.dunId === targetDunId)
       : []
 
     // 从 confidenceTracker 获取 L1 条目
-    let l1Entries = targetNexusId
-      ? confidenceTracker.getEntriesByNexus(targetNexusId)
-          .sort((a, b) => b.updatedAt - a.updatedAt)
+    let l1Entries = targetDunId
+      ? (await confidenceTracker.getEntriesByDun(targetDunId))
+          .sort((a: L1MemoryEntry, b: L1MemoryEntry) => b.updatedAt - a.updatedAt)
       : []
 
     // fallback: 从 memoryStore 搜索
-    if (l1Entries.length === 0 && targetNexusId) {
+    if (l1Entries.length === 0 && targetDunId) {
       try {
         const l1SearchResults = await memoryStore.search({
           query: '*',
           sources: ['l1_memory'],
-          nexusId: targetNexusId,
+          dunId: targetDunId,
           maxResults: 20,
           minScore: 0,
           useMmr: false,
         })
         l1Entries = l1SearchResults.map(r => ({
           id: r.id,
-          nexusId: targetNexusId,
+          dunId: targetDunId,
           content: r.snippet || r.content || '',
           confidence: (r.metadata?.confidence as number) ?? r.score ?? 0.3,
           signals: [],

@@ -14,14 +14,14 @@ import {
   TerminalSquare,
   ShieldCheck,
 } from 'lucide-react'
-import type { NexusEntity } from '@/types'
-import type { GrowthStage } from './nexusGrowth'
+import type { DunEntity } from '@/types'
+import type { GrowthStage } from './dunGrowth'
 
 // ==========================================
 // 类型
 // ==========================================
 
-export type NexusRole = 'CORE' | 'CREATOR' | 'DESIGN' | 'ANALYST' | 'DBA' | 'CODER' | 'ENGINE' | 'QA'
+export type DunRole = 'CORE' | 'CREATOR' | 'DESIGN' | 'ANALYST' | 'DBA' | 'CODER' | 'ENGINE' | 'QA'
 
 export interface RoleGenetics {
   theme: string                    // Tailwind 色系名 e.g. 'amber'
@@ -34,7 +34,7 @@ export interface RoleGenetics {
 // 基因图谱：角色 → 颜色、花纹与图标 (逐字复制原型)
 // ==========================================
 
-export const ROLE_GENETICS: Record<NexusRole, RoleGenetics> = {
+export const ROLE_GENETICS: Record<DunRole, RoleGenetics> = {
   CORE: {
     theme: 'amber',
     bg: 'from-amber-300 to-orange-500',
@@ -85,13 +85,13 @@ export const ROLE_GENETICS: Record<NexusRole, RoleGenetics> = {
   },
 }
 
-export const ALL_ROLES: NexusRole[] = ['CORE', 'CREATOR', 'DESIGN', 'ANALYST', 'DBA', 'CODER', 'ENGINE', 'QA']
+export const ALL_ROLES: DunRole[] = ['CORE', 'CREATOR', 'DESIGN', 'ANALYST', 'DBA', 'CODER', 'ENGINE', 'QA']
 
 // ==========================================
 // 角色推断关键词
 // ==========================================
 
-const ROLE_SKILL_KEYWORDS: Record<NexusRole, string[]> = {
+const ROLE_SKILL_KEYWORDS: Record<DunRole, string[]> = {
   CODER: ['coding-agent', 'code-runner', 'code-search', 'github', 'git', 'npm', 'python', 'typescript', 'javascript', 'code-gen', 'code'],
   ANALYST: ['deep-research', 'web-search', 'search', 'python-dataviz', 'critical-evaluation', 'data', 'analysis', 'chart', 'statistics', 'research'],
   CREATOR: ['openai-image-gen', 'powerpoint', 'prose', 'video', 'write', 'creative', 'image', 'audio', 'content'],
@@ -102,7 +102,7 @@ const ROLE_SKILL_KEYWORDS: Record<NexusRole, string[]> = {
   CORE: [],  // fallback, 不做匹配
 }
 
-const ROLE_TEXT_KEYWORDS: Record<NexusRole, string[]> = {
+const ROLE_TEXT_KEYWORDS: Record<DunRole, string[]> = {
   CODER: ['代码', '编程', '开发', 'code', 'programming', 'coding', 'react', 'vue', 'python'],
   ANALYST: ['搜索', '研究', '分析', '数据', 'research', 'search', 'analysis', 'data', 'insight'],
   CREATOR: ['创作', '绘图', '写作', '生成图', 'creative', 'write', 'create', 'content', 'story'],
@@ -114,18 +114,18 @@ const ROLE_TEXT_KEYWORDS: Record<NexusRole, string[]> = {
 }
 
 // ==========================================
-// inferRole: NexusEntity → NexusRole
+// inferRole: DunEntity → DunRole
 // ==========================================
 
-export function inferRole(nexus: NexusEntity): NexusRole {
-  const skills = nexus.boundSkillIds ?? []
+export function inferRole(dun: DunEntity): DunRole {
+  const skills = dun.boundSkillIds ?? []
 
   // 阶段 1: boundSkillIds 关键词匹配
   if (skills.length > 0) {
-    const scores: Partial<Record<NexusRole, number>> = {}
+    const scores: Partial<Record<DunRole, number>> = {}
     for (const skillId of skills) {
       const lower = skillId.toLowerCase()
-      for (const [role, keywords] of Object.entries(ROLE_SKILL_KEYWORDS) as [NexusRole, string[]][]) {
+      for (const [role, keywords] of Object.entries(ROLE_SKILL_KEYWORDS) as [DunRole, string[]][]) {
         if (role === 'CORE') continue
         for (const kw of keywords) {
           if (lower.includes(kw)) {
@@ -135,14 +135,14 @@ export function inferRole(nexus: NexusEntity): NexusRole {
       }
     }
     const best = Object.entries(scores).sort((a, b) => b[1] - a[1])[0]
-    if (best && best[1] > 0) return best[0] as NexusRole
+    if (best && best[1] > 0) return best[0] as DunRole
   }
 
   // 阶段 2: 文本语义匹配 (objective + label + sopContent)
   const textSources = [
-    nexus.objective ?? '',
-    nexus.label ?? '',
-    (nexus as any).sopContent ?? '',
+    dun.objective ?? '',
+    dun.label ?? '',
+    (dun as any).sopContent ?? '',
   ].join(' ').toLowerCase()
 
   if (textSources.length > 0) {
@@ -163,7 +163,7 @@ export function inferRole(nexus: NexusEntity): NexusRole {
 // 辅助映射函数
 // ==========================================
 
-/** 5 阶段 → 3 阶段映射 (nexusGrowth → 原型) */
+/** 5 阶段 → 3 阶段映射 (dunGrowth → 原型) */
 export function mapToPrototypeStage(stage: GrowthStage): 'dormant' | 'awakening' | 'evolved' {
   switch (stage) {
     case 'egg': return 'dormant'

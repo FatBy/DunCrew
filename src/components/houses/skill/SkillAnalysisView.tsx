@@ -13,8 +13,8 @@ export function SkillAnalysisView({ onShowDetail }: SkillAnalysisViewProps) {
   const shouldRefresh = useStore((s) => s.shouldRefreshSkillAnalysis)
   const generateAnalysis = useStore((s) => s.generateSkillAnalysis)
   const openClawSkills = useStore((s) => s.openClawSkills)
-  const nexuses = useStore((s) => s.nexuses)
-  const setActiveNexus = useStore((s) => s.setActiveNexus)
+  const duns = useStore((s) => s.duns)
+  const setActiveDun = useStore((s) => s.setActiveDun)
   const setChatOpen = useStore((s) => s.setChatOpen)
 
   const configured = isLLMConfigured()
@@ -41,12 +41,12 @@ export function SkillAnalysisView({ onShowDetail }: SkillAnalysisViewProps) {
     }
   }, [weaknessHighlighted])
 
-  const handleActivateNexus = () => {
-    const nexus = nexuses.get('skill-scout')
-    if (nexus) {
-      setActiveNexus('skill-scout')
-      // 打开聊天面板并切换到 skill-scout 的 Nexus 会话
-      const getOrCreate = useStore.getState().getOrCreateNexusConversation
+  const handleActivateDun = () => {
+    const dun = duns.get('skill-scout')
+    if (dun) {
+      setActiveDun('skill-scout')
+      // 打开聊天面板并切换到 skill-scout 的 Dun 会话
+      const getOrCreate = useStore.getState().getOrCreateDunConversation
       getOrCreate('skill-scout')
       setChatOpen(true)
     }
@@ -111,7 +111,7 @@ export function SkillAnalysisView({ onShowDetail }: SkillAnalysisViewProps) {
               {skillAnalysis.summary}
             </p>
 
-            {/* 不足提示 + 防误触 Nexus 激活 */}
+            {/* 不足提示 + 防误触 Dun 激活 */}
             {skillAnalysis.weaknesses && (
               <div className="flex items-center flex-wrap gap-2">
                 <p
@@ -132,7 +132,7 @@ export function SkillAnalysisView({ onShowDetail }: SkillAnalysisViewProps) {
                       exit={{ opacity: 0, width: 0 }}
                       transition={{ duration: 0.2 }}
                       className="overflow-hidden"
-                      onClick={handleActivateNexus}
+                      onClick={handleActivateDun}
                     >
                       <span className="flex items-center whitespace-nowrap gap-1 px-2.5 py-1 bg-amber-500/15 text-amber-300 rounded-full text-xs font-mono hover:bg-amber-500/25 transition-colors border border-amber-500/20">
                         <Compass className="w-3 h-3" />

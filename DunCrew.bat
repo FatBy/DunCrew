@@ -13,10 +13,13 @@ echo.
 :: 获取当前脚本所在目录
 set "DUNCREW_DIR=%~dp0"
 
+:: 设置数据目录
+set "DUNCREW_DATA_PATH=%USERPROFILE%\DunCrew-Data"
+
 :: ============================================
 :: 1. 部署 OpenClaw 扩展 (如果用户有 OpenClaw)
 :: ============================================
-set "OPENCLAW_EXT_DIR=%USERPROFILE%\.openclaw\extensions\duncrew"
+set "OPENCLAW_EXT_DIR=%USERPROFILE%\DunCrew-Data\.openclaw\extensions\duncrew"
 set "SOURCE_EXT_DIR=%DUNCREW_DIR%openclaw-extension"
 
 if not exist "%SOURCE_EXT_DIR%\index.ts" (
@@ -60,10 +63,10 @@ set "SERVER_PY=%DUNCREW_DIR%duncrew-server.py"
 
 if exist "%SERVER_EXE%" (
     echo [Server] Starting duncrew-server.exe ...
-    start "" /B "%SERVER_EXE%" --port 3001
+    start "" /B "%SERVER_EXE%" --port 3001 --path "%DUNCREW_DATA_PATH%"
 ) else if exist "%SERVER_PY%" (
     echo [Server] Starting duncrew-server.py ...
-    start "" /B python "%SERVER_PY%" --port 3001
+    start "" /B python "%SERVER_PY%" --port 3001 --path "%DUNCREW_DATA_PATH%"
 ) else (
     echo [Error] Neither duncrew-server.exe nor duncrew-server.py found!
     pause

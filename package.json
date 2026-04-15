@@ -1,17 +1,18 @@
 {
   "name": "duncrew",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.1.0-beta",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json && vite build",
     "preview": "vite preview",
-    "electron:compile": "tsc -p electron/tsconfig.json && node electron/postcompile.cjs",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron:compile && electron dist-electron/main.js\"",
+    "electron:compile": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --outdir=dist-electron --external:electron --format=cjs && node electron/postcompile.cjs",
+    "electron:compile:check": "tsc -p electron/tsconfig.json --noEmit && npm run electron:compile",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on -i 100 http://localhost:5173 && npm run electron:compile && electron dist-electron/main.js\"",
     "electron:preview": "npm run electron:compile && electron dist-electron/main.js",
-    "electron:build": "npm run build && npm run electron:compile && electron-builder --config electron-builder.yml",
+    "electron:build": "npm run build && npm run electron:compile:check && electron-builder --config electron-builder.yml",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
@@ -19,6 +20,7 @@
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",
     "clsx": "^2.1.1",
+    "electron-updater": "^6.8.3",
     "framer-motion": "^11.15.0",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
@@ -39,6 +41,7 @@
     "concurrently": "^9.1.0",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "esbuild": "^0.27.4",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",

@@ -11,6 +11,13 @@ declare global {
       getServerUrl: () => string
       platform: string
       getAppInfo: () => Promise<{ version: string; platform: string; isPackaged: boolean }>
+      updater?: {
+        onStatus: (cb: (data: Record<string, unknown>) => void) => () => void
+        check: () => Promise<void>
+        download: () => Promise<void>
+        install: () => Promise<void>
+        openReleases: () => Promise<void>
+      }
     }
     __TAURI__?: unknown
   }

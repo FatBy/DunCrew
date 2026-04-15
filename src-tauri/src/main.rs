@@ -23,8 +23,7 @@ struct ServerState {
 
 /// 获取 OpenClaw extensions 目标目录: ~/.openclaw/extensions/ddos/
 fn get_openclaw_extension_target() -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
-    Some(home.join(".openclaw").join("extensions").join("duncrew"))
+    Some(PathBuf::from(r"D:\编程\DunCrew-Data\.openclaw\extensions\duncrew"))
 }
 
 /// 读取 package.json 中的 version 字段
@@ -123,9 +122,8 @@ fn install_openclaw_extension(app: &AppHandle) {
 fn start_backend(app: &AppHandle) -> Result<CommandChild, String> {
     let shell = app.shell();
 
-    // 获取用户数据目录
-    let data_dir = app.path().app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    // 使用固定数据目录 (已从 C 盘迁移到 D 盘)
+    let data_dir = PathBuf::from(r"D:\编程\DunCrew-Data");
 
     // 确保数据目录存在
     std::fs::create_dir_all(&data_dir)

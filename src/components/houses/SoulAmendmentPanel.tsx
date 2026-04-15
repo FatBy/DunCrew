@@ -3,17 +3,18 @@
  * 展示 draft / approved / archived 修正案，支持审批操作
  */
 import { motion, AnimatePresence } from 'framer-motion'
-import { Check, X, Archive, ChevronDown, ChevronUp } from 'lucide-react'
+import { Check, X, Archive, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 import { useStore } from '@/store'
 import type { SoulAmendment } from '@/types'
 import { useT } from '@/i18n'
 
-function AmendmentCard({ amendment, onApprove, onReject, onArchive }: {
+function AmendmentCard({ amendment, onApprove, onReject, onArchive, onUnarchive }: {
   amendment: SoulAmendment
   onApprove?: (id: string) => void
   onReject?: (id: string) => void
   onArchive?: (id: string) => void
+  onUnarchive?: (id: string) => void
 }) {
   const t = useT()
 
@@ -52,8 +53,8 @@ function AmendmentCard({ amendment, onApprove, onReject, onArchive }: {
         {amendment.hitCount > 0 && (
           <span>{t('soul.hit_count')}: {amendment.hitCount}</span>
         )}
-        {amendment.source.nexusIds.length > 0 && (
-          <span>{t('soul.detected_from')}: {amendment.source.nexusIds.length} nexus</span>
+        {amendment.source.dunIds.length > 0 && (
+          <span>{t('soul.detected_from')}: {amendment.source.dunIds.length} dun</span>
         )}
       </div>
 
@@ -103,6 +104,18 @@ function AmendmentCard({ amendment, onApprove, onReject, onArchive }: {
           </button>
         </div>
       )}
+
+      {amendment.status === 'archived' && onUnarchive && (
+        <div className="mt-2">
+          <button
+            onClick={() => onUnarchive(amendment.id)}
+            className="flex items-center gap-1 px-2 py-1 text-[11px] rounded bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors"
+          >
+            <RotateCcw className="w-3 h-3" />
+            {t('soul.unarchive')}
+          </button>
+        </div>
+      )}
     </motion.div>
   )
 }
@@ -114,6 +127,7 @@ export function SoulAmendmentPanel() {
   const approveDraft = useStore((s) => s.approveDraft)
   const rejectDraft = useStore((s) => s.rejectDraft)
   const archiveAmendment = useStore((s) => s.archiveAmendment)
+  const unarchiveAmendment = useStore((s) => s.unarchiveAmendment)
 
   const [showArchived, setShowArchived] = useState(false)
 
@@ -173,7 +187,7 @@ export function SoulAmendmentPanel() {
                 className="overflow-hidden mt-2 space-y-2"
               >
                 {archivedAmendments.map((a) => (
-                  <AmendmentCard key={a.id} amendment={a} />
+                  <AmendmentCard key={a.id} amendment={a} onUnarchive={unarchiveAmendment} />
                 ))}
               </motion.div>
             )}

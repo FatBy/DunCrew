@@ -1,8 +1,24 @@
 ---
 name: skill-generator
-description: "帮助用户通过对话创建新的 DunCrew 技能。"
+description: "帮助用户通过对话创建新的 DunCrew 技能。适用于开发者或用户需要快速生成标准化技能文件（SKILL.md）的场景，支持自动收集需求、生成模板、保存至指定目录并提供注册指南。"
 version: "1.0.0"
 author: "DunCrew"
+tags:
+  - development
+  - skill-creation
+  - meta-tool
+  - automation
+keywords:
+  - 创建技能
+  - 新建技能
+  - skill generator
+  - 生成技能文件
+  - DunCrew技能
+dangerLevel: safe
+inputs:
+  - name: request
+    type: string
+    description: 用户创建技能的需求描述
 metadata:
   openclaw:
     emoji: "🛠️"

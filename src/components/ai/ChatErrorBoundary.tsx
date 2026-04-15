@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react'
 import { AlertCircle, RefreshCw } from 'lucide-react'
+import { useT } from '@/i18n'
 
 interface Props {
   children: ReactNode
@@ -25,10 +26,12 @@ export class ChatErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      const t = useT()
+      
       return (
         <div className="flex flex-col items-center justify-center h-full p-6 text-center">
           <AlertCircle className="w-8 h-8 text-red-400/50 mb-3" />
-          <p className="text-xs font-mono text-red-400/70 mb-2">渲染出错</p>
+          <p className="text-xs font-mono text-red-400/70 mb-2">{t('chat_error.render_error')}</p>
           <p className="text-[13px] font-mono text-stone-300 mb-4 max-w-[200px] break-all">
             {this.state.error}
           </p>
@@ -39,7 +42,7 @@ export class ChatErrorBoundary extends Component<Props, State> {
                        text-stone-400 hover:text-amber-400 hover:border-amber-500/30 transition-colors"
           >
             <RefreshCw className="w-3 h-3" />
-            清空对话并重试
+            {t('chat_error.clear_and_retry')}
           </button>
         </div>
       )

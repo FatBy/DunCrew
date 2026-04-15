@@ -1,9 +1,52 @@
 ---
 name: openai-image-gen
-description: "Batch-generate images via OpenAI Images API. Random prompt sampler + `index.html` gallery."
+description: "Batch-generate images via OpenAI Images API. Random prompt sampler + `index.html` gallery. Ideal for rapid prototyping, generating placeholder assets, testing AI art variations across models (GPT-Image, DALL-E 3/2), and building local thumbnail galleries with customizable resolution, quality, and output formats."
 version: "1.0.0"
 author: "DunCrew"
 homepage: https://platform.openai.com/docs/api-reference/images
+tags:
+  - image-generation
+  - openai
+  - automation
+  - multimedia
+  - cli-tool
+keywords:
+  - generate images
+  - openai images api
+  - dall-e 3
+  - gpt image
+  - batch image generation
+  - ai art gallery
+  - prompt sampling
+dangerLevel: safe
+inputs:
+  - name: count
+    type: integer
+    description: Number of images to generate (auto-limited to 1 for DALL-E 3)
+  - name: model
+    type: string
+    description: Target generation model (e.g., gpt-image-1, dall-e-3, dall-e-2)
+  - name: prompt
+    type: string
+    description: Text prompt for image generation (uses random sampler if omitted)
+  - name: size
+    type: string
+    description: Image resolution (e.g., 1024x1024, 1536x1024, auto)
+  - name: quality
+    type: string
+    description: Generation quality level (e.g., high, standard, hd, auto)
+  - name: output_format
+    type: string
+    description: Output file format (png, jpeg, webp)
+  - name: background
+    type: string
+    description: Background type for GPT image models (transparent, opaque, auto)
+  - name: style
+    type: string
+    description: Artistic style for DALL-E 3 (vivid, natural)
+  - name: out_dir
+    type: string
+    description: Custom output directory for generated files
 metadata:
   openclaw:
     emoji: "🖼️"
@@ -17,8 +60,8 @@ metadata:
         formula: "python"
         bins: ["python3"]
         label: "Install Python (brew)"
+enabled: false
 ---
-
 # OpenAI Image Gen
 
 Generate a handful of “random but structured” prompts and render them via the OpenAI Images API.

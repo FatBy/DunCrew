@@ -226,6 +226,12 @@ export interface ChannelsSlice {
   setSkillsSnapshot: (snapshot: SkillsSnapshot) => void
   setOpenClawSkills: (skills: OpenClawSkill[]) => void
   
+  // Actions - 技能刷新 (统一的操作后刷新机制)
+  refreshSkills: () => Promise<void>
+  
+  // Actions - 技能启用/禁用
+  toggleSkillEnabled: (skillName: string, enabled: boolean) => Promise<void>
+  
   // Actions - 技能分析
   generateSkillAnalysis: (forceLevel?: AnalysisRefreshLevel) => Promise<void>
   shouldRefreshSkillAnalysis: () => boolean
@@ -488,6 +494,69 @@ export const createChannelsSlice: StateCreator<ChannelsSlice> = (set, get) => ({
       }
     } catch {
       console.warn('[ChannelsSlice] Failed to load skill env values')
+    }
+  },
+
+  refreshSkills: async () => {
+    const serverUrl = localServerService.getServerUrl()
+    try {
+      const response = await fetch(`${serverUrl}/skills`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!response.ok) {
+        console.error('[ChannelsSlice] Failed to refresh skills:', response.status)
+        return
+      }
+      const skills: OpenClawSkill[] = await response.json()
+      set({
+        openClawSkills: skills,
+        skills: openClawSkillsToNodes(skills),
+        channelsLoading: false,
+      })
+    } catch (error) {
+      console.error('[ChannelsSlice] Error refreshing skills:', error)
+    }
+  },
+
+  toggleSkillEnabled: async (skillName, enabled) => {
+    const serverUrl = localServerService.getServerUrl()
+    const previousSkills = get().openClawSkills
+
+    // 乐观更新
+    const optimisticSkills = previousSkills.map((skill) =>
+      skill.name === skillName
+        ? { ...skill, enabled, status: (enabled ? 'active' : 'inactive') as 'active' | 'inactive' | 'error' }
+        : skill
+    )
+    set({
+      openClawSkills: optimisticSkills,
+      skills: openClawSkillsToNodes(optimisticSkills),
+    })
+
+    try {
+      const response = await fetch(`${serverUrl}/skills/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: skillName, enabled }),
+      })
+
+      if (!response.ok) {
+        // 回滚到之前的状态
+        console.error('[ChannelsSlice] Failed to toggle skill, reverting')
+        set({
+          openClawSkills: previousSkills,
+          skills: openClawSkillsToNodes(previousSkills),
+        })
+      }
+    } catch (error) {
+      // 网络错误: 回滚
+      console.error('[ChannelsSlice] Error toggling skill:', error)
+      set({
+        openClawSkills: previousSkills,
+        skills: openClawSkillsToNodes(previousSkills),
+      })
     }
   },
 })

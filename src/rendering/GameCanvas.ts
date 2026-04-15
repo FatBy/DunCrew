@@ -42,9 +42,9 @@ export class GameCanvas {
   private registry: RendererRegistry
 
   private state: RenderState = {
-    nexuses: new Map(),
+    duns: new Map(),
     camera: { x: 0, y: 0, zoom: 1 },
-    selectedNexusId: null,
+    selectedDunId: null,
     renderSettings: { showGrid: true, showParticles: true, showLabels: true, enableGlow: true },
   }
 
@@ -111,7 +111,7 @@ export class GameCanvas {
     const blockRenderer = this.getBlockRenderer()
     if (blockRenderer) {
       blockRenderer.setExecutionState(
-        state.executingNexusId ?? null,
+        state.executingDunId ?? null,
         state.executionStartTime ?? null,
       )
     }
@@ -124,15 +124,15 @@ export class GameCanvas {
     
     // 更新网格渲染器的建筑位置（用于道路网络生成）
     const renderers = this.registry.getCurrent()
-    if (renderers?.grid?.updateNexusPositions && state.nexuses) {
-      const positions = [...state.nexuses.values()].map(n => n.position)
-      renderers.grid.updateNexusPositions(positions)
+    if (renderers?.grid?.updateDunPositions && state.duns) {
+      const positions = [...state.duns.values()].map(n => n.position)
+      renderers.grid.updateDunPositions(positions)
     }
     
     // 更新装饰层的建筑位置（用于避开建筑区域）
-    if (renderers?.decorations?.updateNexusPositions && state.nexuses) {
-      const positions = [...state.nexuses.values()].map(n => n.position)
-      renderers.decorations.updateNexusPositions(positions)
+    if (renderers?.decorations?.updateDunPositions && state.duns) {
+      const positions = [...state.duns.values()].map(n => n.position)
+      renderers.decorations.updateDunPositions(positions)
     }
     
     this.state = state
@@ -170,11 +170,11 @@ export class GameCanvas {
 
   // ---- Cache Management ----
 
-  invalidateCache(nexusId: string): void {
+  invalidateCache(dunId: string): void {
     const renderers = this.registry.getCurrent()
     if (renderers) {
       for (const entity of renderers.entities) {
-        entity.invalidateCache?.(nexusId)
+        entity.invalidateCache?.(dunId)
       }
     }
   }
@@ -263,7 +263,7 @@ export class GameCanvas {
 
     this._time += 0.002
 
-    const { camera, nexuses, selectedNexusId, renderSettings } = this.state
+    const { camera, duns, selectedDunId, renderSettings } = this.state
 
     // 构建渲染上下文
     const renderCtx: RenderContext = {
@@ -294,20 +294,20 @@ export class GameCanvas {
 
     // Layer 2: Entities (几何积木)
     try {
-      if (nexuses && nexuses.size > 0) {
-        const sorted = [...nexuses.values()].sort(
+      if (duns && duns.size > 0) {
+        const sorted = [...duns.values()].sort(
           (a, b) => (a.position.gridX + a.position.gridY) - (b.position.gridX + b.position.gridY)
         )
-        for (const nexus of sorted) {
-          const screen = this.worldToScreen(nexus.position.gridX, nexus.position.gridY, camera)
+        for (const dun of sorted) {
+          const screen = this.worldToScreen(dun.position.gridX, dun.position.gridY, camera)
           // 视锥剔除
           if (screen.x < -120 || screen.x > w + 120 || screen.y < -120 || screen.y > h + 120) continue
           
-          const isSelected = nexus.id === selectedNexusId
+          const isSelected = dun.id === selectedDunId
           
           for (const entityRenderer of renderers.entities) {
-            if (entityRenderer.canRender(nexus)) {
-              entityRenderer.render(renderCtx, nexus, screen, isSelected, timestamp)
+            if (entityRenderer.canRender(dun)) {
+              entityRenderer.render(renderCtx, dun, screen, isSelected, timestamp)
               break
             }
           }

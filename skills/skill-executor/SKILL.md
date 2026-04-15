@@ -1,10 +1,40 @@
 ---
 name: skill-executor
-description: "SKILL.md parser and execution engine for autonomous agent capabilities"
+description: "SKILL.md parser and execution engine for autonomous agent capabilities. Enables dynamic discovery, inspection, and execution of modular skills. Ideal for orchestrating complex agent workflows, managing toolchains, and extending capabilities through isolated subprocess execution."
 version: "1.0.0"
 author: "DunCrew"
 executable: execute.py
 runtime: python
+tags:
+  - agent
+  - execution
+  - tool-management
+  - automation
+keywords:
+  - execute skill
+  - run tool
+  - list skills
+  - skill info
+  - agent capability
+  - SKILL.md
+dangerLevel: high
+inputs:
+  action:
+    type: string
+    required: true
+    description: "Action to perform: run, list, or info"
+  skill_name:
+    type: string
+    required: false
+    description: "Target skill name for run or info actions"
+  arguments:
+    type: object
+    required: false
+    description: "Parameters to pass to the target skill"
+  project_root:
+    type: string
+    required: false
+    description: "Base directory for resolving skill paths"
 tools:
   - toolName: run_skill
     description: "Execute a skill from SKILL.md definition"
@@ -51,8 +81,8 @@ metadata:
   openclaw:
     emoji: "⚡"
     primaryEnv: "python"
+enabled: false
 ---
-
 # Skill Executor
 
 SKILL.md parser and execution engine for autonomous agent capabilities.

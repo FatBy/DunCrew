@@ -1,10 +1,12 @@
 import type { HouseConfig } from '@/types'
-import { Home, Brain, ScrollText, ListTodo, Ghost, Settings } from 'lucide-react'
+import { Home, Brain, ScrollText, ListTodo, Ghost, Settings, Radio, Library } from 'lucide-react'
 import { SkillHouse } from '@/components/houses/SkillHouse'
 import { MemoryHouse } from '@/components/houses/MemoryHouse'
 import { TaskHouse } from '@/components/houses/TaskHouse'
 import { SoulHouse } from '@/components/houses/SoulHouse'
 import { SettingsHouse } from '@/components/houses/SettingsHouse'
+import { LinkStationHouse } from '@/components/houses/LinkStationHouse'
+import { LibraryHouse } from '@/components/houses/LibraryHouse'
 
 // World view is handled separately as the background layer.
 // This placeholder is registered so the Dock can render a "Home" icon.
@@ -52,6 +54,22 @@ export const houseRegistry: HouseConfig[] = [
     component: SoulHouse,
     themeColor: 'purple',
     description: 'Agent 灵魂状态 (映射自 Health/Presence)',
+  },
+  {
+    id: 'link-station',
+    name: '联络站',
+    icon: Radio,
+    component: LinkStationHouse,
+    themeColor: 'emerald',
+    description: '模型通道与 MCP 连接节点管理',
+  },
+  {
+    id: 'library',
+    name: '知识库',
+    icon: Library,
+    component: LibraryHouse,
+    themeColor: 'sky',
+    description: '文件知识图谱摄入管线',
   },
   {
     id: 'settings',

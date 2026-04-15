@@ -4,7 +4,7 @@
 // Level 差异 + 窗户纹理 + 屋顶装饰
 // ============================================
 
-import type { NexusEntity } from '@/types'
+import type { DunEntity } from '@/types'
 import { scoringToVisualLevel } from '@/types'
 import { getConstructionProgress } from '@/store/slices/worldSlice'
 import type { EntityRenderer, RenderContext, Point, BufferCanvas } from '../types'
@@ -44,7 +44,7 @@ function getHash(str: string): number {
 /**
  * 从 visualDNA 的 primaryHue 生成发光颜色
  */
-function getGlowColor(nexus: NexusEntity): string {
+function getGlowColor(nexus: DunEntity): string {
   const hue = nexus.visualDNA?.primaryHue ?? 180
   return `hsl(${hue}, 80%, 60%)`
 }
@@ -61,10 +61,10 @@ export class BlockRenderer implements EntityRenderer {
   
   private cache: Map<string, BufferCanvas> = new Map()
   private dpr = 1
-  private executingNexusId: string | null = null
+  private executingDunId: string | null = null
   private executionStartTime: number | null = null
 
-  canRender(_nexus: NexusEntity): boolean {
+  canRender(_nexus: DunEntity): boolean {
     return true
   }
 
@@ -75,20 +75,20 @@ export class BlockRenderer implements EntityRenderer {
     }
   }
 
-  setExecutionState(nexusId: string | null, startTime: number | null): void {
-    this.executingNexusId = nexusId
+  setExecutionState(dunId: string | null, startTime: number | null): void {
+    this.executingDunId = dunId
     this.executionStartTime = startTime
   }
 
   render(
     ctx: RenderContext,
-    nexus: NexusEntity,
+    nexus: DunEntity,
     screenPos: Point,
     isSelected: boolean,
     timestamp: number,
   ): void {
     const { ctx: c, camera } = ctx
-    const isExecuting = nexus.id === this.executingNexusId
+    const isExecuting = nexus.id === this.executingDunId
 
     // 基于 ID 计算独特的建筑特征
     const hash = getHash(nexus.id)
@@ -313,7 +313,7 @@ export class BlockRenderer implements EntityRenderer {
     heightZ: number, level: number,
     timestamp: number,
     colors: typeof COLOR_PALETTE[0],
-    nexus: NexusEntity,
+    nexus: DunEntity,
   ): void {
     if (level < 3) return
 
@@ -395,7 +395,7 @@ export class BlockRenderer implements EntityRenderer {
 
   private drawLabel(
     ctx: CanvasRenderingContext2D,
-    nexus: NexusEntity,
+    nexus: DunEntity,
     pos: Point,
     isSelected: boolean,
     _floatY: number,
@@ -431,7 +431,7 @@ export class BlockRenderer implements EntityRenderer {
     ctx: CanvasRenderingContext2D,
     pos: Point,
     timestamp: number,
-    nexus: NexusEntity,
+    nexus: DunEntity,
     floatY: number,
     heightZ: number,
   ): void {
@@ -455,8 +455,8 @@ export class BlockRenderer implements EntityRenderer {
     ctx.restore()
   }
 
-  invalidateCache(nexusId: string): void {
-    this.cache.delete(nexusId)
+  invalidateCache(dunId: string): void {
+    this.cache.delete(dunId)
   }
 
   clearCache(): void {

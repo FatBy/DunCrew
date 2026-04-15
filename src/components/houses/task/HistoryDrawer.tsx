@@ -15,6 +15,7 @@ const statusConfig: Record<TaskStatus, { icon: typeof Clock; color: string; labe
   queued: { icon: Clock, color: 'blue', label: '排队中' },
   executing: { icon: Clock, color: 'cyan', label: '执行中' },
   done: { icon: CheckCircle2, color: 'emerald', label: '完成' },
+  error: { icon: AlertTriangle, color: 'red', label: '出错' },
   terminated: { icon: StopCircle, color: 'red', label: '已终止' },
   interrupted: { icon: AlertTriangle, color: 'amber', label: '已中断' },
   retrying: { icon: RotateCcw, color: 'violet', label: '重试中' },

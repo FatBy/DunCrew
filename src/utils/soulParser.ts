@@ -1,13 +1,14 @@
 /**
  * SOUL.md 解析器
  * 将 SOUL.md Markdown 内容解析为结构化数据
+ * 支持中英文章节标题
  */
 
 import type { SoulIdentity, SoulTruth, SoulBoundary } from '@/types'
 
 export interface ParsedSoul {
-  title: string           // "Who You Are" 部分的标题
-  subtitle: string        // "You're not a chatbot..." 描述
+  title: string           // 标题部分
+  subtitle: string        // 开头自述描述
   coreTruths: SoulTruth[]
   boundaries: SoulBoundary[]
   vibeStatement: string
@@ -51,7 +52,7 @@ export function parseSoulMd(content: string): ParsedSoul {
       continue
     }
 
-    // 解析标题行 (# SOUL.md - Who You Are)
+    // 解析标题行 (# SOUL.md - Who You Are / # SOUL.md - 我是谁)
     if (line.startsWith('# ')) {
       const titleMatch = line.match(/^#\s*SOUL\.md\s*[-–—]\s*(.+)$/i)
       if (titleMatch) {
@@ -72,15 +73,21 @@ export function parseSoulMd(content: string): ParsedSoul {
       }
 
       const sectionName = line.slice(3).trim().toLowerCase()
-      // 支持多种格式: Core Truths, Core Principles, Core Values 等
-      if (sectionName.includes('core truth') || sectionName.includes('core principle') || sectionName.includes('core value') || sectionName.includes('principles')) {
+      // 支持中英文: Core Truths / 核心准则 / 核心原则
+      if (sectionName.includes('core truth') || sectionName.includes('core principle') || sectionName.includes('core value') || sectionName.includes('principles')
+        || sectionName.includes('核心准则') || sectionName.includes('核心原则') || sectionName.includes('核心价值')) {
         currentSection = 'truths'
-      // 支持多种格式: Boundaries, Safety Rules, Constraints 等
-      } else if (sectionName.includes('boundar') || sectionName.includes('safety') || sectionName.includes('rule') || sectionName.includes('constraint')) {
+      // 支持中英文: Boundaries / 边界 / 安全规则
+      } else if (sectionName.includes('boundar') || sectionName.includes('safety') || sectionName.includes('rule') || sectionName.includes('constraint')
+        || sectionName.includes('边界') || sectionName.includes('安全') || sectionName.includes('规则') || sectionName.includes('约束')) {
         currentSection = 'boundaries'
-      } else if (sectionName.includes('vibe') || sectionName.includes('personality') || sectionName.includes('style')) {
+      // 支持中英文: Vibe / 氛围 / 风格
+      } else if (sectionName.includes('vibe') || sectionName.includes('personality') || sectionName.includes('style')
+        || sectionName.includes('氛围') || sectionName.includes('风格') || sectionName.includes('个性')) {
         currentSection = 'vibe'
-      } else if (sectionName.includes('continuit') || sectionName.includes('memory') || sectionName.includes('context')) {
+      // 支持中英文: Continuity / 连续性 / 记忆
+      } else if (sectionName.includes('continuit') || sectionName.includes('memory') || sectionName.includes('context')
+        || sectionName.includes('连续') || sectionName.includes('记忆') || sectionName.includes('上下文')) {
         currentSection = 'continuity'
       } else {
         currentSection = sectionName
@@ -88,8 +95,8 @@ export function parseSoulMd(content: string): ParsedSoul {
       continue
     }
 
-    // 检测非标题的章节标识 (Core Truths 没有 ## 前缀的情况)
-    if (line === 'Core Truths') {
+    // 检测非标题的章节标识
+    if (line === 'Core Truths' || line === '核心准则' || line === '核心原则') {
       if (currentTruthText && currentSection === 'truths') {
         const truth = parseTruthLine(currentTruthText, result.coreTruths.length)
         if (truth) result.coreTruths.push(truth)
@@ -98,7 +105,7 @@ export function parseSoulMd(content: string): ParsedSoul {
       currentSection = 'truths'
       continue
     }
-    if (line === 'Boundaries') {
+    if (line === 'Boundaries' || line === '边界') {
       if (currentTruthText && currentSection === 'truths') {
         const truth = parseTruthLine(currentTruthText, result.coreTruths.length)
         if (truth) result.coreTruths.push(truth)
@@ -107,26 +114,28 @@ export function parseSoulMd(content: string): ParsedSoul {
       currentSection = 'boundaries'
       continue
     }
-    if (line === 'Vibe') {
+    if (line === 'Vibe' || line === '氛围') {
       currentSection = 'vibe'
       continue
     }
-    if (line === 'Continuity') {
+    if (line === 'Continuity' || line === '连续性') {
       currentSection = 'continuity'
       continue
     }
 
-    // 解析副标题 (You're not a chatbot...)
-    if (!result.subtitle && line.startsWith("You're") && !currentSection) {
-      result.subtitle = line
-      continue
+    // 解析副标题（支持中英文开头）
+    if (!result.subtitle && !currentSection) {
+      // 英文: "You're not a chatbot..."  中文: "我不是..." / "我是..."
+      if (line.startsWith("You're") || line.startsWith('我不是') || line.startsWith('我是')) {
+        result.subtitle = line
+        continue
+      }
     }
 
     // 根据当前章节解析内容
     switch (currentSection) {
-      case 'truths':
+      case 'truths': {
         // Core Truths - 每条以粗体开头、列表项或普通段落
-        // 支持 - 或 * 开头的列表项
         const truthLine = line.replace(/^[-\*]\s*/, '').trim()
         if (line.startsWith('-') || line.startsWith('*')) {
           // 列表项格式
@@ -135,8 +144,8 @@ export function parseSoulMd(content: string): ParsedSoul {
             if (truth) result.coreTruths.push(truth)
           }
           currentTruthText = truthLine
-        } else if (line.startsWith('**') || line.match(/^[A-Z][a-z]/)) {
-          // 保存之前的 truth
+        } else if (line.startsWith('**') || line.match(/^[A-Z][a-z]/) || line.match(/^[\u4e00-\u9fff]/)) {
+          // 粗体开头、英文句子开头、或中文开头 → 新的 truth
           if (currentTruthText) {
             const truth = parseTruthLine(currentTruthText, result.coreTruths.length)
             if (truth) result.coreTruths.push(truth)
@@ -149,8 +158,9 @@ export function parseSoulMd(content: string): ParsedSoul {
           currentTruthText = line
         }
         break
+      }
 
-      case 'boundaries':
+      case 'boundaries': {
         // Boundaries - 以 ● 或 - 或 * 开头
         const boundaryText = line.replace(/^[●\-\*]\s*/, '').trim()
         if (boundaryText) {
@@ -160,6 +170,7 @@ export function parseSoulMd(content: string): ParsedSoul {
           })
         }
         break
+      }
 
       case 'vibe':
         // Vibe 通常是一段话
@@ -197,8 +208,8 @@ export function parseSoulMd(content: string): ParsedSoul {
 function parseTruthLine(text: string, index: number): SoulTruth | null {
   if (!text) return null
 
-  // 尝试匹配 **Bold title.** description 格式
-  const boldMatch = text.match(/^\*\*(.+?)\*\*\.?\s*(.*)$/)
+  // 尝试匹配 **Bold title.** description 格式（中英文句号）
+  const boldMatch = text.match(/^\*\*(.+?)\*\*[.。]?\s*(.*)$/)
   if (boldMatch) {
     return {
       id: `truth-${index}`,
@@ -208,9 +219,8 @@ function parseTruthLine(text: string, index: number): SoulTruth | null {
     }
   }
 
-  // 尝试匹配 "Sentence. More sentences." 格式
-  // 第一句作为 principle，其余作为 description
-  const sentences = text.split(/(?<=[.!?])\s+/)
+  // 尝试匹配 "Sentence. More sentences." 格式（中英文句号）
+  const sentences = text.split(/(?<=[.!?。！？])\s*/)
   if (sentences.length >= 1) {
     const firstSentence = sentences[0].trim()
     const rest = sentences.slice(1).join(' ').trim()
@@ -236,27 +246,28 @@ function parseTruthLine(text: string, index: number): SoulTruth | null {
  */
 function extractTitle(sentence: string): string {
   // 移除 markdown 格式
-  let clean = sentence.replace(/\*\*/g, '').trim()
+  const clean = sentence.replace(/\*\*/g, '').trim()
   
-  // 如果以 "Be " 开头，提取关键词
+  // 英文模式
   if (clean.toLowerCase().startsWith('be ')) {
-    const words = clean.split(' ').slice(1, 3)
-    return words.join(' ')
+    return clean.split(' ').slice(1, 3).join(' ')
   }
-  
-  // 如果以 "Have " 开头
   if (clean.toLowerCase().startsWith('have ')) {
     return clean.split(' ').slice(1, 2).join(' ')
   }
-  
-  // 如果以 "Remember " 开头
   if (clean.toLowerCase().startsWith('remember ')) {
     return 'Remember'
   }
-  
-  // 如果以 "Earn " 开头
   if (clean.toLowerCase().startsWith('earn ')) {
     return 'Earn trust'
+  }
+
+  // 中文模式：取前 8 个字符（中文通常 2-8 字就够）
+  if (/^[\u4e00-\u9fff]/.test(clean)) {
+    // 如果有句号/逗号，取第一个分句
+    const firstClause = clean.split(/[，。、]/)[0]
+    if (firstClause && firstClause.length <= 10) return firstClause
+    return clean.length <= 10 ? clean : clean.slice(0, 8) + '...'
   }
 
   // 默认取前几个词
@@ -274,8 +285,8 @@ export function parsedSoulToIdentity(
   agentEmoji?: string
 ): SoulIdentity {
   return {
-    name: agentName || 'DunCrew Agent',
-    essence: parsed.subtitle || parsed.title || 'AI Assistant',
+    name: agentName || 'DunCrew 智能体',
+    essence: parsed.subtitle || parsed.title || 'AI 助手',
     vibe: extractVibeKeywords(parsed.vibeStatement),
     symbol: agentEmoji || '🤖',
   }
@@ -287,14 +298,17 @@ export function parsedSoulToIdentity(
 function extractVibeKeywords(vibeStatement: string): string {
   if (!vibeStatement) return ''
   
-  // 提取描述性词汇
+  // 提取描述性词汇（中英文）
   const keywords: string[] = []
   
-  if (vibeStatement.toLowerCase().includes('concise')) keywords.push('简洁')
-  if (vibeStatement.toLowerCase().includes('thorough')) keywords.push('深入')
-  if (vibeStatement.toLowerCase().includes('good')) keywords.push('可靠')
-  if (vibeStatement.toLowerCase().includes('helpful')) keywords.push('乐于助人')
-  if (vibeStatement.toLowerCase().includes('not a sycophant')) keywords.push('真诚')
+  if (vibeStatement.toLowerCase().includes('concise') || vibeStatement.includes('简洁')) keywords.push('简洁')
+  if (vibeStatement.toLowerCase().includes('thorough') || vibeStatement.includes('深入')) keywords.push('深入')
+  if (vibeStatement.toLowerCase().includes('good') || vibeStatement.includes('可靠')) keywords.push('可靠')
+  if (vibeStatement.toLowerCase().includes('helpful') || vibeStatement.includes('乐于助人') || vibeStatement.includes('帮助')) keywords.push('乐于助人')
+  if (vibeStatement.toLowerCase().includes('not a sycophant') || vibeStatement.includes('真诚') || vibeStatement.includes('诚实') || vibeStatement.includes('应声虫')) keywords.push('真诚')
+  if (vibeStatement.includes('精准') || vibeStatement.toLowerCase().includes('precise')) keywords.push('精准')
   
-  return keywords.length > 0 ? keywords.join('、') : vibeStatement.slice(0, 50)
+  // 去重
+  const unique = [...new Set(keywords)]
+  return unique.length > 0 ? unique.join('、') : vibeStatement.slice(0, 50)
 }

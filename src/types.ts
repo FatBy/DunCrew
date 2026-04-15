@@ -5,7 +5,7 @@ import type { ComponentType } from 'react'
 // UI 配置类型
 // ============================================
 
-export type ViewType = 'world' | 'task' | 'skill' | 'memory' | 'soul' | 'settings'
+export type ViewType = 'world' | 'task' | 'skill' | 'memory' | 'soul' | 'settings' | 'link-station' | 'library'
 
 export interface HouseConfig {
   id: ViewType
@@ -37,6 +37,7 @@ export type TaskStatus =
   | 'queued'       // 已入队列
   | 'executing'    // 执行中
   | 'done'         // 完成
+  | 'error'        // 执行出错
   | 'terminated'   // 用户终止
   | 'interrupted'  // 系统中断
   | 'retrying'     // 重试中
@@ -49,7 +50,7 @@ export interface TaskCheckpoint {
   savedAt: number                             // 保存时间
   // 恢复执行所需的完整上下文
   userPrompt: string                          // 原始用户输入
-  nexusId?: string                            // 关联的 Nexus ID
+  dunId?: string                              // 关联的 Dun ID
   turnCount: number                           // 当前执行轮次
   messages: Array<{                           // LLM 对话历史 (精简版)
     role: 'system' | 'user' | 'assistant' | 'tool'
@@ -144,7 +145,7 @@ export interface TaskPlan {
   userPrompt: string            // 用户原始需求
   subTasks: SubTask[]           // 子任务列表（构成 DAG）
   status: TaskPlanStatus
-  nexusId?: string              // 关联的 Nexus ID（如果通过 Nexus 执行）
+  dunId?: string                // 关联的 Dun ID（如果通过 Dun 执行）
   createdAt: number
   startedAt?: number
   completedAt?: number
@@ -263,9 +264,10 @@ export interface SoulAmendment {
   id: string                          // amend-{timestamp}-{random}
   content: string                     // 自然语言偏好 (如 "偏好简洁回答")
   source: {
-    nexusIds: string[]                // 观测到此行为的 Nexus
+    dunIds: string[]                  // 观测到此行为的 Dun
     evidence: string[]                // trace 摘要片段 (<=3条, 每条<=100字)
     detectedAt: number
+    signalLabel?: string              // 触发信号的标签 (用于去重, 如 "heavy_runCmd_usage")
   }
   status: 'draft' | 'approved' | 'rejected' | 'archived'
   weight: number                      // 0~1, 时间衰减
@@ -290,15 +292,15 @@ export const SOUL_EVOLUTION_CONFIG = {
   INJECTION_MIN_WEIGHT: 0.3,
   MAX_INJECTION_CHARS: 500,
   CHECK_INTERVAL_TASKS: 3,
-  MIN_NEXUS_COUNT: 1,
+  MIN_DUN_COUNT: 1,
   INITIAL_DRAFT_WEIGHT: 0.6,
   MBTI_MAX_MODIFIER: 0.4,
   DECAY_INTERVAL_MS: 6 * 60 * 60 * 1000,
   /** 工具偏好信号：最少总调用数 */
   TOOL_PREF_MIN_TOTAL_CALLS: 5,
-  /** 工具偏好信号：最少跨 Nexus 数 */
-  TOOL_PREF_MIN_NEXUS_SPREAD: 1,
-  /** 成功模式信号：最少 Nexus 数 */
+  /** 工具偏好信号：最少跨 Dun 数 */
+  TOOL_PREF_MIN_DUN_SPREAD: 1,
+  /** 成功模式信号：最少 Dun 数 */
   SUCCESS_PATTERN_MIN_SCORINGS: 1,
   /** 风格偏移信号：最少历史总调用数 */
   STYLE_SHIFT_MIN_TOTAL_CALLS: 12,
@@ -369,9 +371,10 @@ export interface OpenClawSkill {
   toolNames?: string[]         // 多工具名列表 (如 ["search_codebase", "search_symbol"])
   toolType?: 'executable' | 'instruction'  // 工具类型: 可执行 / 指令型
   executable?: boolean         // 是否有 execute.py/.js
-  inputs?: Record<string, any> // 输入参数 schema
+  inputs?: Record<string, unknown> // 输入参数 schema
   dangerLevel?: string         // safe | high | critical
   keywords?: string[]          // 语义触发关键词
+  whenToUse?: string           // 何时使用提示（供 LLM 判断是否调用）
   // OpenClaw 生态字段
   emoji?: string
   author?: string
@@ -578,9 +581,35 @@ export interface Toast {
   persistent?: boolean // 当 true 时忽略 duration，直到手动关闭
 }
 
+/** 通知中心历史记录 */
+export interface NotificationRecord {
+  id: string
+  type: 'success' | 'error' | 'warning' | 'info'
+  title: string
+  message?: string
+  timestamp: number
+  read: boolean
+}
+
 // ============================================
 // LLM / AI 类型
 // ============================================
+
+/**
+ * 图片生成 API 契约 — Provider 声明自己的 API 差异，generateImage 据此适配
+ *
+ * 不设置（undefined）= 全部走 OpenAI 默认值，零配置。
+ */
+export interface ImageGenProfile {
+  /** 端点路径 (如 'v1/image_generation')，默认 'v1/images/generations' */
+  endpoint?: string
+  /** 尺寸参数模式: 'pixel' → size="1024x1024", 'ratio' → aspect_ratio="1:1"。默认 'pixel' */
+  sizeMode?: 'pixel' | 'ratio'
+  /** 发给 API 的 response_format 值 (如 'url', 'b64_json')，不设则不发送此字段 */
+  responseFormat?: string
+  /** 响应数据结构: 'openai' = data:[{url, b64_json}], 'wrapped' = data:{image_urls:[], image_base64:[]}。默认 'openai' */
+  responseLayout?: 'openai' | 'wrapped'
+}
 
 export interface LLMConfig {
   apiKey: string
@@ -592,7 +621,136 @@ export interface LLMConfig {
   embedApiKey?: string
   embedBaseUrl?: string
   embedModel?: string
+  /** 图片生成 API 契约（由 Provider 预设声明，generateImage 据此适配） */
+  imageGenProfile?: ImageGenProfile
 }
+
+// ============================================
+// 联络站类型 (Link Station)
+// ============================================
+
+/** 模型通道类型 */
+export type ModelChannelType = 'chat' | 'chatSecondary' | 'embed' | 'imageGen' | 'videoGen' | 'search'
+
+/** API 协议 */
+export type ApiProtocol = 'openai' | 'anthropic' | 'auto'
+
+/** Provider 来源 */
+export type ProviderSource = 'manual' | 'env-scan'
+
+/** Provider 区域 */
+export type ProviderRegion = 'domestic' | 'overseas' | 'local' | 'any'
+
+/** 模型兼容性标志 */
+export interface ModelCompatFlags {
+  supportsTools: boolean
+  thinkingContentField?: string
+}
+
+/** 模型条目 */
+export interface ModelEntry {
+  id: string
+  name: string
+  compatFlags?: ModelCompatFlags
+}
+
+/** 模型 Provider */
+export interface ModelProvider {
+  id: string
+  label: string
+  baseUrl: string
+  apiKey: string
+  apiProtocol: ApiProtocol
+  source: ProviderSource
+  models: ModelEntry[]
+  createdAt: number
+  updatedAt: number
+  /** 图片生成 API 契约（如 MiniMax 与 OpenAI 的端点、参数、响应格式不同） */
+  imageGenProfile?: ImageGenProfile
+}
+
+/** 模型绑定（通道 → Provider + Model） */
+export interface ModelBinding {
+  providerId: string
+  modelId: string
+}
+
+/** 通道绑定配置 */
+export interface ChannelBindings {
+  chat: ModelBinding | null
+  chatSecondary: ModelBinding | null
+  embed: ModelBinding | null
+  imageGen: ModelBinding | null
+  videoGen: ModelBinding | null
+  search: ModelBinding | null
+}
+
+/** 联络站 Sheet 标签 */
+export type LinkStationSheet = 'model-channel' | 'mcp-service'
+
+/** MCP 服务器状态 */
+export type MCPServerStatus = 'connected' | 'disconnected' | 'connecting' | 'error'
+
+/** MCP 传输类型 */
+export type MCPTransportType = 'stdio' | 'sse'
+
+/** MCP 服务器条目 */
+export interface MCPServerEntry {
+  name: string
+  command: string
+  args: string[]
+  env?: Record<string, string>
+  enabled: boolean
+  /** 传输类型: stdio (默认) 或 sse */
+  transportType?: MCPTransportType
+  /** SSE 模式下的服务器 URL */
+  url?: string
+  /** 超时时间（秒），默认 60 */
+  timeout?: number
+}
+
+/** MCP 工具条目 */
+export interface MCPToolEntry {
+  serverName: string
+  name: string
+  description: string
+  inputSchema?: Record<string, unknown>
+}
+
+/** 联络站完整状态 */
+export interface LinkStationState {
+  activeSheet: LinkStationSheet
+  providers: ModelProvider[]
+  channelBindings: ChannelBindings
+  mcpServers: MCPServerEntry[]
+  mcpStatus: Record<string, MCPServerStatus>
+  mcpTools: MCPToolEntry[]
+}
+
+/** Provider 注册引导配置 */
+export interface ProviderGuide {
+  label: string
+  tagline: string
+  icon: string
+  region: ProviderRegion
+  signupUrl: string
+  apiKeyPageUrl: string
+  baseUrl: string
+  apiProtocol: ApiProtocol
+  steps: string[]
+  tip: string
+  recommendedModel: string
+  /** 图片生成 API 契约 */
+  imageGenProfile?: ImageGenProfile
+}
+
+/** Fallback 触发条件配置 */
+export const FALLBACK_CONFIG = {
+  TRIGGER_STATUS_CODES: [429, 500, 502, 503] as const,
+  TRIGGER_ERROR_TYPES: ['TIMEOUT', 'NETWORK_ERROR', 'ECONNREFUSED'] as const,
+  NO_FALLBACK_STATUS_CODES: [400, 401, 403] as const,
+  MAX_FALLBACK_RETRIES: 1,
+} as const
 
 export interface ChatMessage {
   id: string
@@ -603,33 +761,36 @@ export interface ChatMessage {
   execution?: ExecutionStatus
   /** 执行过程中创建的文件列表，用于在聊天中显示可点击的文件卡片 */
   createdFiles?: { filePath: string; fileName: string; message: string; fileSize?: number }[]
+  /** 关联的执行追踪 ID，用于点赞等反馈关联 */
+  traceId?: string
+  /** 用户是否点赞该消息 */
+  liked?: boolean
 }
 
 // ============================================
 // 会话管理类型
 // ============================================
 
-export type ConversationType = 'general' | 'nexus'
+export type ConversationType = 'general' | 'dun'
 
 export interface Conversation {
   id: string
   type: ConversationType
   title: string
-  nexusId?: string          // 仅 'nexus' 类型使用
+  dunId?: string            // 仅 'dun' 类型使用
   messages: ChatMessage[]
   createdAt: number
   updatedAt: number
   pinned?: boolean
   autoTitled?: boolean      // 标记是否已自动生成标题
   messagesLoaded?: boolean  // 标记消息是否已从后端懒加载
-  openClawSessionKey?: string  // OpenClaw Gateway 会话 key (同一对话复用，保持上下文连贯)
 }
 
 export interface ConversationMeta {
   id: string
   type: ConversationType
   title: string
-  nexusId?: string
+  dunId?: string
   messageCount: number
   createdAt: number
   updatedAt: number
@@ -693,6 +854,8 @@ export interface ExecTrace {
   task: string
   tools: ExecTraceToolCall[]
   success: boolean
+  /** V3: 循环终止路径 — 区分 LLM 自然完成、用户中止、超时等 */
+  completionPath?: 'natural' | 'aborted' | 'truncation_fail' | 'unrecoverable_error' | 'max_turns' | 'escalation' | 'agent_abort'
   failureReason?: string
   duration: number
   timestamp: number
@@ -702,11 +865,227 @@ export interface ExecTrace {
   errorCount?: number          // 失败的工具调用次数
   retryCount?: number          // 重试次数
   skillIds?: string[]          // 触发的技能 ID
-  activeNexusId?: string       // 执行时的活跃 Nexus
+  activeDunId?: string         // 执行时的活跃 Dun
   /** V2: 碱基序列字符串，如 "X-P-E-V-E" */
   baseSequence?: string
   /** V2: 碱基分布统计 */
   baseDistribution?: { E: number; P: number; V: number; X: number }
+  /** V2: 每轮 ReAct 循环的元数据 */
+  turnMetas?: ReActTurnMeta[]
+  /** V3: Governor 干预记录（用于 Layer 2/3 A/B 对比） */
+  governorInterventions?: Array<{
+    rule: string
+    stepIndex: number
+    features: {
+      consecutiveX: number; stepCount: number; xRatioLast5: number; switchRate: number
+      pInLateHalf?: boolean; lastPFollowedByV?: boolean
+      maxERunLength?: number; xeRatio?: number
+    }
+    counterfactualSuccessRate?: number
+  }>
+  /** V4: 上下文注入元数据（用于记忆/技能注入质量分析） */
+  contextInjectionMeta?: ContextInjectionMeta
+  /** V5: LLM 执行环境（用于按模型/Provider 对比分析） */
+  llmModel?: string
+  llmProvider?: string
+  /** V6: 多维结果信号（供 Governor 数据驱动学习，不硬编码权重） */
+  outcomeSignals?: OutcomeSignals
+  /** V7: Context Refresh 事件记录（每次 escalation 的上下文重建） */
+  contextRefreshEvents?: ContextRefreshEvent[]
+  /** V8: Ledger 里程碑事件（关键节点记录） */
+  ledgerMilestones?: LedgerMilestone[]
+  /** V8: Ledger 累积事实（任务结束时的 facts 快照） */
+  ledgerFacts?: LedgerFacts
+}
+
+/** V6: 多维结果信号 — 保留原始信号，不压缩为单一置信度 */
+export interface OutcomeSignals {
+  /** 循环终止路径 */
+  completionPath: string
+  /** 工具错误率 (errorCount / toolCount, 无工具时为 -1) */
+  errorRatio: number
+  /** 是否存在 V 碱基（Agent 做了验证） */
+  hasVerificationBase: boolean
+  /** 是否有 Critic 工具调用成功（writeFile/runCmd 等修改类工具成功执行） */
+  hasCriticToolSuccess: boolean
+  /** 最后一个工具调用是否成功 */
+  lastToolSucceeded: boolean
+  /** 工具调用总数 */
+  toolCount: number
+  /** 是否触发过 Reflexion */
+  hadReflexion: boolean
+  /** 是否有 Dun 验收标准 */
+  dunHasMetrics: boolean
+  /** success 判定的具体原因（human-readable，用于调试和分析） */
+  successReason: string
+}
+
+/** V4: 上下文注入元数据 — 记录每次 buildDynamicContext 的注入质量指标 */
+export interface ContextInjectionMeta {
+  memory: {
+    l0Count: number               // L0 检索返回条数
+    l0Chars: number               // L0 注入总字符数
+    l0AvgScore: number            // L0 平均 similarity score
+    l0AvgConfidence: number       // L0 平均 confidence
+    l0ScoreRange: [number, number]  // [最低, 最高] score
+    categoryCounts: Record<string, number>  // 各 category 注入条数
+    budgetUsed: number            // memory 分区已用字符数
+    budgetCap: number             // memory 分区上限
+  }
+  skills: {
+    availableCount: number        // 全量候选技能数
+    injectedCount: number         // 实际注入的技能数（经排序过滤后）
+    injectedChars: number         // 技能清单注入字符数
+    avgSemanticScore: number      // 注入 skills 的平均语义分
+    avgTotalScore: number         // 注入 skills 的平均总分
+    minTotalScore: number         // 注入 skills 的最低总分（边界质量）
+    injectedSkills: Array<{       // 每个注入 skill 的明细
+      name: string
+      totalScore: number
+      semanticScore: number
+    }>
+  }
+  traces: {
+    execTraceCount: number        // exec_trace 检索条数
+    successCaseCount: number      // 历史成功案例条数
+    budgetUsed: number            // traces 分区已用字符数
+  }
+  totalChars: number              // 总注入字符数
+  totalBudget: number             // 总预算上限
+}
+
+// ============================================
+// V2: 碱基序列演进类型
+// ============================================
+
+/** 碱基序列独立条目（P 碱基 + 工具碱基统一记录） */
+export interface BaseSequenceEntry {
+  /** 碱基类型 */
+  base: 'E' | 'P' | 'V' | 'X'
+  /** 全局序号（跨轮次递增） */
+  order: number
+  /** P 碱基的推理摘要（截断至 200 字符） */
+  reasoningSummary?: string
+  /** 对应 traceTools 中的 order（仅工具碱基有值） */
+  toolOrder?: number
+  /** 是否来自 Reflexion 轮次 */
+  isReflexion?: boolean
+  /** V8: 来自子 Agent 的碱基标记 */
+  childRunId?: string
+  /** V8: 在 Ledger 中的全局位置（跨 Agent 统一编号） */
+  ledgerIndex?: number
+  /** Phase 3: P 碱基的检测来源（非 P 碱基无此字段） */
+  pDetectionSource?: PBaseDetectionSource
+}
+
+// ============================================
+// V7: Context Refresh 事件
+// ============================================
+
+/** V7: Context Refresh 事件 — 记录每次升级时的上下文重建 */
+export interface ContextRefreshEvent {
+  /** 第几次升级（从 1 开始） */
+  escalationIndex: number
+  /** 触发时间戳 */
+  timestamp: number
+  /** 触发时的 ReAct 轮次 */
+  turnCountAtRefresh: number
+  /** 重建前的消息数 */
+  messageCountBefore: number
+  /** 重建后的消息数（通常为 4） */
+  messageCountAfter: number
+  /** 重建前的 token 估算（字符数 / 4） */
+  tokensBefore: number
+  /** 重建后的 token 估算 */
+  tokensAfter: number
+  /** 触发时的任务完成率 */
+  completionRate: number
+  /** 携带的工作摘要长度 */
+  carryOverSummaryLength: number
+  /** 重建前的碱基序列快照 */
+  preRefreshBaseSequence: string
+  /** 碱基序列当前长度 */
+  baseSequenceIndex: number
+}
+
+// ============================================
+// V8: 碱基 Ledger 数据结构
+// ============================================
+
+/** V8: Ledger 里程碑事件类型 */
+export type LedgerMilestoneType =
+  | 'reflexion'
+  | 'escalation'
+  | 'context_refresh'
+  | 'governor_intervention'
+  | 'child_spawn'
+  | 'child_complete'
+  | 'transcriptase_adaptation'
+
+/** V8: Ledger 里程碑事件 */
+export interface LedgerMilestone {
+  /** 里程碑类型 */
+  type: LedgerMilestoneType
+  /** 在碱基序列中的位置 */
+  baseIndex: number
+  /** 触发时间戳 */
+  timestamp: number
+  /** 附加元数据 */
+  metadata: Record<string, unknown>
+}
+
+/** V8: Ledger 累积事实 — 纯规则从工具结果中提取 */
+export interface LedgerFacts {
+  /** 已完成操作摘要（最多 20 条，滚动窗口） */
+  completedActions: string[]
+  /** 发现的资源路径 */
+  discoveredResources: string[]
+  /** 失败的尝试（Reflexion 产生） */
+  failedApproaches: string[]
+  /** 当前目标（初始 = 用户 prompt） */
+  currentObjective: string
+  /** 分解出的子目标 */
+  subObjectives: string[]
+}
+
+/** V8: 碱基 Ledger — 碱基序列 + 里程碑 + 累积事实 */
+export interface BaseLedger {
+  /** 运行 ID */
+  runId: string
+  /** 父运行 ID（子 Agent 时存在） */
+  parentRunId?: string
+  /** 关联的 Dun ID */
+  dunId: string
+  /** 碱基序列条目 */
+  entries: BaseSequenceEntry[]
+  /** 15 维特征快照（实时更新） */
+  features: Record<string, number | boolean>
+  /** 里程碑事件 */
+  milestones: LedgerMilestone[]
+  /** 累积事实 */
+  facts: LedgerFacts
+  /** 创建时间 */
+  createdAt: number
+  /** 最后更新时间 */
+  updatedAt: number
+}
+
+/** 单轮 ReAct 循环的元数据 */
+export interface ReActTurnMeta {
+  /** 轮次索引（从 0 开始） */
+  turnIndex: number
+  /** 本轮是否包含计划/策略转变 */
+  hasPlan: boolean
+  /** 本轮 LLM 返回的计划步骤数 */
+  planLength: number
+  /** 本轮是否为 Reflexion 触发 */
+  isReflexion: boolean
+  /** 本轮是否已发射 P 碱基 */
+  emittedPlanBase: boolean
+  /** 本轮工具调用数量 */
+  toolCount: number
+  /** 本轮工具碱基类型列表 */
+  toolBases: Array<'E' | 'V' | 'X'>
 }
 
 export interface ExecTraceToolCall {
@@ -720,6 +1099,18 @@ export interface ExecTraceToolCall {
   baseType?: 'E' | 'P' | 'V' | 'X'
   /** V2: P 碱基的推理文本摘要（仅 baseType='P' 时有值） */
   reasoningSummary?: string
+  /** V2: Layer 1 Token 消耗（本轮 LLM 调用的 usage） */
+  tokenCost?: { prompt: number; completion: number }
+  /** V2: 思维链文本摘要（DeepSeek reasoning_content 截断） */
+  thinkingTextSummary?: string
+  /** V2: 本轮上下文消息数 */
+  contextMessageCount?: number
+  /** V2: 本轮所有工具调用名称列表 */
+  turnToolCalls?: string[]
+  /** V2: 是否为 Reflexion 轮次 */
+  isReflexionTurn?: boolean
+  /** V2: LLM 本轮调用的响应耗时 (ms)，反映 Agent 的思考负担 */
+  llmResponseTime?: number
 }
 
 // P0: 动态工具信息
@@ -727,7 +1118,7 @@ export interface ToolInfo {
   name: string
   type: 'builtin' | 'plugin' | 'instruction' | 'mcp'
   description?: string
-  inputs?: Record<string, any>
+  inputs?: Record<string, unknown>
   dangerLevel?: string
   version?: string
   server?: string  // MCP 服务器名称
@@ -756,16 +1147,17 @@ export interface GridPosition {
   gridY: number
 }
 
-export interface NexusEntity {
+export interface DunEntity {
   id: string
   position: GridPosition
   // V2: 评分系统 (替代旧 xp/level)
-  scoring: NexusScoring
+  scoring: DunScoring
   visualDNA: VisualDNA
+  species?: string            // 动物种族 (AnimalSpecies), 持久化后避免重复
   label?: string            // LLM-generated name
   constructionProgress: number // 0-1 (1 = fully built)
   createdAt: number
-  // Phase 2: 涌现式 Nexus
+  // Phase 2: 涌现式 Dun
   boundSkillIds?: string[]  // 绑定的 Skill ID 列表
   flavorText?: string       // LLM 生成的描述
   lastUsedAt?: number       // 最后使用时间（用于 XP 计算）
@@ -775,10 +1167,10 @@ export interface NexusEntity {
     model: string
     apiKey?: string         // 空则用全局 key
   }
-  // Phase 4: File-based Nexus (NEXUS.md)
-  sopContent?: string             // NEXUS.md Markdown 正文 (Mission + SOP)
+  // Phase 4: File-based Dun (DUN.md)
+  sopContent?: string             // DUN.md Markdown 正文 (Mission + SOP)
   triggers?: string[]             // 自动激活关键词
-  version?: string                // Nexus 版本
+  version?: string                // Dun 版本
   location?: 'local' | 'bundled'  // 来源
   path?: string                   // 本地路径
   projectPath?: string            // 关联的项目根目录 (绝对路径)
@@ -800,6 +1192,7 @@ export interface NexusEntity {
     previousVersion?: string      // 改写前版本号
     triggerLevel?: string         // 触发级别 (EMERGENCY/STANDARD/GRADUAL)
     basedOnExecutions?: number    // 基于多少次执行数据
+    historyVersion?: string       // 旧版本在 sop-history 中的版本号，供恢复用
   }
   sopEvolutionData?: {            // SOP 进化运行时数据
     isGolden: boolean             // 是否达到 Golden 状态
@@ -824,8 +1217,8 @@ export interface NexusEntity {
   }
 }
 
-// Nexus 经验记录
-export interface NexusExperience {
+// Dun 经验记录
+export interface DunExperience {
   title: string
   outcome: 'success' | 'failure'
   content: string
@@ -845,31 +1238,113 @@ export interface RenderSettings {
 }
 
 // ============================================
-// Observer / 涌现式 Nexus 类型
+// Observer / 涌现式 Dun 类型
 // ============================================
 
-export type TriggerType = 'frequency' | 'complexity' | 'dependency' | 'periodic' | 'cross-skill'
+export type TriggerType = 'frequency' | 'complexity' | 'dependency' | 'periodic' | 'cross-skill' | 'intent-cluster'
 
 export interface TriggerPattern {
   type: TriggerType
   confidence: number           // 0-1 置信度
   evidence: string[]           // 证据摘要（相关消息片段）
   detectedAt: number
-  // 新增：技能和SOP推荐
+  // 技能和SOP推荐
   suggestedSkills?: string[]   // 建议绑定的工具/技能名列表
   suggestedSOP?: string        // 建议的系统提示词/作业程序
+  // ── 以下为 intent-cluster 类型使用的可选字段 [Q1] ──
+  /** 发现的用户目的（从意图簇提炼） */
+  discoveredObjective?: string
+  /** 建议的 Dun 名称 */
+  suggestedName?: string
+  /** 建议的 triggers（从簇的核心关键词生成） */
+  suggestedTriggers?: string[]
+  /** 建议的 metrics（从成功/失败率推断） */
+  suggestedMetrics?: string[]
+  /** 原始意图簇（完整保留，不做有损转换）[Q1] */
+  intentCluster?: IntentCluster
+}
+
+/** 意图簇：从 ExecTrace.task/tags 聚类得到 */
+export interface IntentCluster {
+  /** 簇的核心关键词 */
+  coreKeywords: string[]
+  /** 簇内的 trace ID 列表 */
+  traceIds: string[]
+  /** 簇内的原始 task 描述 */
+  taskDescriptions: string[]
+  /** 从簇内 traces 反查的工具链 */
+  toolChains: string[][]
+  /** 聚合的 tags */
+  aggregatedTags: string[]
+  /** 簇的大小（trace 数量） */
+  size: number
+  /** 簇的时间跨度（天） */
+  timeSpanDays: number
+  /** 簇内 traces 的平均轮次 [Q2] */
+  avgTurnCount: number
+  /** 簇内 traces 的成功率 [Q4] */
+  successRate: number
+}
+
+/** Observer 洞察：从行为模式检测中产出，供 UI 展示和用户行动 */
+export interface ObserverInsight {
+  id: string
+  /** 原始意图簇数据 */
+  cluster: IntentCluster
+  /** 检测置信度 */
+  confidence: number
+  /** 建议绑定的工具/技能 */
+  suggestedSkills: string[]
+  /** 核心关键词 */
+  coreKeywords: string[]
+  /** 代表性任务描述 */
+  representativeTask: string
+  /** 匹配到的已有 Dun ID（如果有） */
+  relatedDunId?: string
+  /** 匹配到的 Dun 名称 */
+  relatedDunLabel?: string
+  /** 是否已写入记忆系统 */
+  memoryWritten: boolean
+  /** 创建时间 */
+  createdAt: number
+}
+
+/** Skill 提案（与 BuildProposal 平行） */
+export interface SkillProposal {
+  id: string
+  /** 发现类型 */
+  discoveryType: 'tool_frequency' | 'tool_chain' | 'cross_tool'
+  /** 建议的 Skill 名称 */
+  suggestedName: string
+  /** 建议的 Skill 描述 */
+  description: string
+  /** 涉及的工具列表 */
+  tools: string[]
+  /** 工具链模式（如 "searchFiles→readFile→writeFile"） */
+  toolChainPattern?: string
+  /** 置信度 */
+  confidence: number
+  /** 检测证据 */
+  evidence: string[]
+  /** 状态 */
+  status: 'pending' | 'accepted' | 'rejected'
+  createdAt: number
 }
 
 export interface BuildProposal {
   id: string
   triggerPattern: TriggerPattern
-  suggestedName: string        // 建议的 Nexus 名称
+  suggestedName: string        // 建议的 Dun 名称
   previewVisualDNA: VisualDNA
   boundSkillIds?: string[]     // 多技能绑定列表
-  sopContent?: string          // 新增：系统提示词/SOP
-  purposeSummary: string       // 一句话概括此 Nexus 的功能目标
+  sopContent?: string          // 系统提示词/SOP
+  purposeSummary: string       // 一句话概括此 Dun 的功能目标
   status: 'pending' | 'accepted' | 'rejected'
   createdAt: number
+  // 意图维度的 Dun 元数据
+  suggestedObjective?: string
+  suggestedTriggers?: string[]
+  suggestedMetrics?: string[]
 }
 
 export interface BehaviorRecord {
@@ -972,18 +1447,18 @@ export type GeneCategory =
   | 'optimize'    // 优化基因
   | 'pattern'     // 通用模式
 
-// Nexus 能力信息
-export interface NexusCapabilityInfo {
-  nexusId: string           // nexus 唯一标识
-  nexusName: string         // 显示名称
+// Dun 能力信息
+export interface DunCapabilityInfo {
+  dunId: string             // dun 唯一标识
+  dunName: string           // 显示名称
   description: string       // 能力描述
   capabilities: string[]    // 能力标签 ['漫画', '剧情', '角色设计']
-  dirPath: string           // nexuses/xxx/
+  dirPath: string           // duns/xxx/
 }
 
-// Nexus 产出物信息
-export interface NexusArtifactInfo {
-  nexusId: string           // 产出此文件的 Nexus
+// Dun 产出物信息
+export interface DunArtifactInfo {
+  dunId: string             // 产出此文件的 Dun
   path: string              // 文件路径
   name: string              // 文件名/产出物名称
   type: string              // 类型 (story-outline, character-design, ppt, code...)
@@ -1002,7 +1477,7 @@ export interface Gene {
   antiPatterns?: string[]         // V2: 反模式 — 什么情况下不该使用此基因
   source: {
     traceId?: string              // 来源 trace ID
-    nexusId?: string              // 产生此基因的 Nexus
+    dunId?: string                // 产生此基因的 Dun
     createdAt: number
     isSeed?: boolean              // V2: 是否为内置种子基因
   }
@@ -1027,7 +1502,7 @@ export interface Capsule {
   geneId: string
   trigger: string[]               // 触发时的错误信号
   outcome: 'success' | 'failure'
-  nexusId?: string
+  dunId?: string
   timestamp: number
 }
 
@@ -1133,10 +1608,10 @@ export interface AgentRunState {
   modelChain: string[]
   currentModel: string
 
-  // ── Nexus 上下文 ──
-  activeNexusId: string | null
-  nexusSopInjected: boolean
-  nexusScore: number
+  // ── Dun 上下文 ──
+  activeDunId: string | null
+  dunSopInjected: boolean
+  dunScore: number
   planProgress: {
     total: number
     completed: number
@@ -1161,7 +1636,7 @@ export interface AgentRunState {
 }
 
 // AgentRunState 工厂函数参数
-export function createInitialRunState(runId: string, model: string, nexusId?: string): AgentRunState {
+export function createInitialRunState(runId: string, model: string, dunId?: string): AgentRunState {
   return {
     runId,
     seq: 0,
@@ -1189,9 +1664,9 @@ export function createInitialRunState(runId: string, model: string, nexusId?: st
     attemptIndex: 0,
     modelChain: [model],
     currentModel: model,
-    activeNexusId: nexusId ?? null,
-    nexusSopInjected: false,
-    nexusScore: 50,
+    activeDunId: dunId ?? null,
+    dunSopInjected: false,
+    dunScore: 50,
     planProgress: null,
     reflexionCount: 0,
     criticPending: false,
@@ -1221,6 +1696,7 @@ export type AgentEventStream =
   | 'approval'      // 审批
   | 'plan'          // 计划追踪
   | 'child'         // 子智能体
+  | 'transcriptase' // V8: 碱基编排决策
 
 // 事件信封 (所有事件的通用包装)
 export interface AgentEventEnvelope {
@@ -1231,15 +1707,15 @@ export interface AgentEventEnvelope {
   type: string
   data: Record<string, unknown>
   sessionId?: string
-  nexusId?: string
+  dunId?: string
 }
 
 // ── lifecycle 事件 payload ──
 export interface RunStartData {
   runId: string
-  nexusId: string | null
+  dunId: string | null
   model: string
-  nexusScore: number
+  dunScore: number
   tokenBudget: number
 }
 
@@ -1324,7 +1800,7 @@ export interface ReflexionStartData {
   failedTool: string
   error: string
   reflexionIndex: number
-  nexusScore: number
+  dunScore: number
 }
 
 export interface ReflexionEndData {
@@ -1368,7 +1844,7 @@ export interface StepCompleteData {
 export interface ChildSpawnedData {
   childRunId: string
   childSessionId: string
-  nexusId: string
+  dunId: string
   task: string
   depth: number
   model: string
@@ -1383,7 +1859,7 @@ export interface ChildProgressData {
 
 export interface ChildCompletedData {
   childRunId: string
-  nexusId: string
+  dunId: string
   success: boolean
   result?: string
   error?: string
@@ -1393,7 +1869,7 @@ export interface ChildCompletedData {
 }
 
 // ============================================
-// V2: Nexus 评分系统 (替代 XP/Level)
+// V2: Dun 评分系统 (替代 XP/Level)
 // ============================================
 
 // 分数等级
@@ -1423,8 +1899,8 @@ export interface RecentRunEntry {
   genesHarvested?: number
 }
 
-// Nexus 评分
-export interface NexusScoring {
+// Dun 评分
+export interface DunScoring {
   score: number                     // 0-100, 初始 50
   streak: number                    // 正=连胜, 负=连败
   totalRuns: number
@@ -1523,7 +1999,7 @@ export const SCORE_BEHAVIORS: Record<ScoreTier, ScoreDrivenBehavior> = {
 }
 
 // 创建初始评分
-export function createInitialScoring(): NexusScoring {
+export function createInitialScoring(): DunScoring {
   return {
     score: SCORING_RULES.INITIAL_SCORE,
     streak: 0,
@@ -1537,8 +2013,8 @@ export function createInitialScoring(): NexusScoring {
   }
 }
 
-/** 从 NexusScoring 映射到视觉等级 (1-5)，供渲染器使用 */
-export function scoringToVisualLevel(scoring?: NexusScoring): number {
+/** 从 DunScoring 映射到视觉等级 (1-5)，供渲染器使用 */
+export function scoringToVisualLevel(scoring?: DunScoring): number {
   const score = scoring?.score ?? 0
   if (score >= 80) return 5   // Expert
   if (score >= 60) return 4   // Capable
@@ -1548,7 +2024,7 @@ export function scoringToVisualLevel(scoring?: NexusScoring): number {
 }
 
 // ============================================
-// V2: NexusContextEngine 接口
+// V2: DunContextEngine 接口
 // ============================================
 
 // assemble 参数和结果
@@ -1628,7 +2104,7 @@ export interface BootstrapResult {
 export interface PrepareChildSpawnParams {
   parentSessionId: string
   childSessionId: string
-  childNexusId: string
+  childDunId: string
   inheritContext: boolean
 }
 
@@ -1641,7 +2117,7 @@ export interface ChildSpawnPreparation {
 // onChildEnded 参数
 export interface OnChildEndedParams {
   childSessionId: string
-  childNexusId: string
+  childDunId: string
   reason: 'completed' | 'error' | 'timeout' | 'killed'
   outcome?: {
     success: boolean
@@ -1654,11 +2130,11 @@ export interface OnChildEndedParams {
   }
 }
 
-// NexusContextEngine 接口
-export interface NexusContextEngine {
+// DunContextEngine 接口
+export interface DunContextEngine {
   readonly info: {
     id: string
-    nexusId: string
+    dunId: string
     name: string
   }
 
@@ -1675,7 +2151,10 @@ export interface NexusContextEngine {
   dispose?(): Promise<void>
 
   /** Memory Flush: ReAct 循环结束后提炼本轮认知（可选，由 LocalClawService 调用） */
-  flushMemory?(toolHistory: ToolCallSummary[]): Promise<void>
+  flushMemory?(toolHistory: ToolCallSummary[], signal?: AbortSignal): Promise<void>
+
+  /** Response Knowledge Flush: 从 AI 分析性响应中提取领域知识（可选） */
+  flushResponseKnowledge?(userPrompt: string, response: string, signal?: AbortSignal): Promise<void>
 }
 
 // ============================================
@@ -1685,7 +2164,7 @@ export interface NexusContextEngine {
 // 子智能体生成参数
 export interface SpawnChildParams {
   task: string
-  nexusId?: string
+  dunId?: string
   model?: string
   mode: 'run' | 'session'
   cleanup: 'delete' | 'keep'
@@ -1693,6 +2172,8 @@ export interface SpawnChildParams {
   inheritContext?: boolean
   shareGenes?: boolean
   priority?: 'high' | 'normal' | 'background'
+  /** V8: 碱基 Ledger 上下文信封（由 Transcriptase 构建） */
+  contextEnvelope?: ChildContextEnvelope
 }
 
 // 子智能体运行记录
@@ -1700,8 +2181,8 @@ export interface ChildRunRecord {
   runId: string
   childSessionId: string
   parentSessionId: string
-  nexusId: string
-  nexusLabel: string
+  dunId: string
+  dunLabel: string
   task: string
   status: 'pending' | 'running' | 'completed' | 'error' | 'timeout' | 'killed'
   outcome?: ChildOutcome
@@ -1724,6 +2205,10 @@ export interface ChildOutcome {
   durationMs: number
   scoreChange: number
   genesHarvested: number
+  /** V8: 子 Agent 的碱基序列（用于合并到父 Ledger） */
+  childBaseSequence?: string
+  /** V8: 子 Agent 发现的新 facts */
+  childFacts?: Partial<LedgerFacts>
 }
 
 // 子智能体生成结果
@@ -1732,7 +2217,7 @@ export interface SpawnChildResult {
   childSessionId?: string
   runId?: string
   error?: string
-  nexusId?: string
+  dunId?: string
 }
 
 // 子智能体限制常量
@@ -1743,16 +2228,179 @@ export const CHILD_LIMITS = {
 } as const
 
 // ============================================
-// V2: MemoryStore 搜索结果
+// V8: Transcriptase 编排器类型
 // ============================================
+
+/** Transcriptase 编排决策类型 */
+export type TranscriptaseDecisionType = 'continue' | 'spawn_child' | 'handoff' | 'abort' | 'escalate'
+
+/** Transcriptase 编排决策 */
+export interface TranscriptaseDecision {
+  /** 决策类型 */
+  type: TranscriptaseDecisionType
+  /** 决策置信度 (0-1) */
+  confidence: number
+  /** 决策理由（人类可读，用于 trace） */
+  reasoning: string
+  /** 触发的规则 ID */
+  triggeredPatternId?: string
+  /** spawn_child 时: 子任务描述 */
+  childTask?: string
+  /** spawn_child 时: 目标 Dun ID */
+  childDunId?: string
+  /** spawn_child 时: 子任务优先级 */
+  childPriority?: 'high' | 'normal' | 'background'
+  /** handoff 时: 目标 Dun ID */
+  handoffTarget?: string
+  /** handoff 时: 交接上下文摘要 */
+  handoffContext?: string
+}
+
+/** 子 Agent 上下文信封 (mRNA — 从父 Ledger 构建) */
+export interface ChildContextEnvelope {
+  /** 父 Ledger 快照 */
+  parentLedgerSnapshot: BaseLedger
+  /** 分配的子任务 */
+  assignedTask: string
+  /** 从父 Ledger 精选的共享事实 */
+  sharedFacts: LedgerFacts
+  /** 父碱基序列字符串（供子 Agent Governor 参考） */
+  parentBaseSequence: string
+  /** 返回契约 */
+  returnContract: {
+    /** 期望的输出类型 */
+    expectedOutputType: 'text' | 'file' | 'data'
+    /** 最大执行时间 (ms) */
+    maxDurationMs: number
+    /** 回报目标（父 runId） */
+    reportBackTo: string
+  }
+}
+
+/** Transcriptase 模式匹配规则 */
+export interface TranscriptasePattern {
+  /** 规则 ID */
+  id: string
+  /** 规则名称（人类可读） */
+  name: string
+  /** 碱基序列特征条件（复用 RuleCondition 格式） */
+  featureCondition: {
+    operator: 'AND' | 'OR'
+    clauses: Array<{ feature: string; op: '>' | '<' | '>=' | '<='; value: number }>
+  }
+  /** Ledger facts 条件（可选） */
+  factsCondition?: {
+    minSubObjectives?: number
+    minDiscoveredResources?: number
+    hasFailedApproaches?: boolean
+    minCompletedActions?: number
+  }
+  /** 满足条件时的决策类型 */
+  decision: TranscriptaseDecisionType
+  /** 决策置信度 */
+  confidence: number
+  /** 是否启用 */
+  enabled: boolean
+}
+
+/** Transcriptase 配置 */
+export interface TranscriptaseConfig {
+  /** 是否启用 Transcriptase 编排 */
+  enabled: boolean
+  /** 最少执行 N 步后才考虑 spawn（防止过早分裂） */
+  minStepsBeforeSpawn: number
+  /** 最大活跃子 Agent 数 */
+  maxActiveChildren: number
+  /** 至少发现 N 个 facts 后才考虑 spawn */
+  minFactsForSpawn: number
+  /** 两次 spawn 决策之间的最小间隔步数 */
+  minStepsBetweenSpawns: number
+  /** 模式匹配规则 */
+  patterns: TranscriptasePattern[]
+}
+
+// ============================================
+// V8 Phase 3: Transcriptase 自适应 + P 碱基激活
+// ============================================
+
+/** Phase 3: Transcriptase spawn 决策记录（用于 A/B 对比） */
+export interface TranscriptaseSpawnRecord {
+  /** spawn 时的碱基步数 */
+  stepCount: number
+  /** spawn 时 Ledger facts 子目标数 */
+  subObjectiveCount: number
+  /** spawn 时 xeRatio */
+  xeRatio: number
+  /** spawn 时已有子 Agent 数 */
+  childrenSpawned: number
+  /** 触发的规则 ID */
+  patternId: string
+  /** 决策置信度 */
+  confidence: number
+  /** 最终任务是否成功 */
+  success: boolean
+  /** 子 Agent 是否完成并回传了 facts */
+  childCompleted: boolean
+}
+
+/** Phase 3: Transcriptase Governor 分桶统计 */
+export interface TranscriptaseGovBucketStats {
+  spawnSuccessCount: number
+  spawnTotalCount: number
+  noSpawnSuccessCount: number
+  noSpawnTotalCount: number
+}
+
+/** Phase 3: Transcriptase Governor 持久化统计数据 */
+export interface TranscriptaseGovernorStats {
+  version: number
+  /** 分桶统计表: key = bucketKey */
+  buckets: Record<string, TranscriptaseGovBucketStats>
+  /** 每规则 spawn 效果统计 */
+  patternEffects: Record<string, {
+    spawnSuccess: number; spawnTotal: number
+    noSpawnSuccess: number; noSpawnTotal: number
+  }>
+  /** 总 trace 计数 */
+  totalTraceCount: number
+  /** 上次自适应时的 trace 计数 */
+  lastAdaptationCount: number
+  /** 自适应历史记录（最近 20 条） */
+  adaptationLog: Array<{
+    timestamp: number
+    adjustments: string[]
+    traceCount: number
+  }>
+}
+
+/** Phase 3: Transcriptase Governor 配置 */
+export interface TranscriptaseGovernorConfig {
+  /** 是否启用（默认 false，休眠态） */
+  enabled: boolean
+  /** 最小 trace 数量，低于此值不做自适应（默认 50） */
+  minTracesForAdaptation: number
+  /** 自适应触发间隔（每 N 条 trace） */
+  adaptationInterval: number
+  /** 卡方检验显著性水平 (默认 0.05) */
+  significanceLevel: number
+  /** 最小样本量（分桶内需达到此量才做调整） */
+  minSamplePerBucket: number
+}
+
+/** Phase 3: P 碱基检测来源（标记 P 碱基是如何被识别的） */
+export type PBaseDetectionSource =
+  | 'llm_meta'           // LLM Function Calling _meta.planStep
+  | 'reasoning_content'  // DeepSeek 等模型的 reasoning_content
+  | 'reflexion'          // Reflexion 结构化反思（已有）
+  | 'manual'             // 手动标注
 
 export interface MemorySearchResult {
   id: string
   score: number                     // 0-1
   snippet: string
   content?: string                  // 完整内容 (后端返回)
-  source: string                    // 'memory' | 'exec_trace' | 'gene' | 'nexus_xp' | 'session' | 'l1_memory'
-  nexusId?: string
+  source: string                    // 'memory' | 'exec_trace' | 'gene' | 'dun_xp' | 'session' | 'l1_memory'
+  dunId?: string
   createdAt?: number                // Unix 毫秒时间戳
   confidence?: number               // 后端返回的置信度 (0-1)
   tags?: string[]
@@ -1778,8 +2426,8 @@ export const SEARCH_CONFIG = {
 export interface SessionMeta {
   id: string
   title: string
-  type: 'general' | 'nexus'
-  nexusId?: string
+  type: 'general' | 'dun'
+  dunId?: string
   messageCount: number
   createdAt: number
   updatedAt: number
@@ -1839,7 +2487,7 @@ export interface FileRegistryEntry {
   mtime: number             // 最后修改时间戳(ms), 写操作更新
   lastAccessed: number      // 最后访问时间戳
   accessCount: number       // 累计访问次数
-  nexusId: string | null    // 首次访问时关联的 Nexus ID
+  dunId: string | null      // 首次访问时关联的 Dun ID
   registeredAt: number      // 首次注册时间
 }
 
@@ -1851,7 +2499,7 @@ export interface L1ActionSnapshot {
   status: 'success' | 'error'
   resultSize: number        // 原始结果字节数
   resultPreview: string     // 结果前 200 字符
-  nexusId: string           // 所属 Nexus
+  dunId: string             // 所属 Dun
   timestamp: number
 }
 
@@ -1886,19 +2534,20 @@ export interface ConfidenceSignal {
 // L1 记忆条目 (带置信度追踪)
 export interface L1MemoryEntry {
   id: string
-  nexusId: string
+  dunId: string
   content: string
   confidence: number        // 0.0 ~ 1.0
   signals: ConfidenceSignal[]
   promotedToL0: boolean
   createdAt: number
   updatedAt: number
+  lastDecayAt?: number      // 上次衰减时间戳（用于增量衰减计算）
 }
 
 // 置信度信号分值
 export const CONFIDENCE_SIGNALS = {
   ENVIRONMENT_ASSERTION: 0.15,   // Critic 验证通过
-  HUMAN_POSITIVE: 0.20,          // 用户正面反馈 (提高权重)
+  HUMAN_POSITIVE: 0.10,          // 用户正面隐式反馈 (降权，避免过度敏感)
   HUMAN_NEGATIVE: -0.20,         // 用户负面反馈
   SYSTEM_FAILURE: -0.15,         // 系统/工具执行失败 (降低惩罚)
   GENE_MATCH: 0.05,              // 与高置信基因匹配

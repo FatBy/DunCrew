@@ -7,15 +7,13 @@
  * - 虚线连接器 (更优雅)
  * - 更小的中枢 hub
  * - items-center 垂直居中 (自然对齐)
- * - 保留: 智能折叠, Glow Sync, 休眠态
+ * - 保留: 智能折叠, 休眠态
  */
 
-import { useState, useMemo, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useState, useMemo } from 'react'
 import { Brain, Zap, ChevronDown } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type { DomainGroup, SubGroup } from '@/utils/skillsHouseMapper'
-import { findGlowRelations } from '@/utils/skillsHouseMapper'
 import type { UISkillModel } from '@/utils/skillsHouseMapper'
 
 interface SkillsMindMapViewProps {
@@ -32,23 +30,16 @@ const SOURCE_EMOJI: Record<SubGroup['source'], string> = {
   prefix: '📦', api: '🔑', tag: '🏷️', env: '⚙️',
 }
 
-// 共享 Glow props 类型
-type GlowProps = {
-  hoveredId: string | null
-  glowMap: Map<string, 'shared-tool' | 'shared-env'>
-  hasGlow: boolean
+// 共享 props 类型
+type BranchProps = {
   side: 'left' | 'right'
   onSelectSkill: (skill: UISkillModel) => void
-  onHoverStart: (id: string) => void
-  onHoverEnd: () => void
 }
 
 // 单行技能渲染 (避免 DomainBranch / SubGroupBranch 重复代码)
-function renderSkillRow(skill: UISkillModel, props: GlowProps) {
-  const { hoveredId, glowMap, hasGlow, side, onSelectSkill, onHoverStart, onHoverEnd } = props
+function renderSkillRow(skill: UISkillModel, props: BranchProps) {
+  const { side, onSelectSkill } = props
   const isLeft = side === 'left'
-  const glowType = glowMap.get(skill.id) ?? null
-  const isDimmed = hasGlow && skill.id !== hoveredId && !glowType
   return (
     <div
       key={skill.id}
@@ -61,11 +52,7 @@ function renderSkillRow(skill: UISkillModel, props: GlowProps) {
       <SkillPill
         skill={skill}
         side={side}
-        isGlowing={skill.id === hoveredId ? null : glowType}
-        isDimmed={isDimmed}
         onClick={() => onSelectSkill(skill)}
-        onMouseEnter={() => onHoverStart(skill.id)}
-        onMouseLeave={onHoverEnd}
       />
     </div>
   )
@@ -106,35 +93,23 @@ function CollapseButton({
 function SkillPill({
   skill,
   side,
-  isGlowing,
-  isDimmed,
   onClick,
-  onMouseEnter,
-  onMouseLeave,
 }: {
   skill: UISkillModel
   side: 'left' | 'right'
-  isGlowing: 'shared-tool' | 'shared-env' | null
-  isDimmed: boolean
   onClick: () => void
-  onMouseEnter: () => void
-  onMouseLeave: () => void
 }) {
   const isLeft = side === 'left'
 
   return (
     <div
       onClick={onClick}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
       className={cn(
         'group inline-flex items-center gap-1 cursor-pointer select-none',
         'transition-all duration-200 ease-out',
         isLeft ? 'flex-row-reverse' : 'flex-row',
         // 休眠
         skill.isDormant && 'opacity-55 grayscale-[0.5]',
-        // Glow Sync
-        isDimmed && 'opacity-15 scale-[0.97]',
       )}
     >
       {/* 专属 emoji 圆环 (主头像) */}
@@ -142,10 +117,8 @@ function SkillPill({
         'w-7 h-7 rounded-full flex items-center justify-center shrink-0',
         'border-[1.5px] transition-transform duration-200',
         'group-hover:scale-110',
-        isGlowing === 'shared-tool' && 'border-sky-400 shadow-[0_0_8px_rgba(126,200,227,0.3)] bg-sky-50/60',
-        isGlowing === 'shared-env' && 'border-purple-400 shadow-[0_0_8px_rgba(167,139,250,0.3)] bg-purple-50/60',
-        !isGlowing && !skill.isDormant && 'border-stone-200 bg-white',
-        !isGlowing && skill.isDormant && 'border-stone-200/50 bg-stone-50/60 border-dashed',
+        !skill.isDormant && 'border-stone-200 bg-white',
+        skill.isDormant && 'border-stone-200/50 bg-stone-50/60 border-dashed',
       )}>
         <span className="text-sm leading-none">{skill.emoji}</span>
       </div>
@@ -154,10 +127,8 @@ function SkillPill({
       <div className={cn(
         'flex items-center gap-0.5 px-1.5 py-0.5 rounded-md',
         'border transition-colors duration-200',
-        isGlowing === 'shared-tool' && 'bg-sky-50/50 border-sky-200/60',
-        isGlowing === 'shared-env' && 'bg-purple-50/50 border-purple-200/60',
-        !isGlowing && !skill.isDormant && 'bg-white/80 border-stone-200/50 group-hover:border-stone-300',
-        !isGlowing && skill.isDormant && 'bg-stone-50/40 border-stone-200/30',
+        !skill.isDormant && 'bg-white/80 border-stone-200/50 group-hover:border-stone-300',
+        skill.isDormant && 'bg-stone-50/40 border-stone-200/30',
       )}>
         <span className={cn(
           'text-[10px] font-medium max-w-[72px] truncate leading-none',
@@ -181,11 +152,11 @@ function SkillPill({
 function SubGroupBranch({
   subGroup,
   side,
-  glowProps,
+  branchProps,
 }: {
   subGroup: SubGroup
   side: 'left' | 'right'
-  glowProps: GlowProps
+  branchProps: BranchProps
 }) {
   const [expanded, setExpanded] = useState(false)
   const isLeft = side === 'left'
@@ -232,7 +203,7 @@ function SubGroupBranch({
           : 'border-l border-stone-200/40',
       )}>
         <div className="flex flex-col gap-px py-0.5">
-          {visible.map((skill) => renderSkillRow(skill, glowProps))}
+          {visible.map((skill) => renderSkillRow(skill, branchProps))}
           {needCollapse && (
             <CollapseButton
               expanded={expanded}
@@ -252,28 +223,17 @@ function SubGroupBranch({
 function DomainBranch({
   group,
   side,
-  hoveredId,
-  glowMap,
-  hasGlow,
   onSelectSkill,
-  onHoverStart,
-  onHoverEnd,
 }: {
   group: DomainGroup
   side: 'left' | 'right'
-  hoveredId: string | null
-  glowMap: Map<string, 'shared-tool' | 'shared-env'>
-  hasGlow: boolean
   onSelectSkill: (skill: UISkillModel) => void
-  onHoverStart: (id: string) => void
-  onHoverEnd: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const isLeft = side === 'left'
   const hasSubGroups = !!group.subGroups?.length
 
-  // 共享 glow props
-  const gp: GlowProps = { hoveredId, glowMap, hasGlow, side, onSelectSkill, onHoverStart, onHoverEnd }
+  const bp: BranchProps = { side, onSelectSkill }
 
   // 3 级模式: subGroups + ungrouped 混合为子项列表
   // 2 级模式: skills 扁平列表
@@ -331,11 +291,11 @@ function DomainBranch({
                   key={item.sg.key}
                   subGroup={item.sg}
                   side={side}
-                  glowProps={gp}
+                  branchProps={bp}
                 />
               )
             }
-            return renderSkillRow(item.sk, gp)
+            return renderSkillRow(item.sk, bp)
           })}
 
           {needCollapse && (
@@ -355,24 +315,6 @@ function DomainBranch({
 /* ───────── Main: SkillsMindMapView ───────── */
 
 export function SkillsMindMapView({ domains, allSkills, onSelectSkill }: SkillsMindMapViewProps) {
-  const [hoveredId, setHoveredId] = useState<string | null>(null)
-
-  // Glow 计算
-  const glowRelations = useMemo(() => {
-    if (!hoveredId) return []
-    const target = allSkills.find((s) => s.id === hoveredId)
-    if (!target) return []
-    return findGlowRelations(target, allSkills)
-  }, [hoveredId, allSkills])
-
-  const glowMap = useMemo(() => {
-    const m = new Map<string, 'shared-tool' | 'shared-env'>()
-    for (const r of glowRelations) m.set(r.skillId, r.type)
-    return m
-  }, [glowRelations])
-
-  const hasGlow = hoveredId !== null && glowRelations.length > 0
-
   // 左右分发
   const { leftDomains, rightDomains } = useMemo(() => {
     const left: DomainGroup[] = []
@@ -384,24 +326,8 @@ export function SkillsMindMapView({ domains, allSkills, onSelectSkill }: SkillsM
     return { leftDomains: left, rightDomains: right }
   }, [domains])
 
-  const handleHoverStart = useCallback((id: string) => setHoveredId(id), [])
-  const handleHoverEnd = useCallback(() => setHoveredId(null), [])
-
   return (
     <div className="relative w-full h-full overflow-auto">
-      {/* Glow 遮罩 */}
-      <AnimatePresence>
-        {hasGlow && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 bg-black/5 pointer-events-none z-10"
-          />
-        )}
-      </AnimatePresence>
-
       {/* 三列布局: 左域 — 中枢 — 右域 */}
       <div className="flex items-center justify-center min-h-full px-8 py-12 relative z-20">
 
@@ -412,12 +338,7 @@ export function SkillsMindMapView({ domains, allSkills, onSelectSkill }: SkillsM
               key={group.id}
               group={group}
               side="left"
-              hoveredId={hoveredId}
-              glowMap={glowMap}
-              hasGlow={hasGlow}
               onSelectSkill={onSelectSkill}
-              onHoverStart={handleHoverStart}
-              onHoverEnd={handleHoverEnd}
             />
           ))}
           {leftDomains.length === 0 && (
@@ -449,12 +370,7 @@ export function SkillsMindMapView({ domains, allSkills, onSelectSkill }: SkillsM
               key={group.id}
               group={group}
               side="right"
-              hoveredId={hoveredId}
-              glowMap={glowMap}
-              hasGlow={hasGlow}
               onSelectSkill={onSelectSkill}
-              onHoverStart={handleHoverStart}
-              onHoverEnd={handleHoverEnd}
             />
           ))}
           {rightDomains.length === 0 && (

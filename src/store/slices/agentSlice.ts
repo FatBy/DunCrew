@@ -2,6 +2,27 @@ import type { StateCreator } from 'zustand'
 import type { AgentIdentity, AgentEvent, AgentRunStatus, LogEntry, MemoryEntry, MemorySearchResult, JournalEntry, Session } from '@/types'
 import { sessionsToMemories } from '@/utils/dataMapper'
 
+// ============================================
+// localStorage 缓存恢复 (stale-while-revalidate)
+// key 带版本号，结构变更时改版本让旧缓存自然失效
+// 持久化写入见 store/index.ts 的 subscribe 逻辑
+// ============================================
+export const MEMORY_CACHE_STORAGE_KEY = 'duncrew_memory_cache_v1'
+
+function restoreMemoryCacheFromStorage(): MemorySearchResult[] {
+  try {
+    const cached = localStorage.getItem(MEMORY_CACHE_STORAGE_KEY)
+    if (cached) {
+      const parsed = JSON.parse(cached)
+      if (Array.isArray(parsed) && parsed.length > 0
+          && parsed[0].id && parsed[0].source) {
+        return parsed.slice(0, 500)
+      }
+    }
+  } catch { /* 损坏/格式不兼容 — 静默降级 */ }
+  return []
+}
+
 export interface AgentSlice {
   // 原始 OpenClaw 数据
   agentIdentity: AgentIdentity | null
@@ -61,9 +82,9 @@ export const createAgentSlice: StateCreator<AgentSlice> = (set) => ({
   currentTaskId: null,
   memories: [],
   selectedMemoryId: null,
-  memoryCacheRaw: [],
+  memoryCacheRaw: restoreMemoryCacheFromStorage(),
   memoryCacheVersion: 0,
-  memoryCacheLoaded: false,
+  memoryCacheLoaded: false,  // 即使有缓存仍标记未加载，后台会从后端刷新
   journalEntries: [],
   journalLoading: false,
 
@@ -100,14 +121,34 @@ export const createAgentSlice: StateCreator<AgentSlice> = (set) => ({
   setSelectedMemory: (id) => set({ selectedMemoryId: id }),
 
   // Native 记忆缓存 actions
-  setMemoryCacheRaw: (data) => set((state) => ({
-    memoryCacheRaw: data,
-    memoryCacheVersion: state.memoryCacheVersion + 1,
-    memoryCacheLoaded: true,
-  })),
+  // merge 策略：后端数据为权威源，但保留未被后端覆盖的本地条目
+  setMemoryCacheRaw: (freshData) => set((state) => {
+    // 安全网：后端返回空数据时，保留本地缓存不变，避免误清空
+    if (freshData.length === 0 && state.memoryCacheRaw.length > 0) {
+      return {
+        memoryCacheLoaded: true,  // 标记已尝试加载，避免重复 fetch
+      }
+    }
 
+    const freshIds = new Set(freshData.map(d => d.id))
+    // 保留 10 分钟内的本地新增条目（可能刚写入还没同步到后端）
+    const localOnly = state.memoryCacheRaw.filter(
+      r => !freshIds.has(r.id) && (Date.now() - (r.createdAt || 0)) < 600_000
+    )
+    return {
+      memoryCacheRaw: [...freshData, ...localOnly],
+      memoryCacheVersion: state.memoryCacheVersion + 1,
+      memoryCacheLoaded: true,
+    }
+  }),
+
+  // 增量追加：放宽 id 前缀过滤，只要求 id 和 source 存在即可
+  // 注意：synthesizeResult 生成 id 格式为 "mem-{uuid}"，但后端 id 格式可能不同
   appendMemoryCacheEntries: (entries) => set((state) => ({
-    memoryCacheRaw: [...state.memoryCacheRaw, ...entries],
+    memoryCacheRaw: [
+      ...state.memoryCacheRaw,
+      ...entries.filter(e => e.id && typeof e.id === 'string' && e.source)
+    ].slice(-5000),
     memoryCacheVersion: state.memoryCacheVersion + 1,
   })),
 

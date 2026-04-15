@@ -44,6 +44,8 @@ export interface SessionToolTrace {
   baseType?: "E" | "P" | "V" | "X";
   /** V2: P 碱基推理摘要 */
   reasoningSummary?: string;
+  /** V2: 是否为 Reflexion 轮次 */
+  isReflexionTurn?: boolean;
 }
 
 // ============================================
@@ -355,6 +357,28 @@ export class ExtensionGenePool {
 
     // V2: Update base classifier context
     updateBaseCtx(this.baseCtx, entry);
+  }
+
+  /**
+   * Record a plan/strategy-shift event as a P base entry.
+   * Called when Reflexion injects a strategy change (P.2 source).
+   */
+  recordPlanEvent(event: {
+    reasoningText?: string;
+    isReflexion: boolean;
+  }): void {
+    const entry: SessionToolTrace = {
+      name: "__plan__",
+      params: {},
+      status: "success",
+      result: (event.reasoningText || "").slice(0, 200),
+      durationMs: 0,
+      order: this.sessionTrace.length,
+      baseType: "P",
+      reasoningSummary: (event.reasoningText || "").slice(0, 200),
+      isReflexionTurn: event.isReflexion,
+    };
+    this.sessionTrace.push(entry);
   }
 
   /**

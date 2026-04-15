@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, forwardRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Check, X, Archive, ChevronDown, ChevronUp, Clock } from 'lucide-react'
+import { Check, X, Archive, ChevronDown, ChevronUp, Clock, RotateCcw } from 'lucide-react'
 import type { SoulAmendment } from '@/types'
 
 // ============================================
@@ -12,6 +12,7 @@ interface AmendmentItemProps {
   onApprove?: (id: string) => void
   onReject?: (id: string) => void
   onArchive?: (id: string) => void
+  onUnarchive?: (id: string) => void
 }
 
 /** 计算距今的友好时间差 */
@@ -45,12 +46,14 @@ function statusBadge(status: SoulAmendment['status']): { label: string; cls: str
   }
 }
 
-function AmendmentItem({ amendment, onApprove, onReject, onArchive }: AmendmentItemProps) {
+const AmendmentItem = forwardRef<HTMLDivElement, AmendmentItemProps>(
+  function AmendmentItem({ amendment, onApprove, onReject, onArchive, onUnarchive }, ref) {
   const badge = statusBadge(amendment.status)
   const borderCls = statusBorderClass(amendment.status)
 
   return (
     <motion.div
+      ref={ref}
       layout
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
@@ -123,9 +126,21 @@ function AmendmentItem({ amendment, onApprove, onReject, onArchive }: AmendmentI
           </button>
         </div>
       )}
+
+      {amendment.status === 'archived' && onUnarchive && (
+        <div className="mt-2">
+          <button
+            onClick={() => onUnarchive(amendment.id)}
+            className="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-teal-50 text-teal-600 hover:bg-teal-100 transition-colors border border-teal-200/50"
+          >
+            <RotateCcw className="w-3 h-3" />
+            启用
+          </button>
+        </div>
+      )}
     </motion.div>
   )
-}
+})
 
 // ============================================
 // 修正案时间线（全宽底部区域）
@@ -137,6 +152,7 @@ interface AmendmentTimelineProps {
   onApprove: (id: string) => void
   onReject: (id: string) => void
   onArchive: (id: string) => void
+  onUnarchive: (id: string) => void
 }
 
 export function AmendmentTimeline({
@@ -145,6 +161,7 @@ export function AmendmentTimeline({
   onApprove,
   onReject,
   onArchive,
+  onUnarchive,
 }: AmendmentTimelineProps) {
   const [showArchived, setShowArchived] = useState(false)
 
@@ -219,7 +236,7 @@ export function AmendmentTimeline({
                   className="overflow-hidden mt-2 space-y-2"
                 >
                   {archived.map((a) => (
-                    <AmendmentItem key={a.id} amendment={a} />
+                    <AmendmentItem key={a.id} amendment={a} onUnarchive={onUnarchive} />
                   ))}
                 </motion.div>
               )}

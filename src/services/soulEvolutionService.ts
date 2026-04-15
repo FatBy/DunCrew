@@ -2,18 +2,18 @@
  * SoulEvolutionService - 灵魂演化服务
  *
  * 核心编排层:
- * 1. onTraceCompleted() - 每次任务完成后累计，每 N 次触发跨 Nexus 模式检测
- * 2. triggerCheck()     - 聚合 Nexus 评分，发现跨域行为模式 → 调 LLM 萃取修正案
+ * 1. onTraceCompleted() - 每次任务完成后累计，每 N 次触发跨 Dun 模式检测
+ * 2. triggerCheck()     - 聚合 Dun 评分，发现跨域行为模式 → 调 LLM 萃取修正案
  * 3. applyDecay()       - 30 天半衰期衰减 + 自动归档
  * 4. refreshExpressedMBTI() - 重算 Layer 2 表达型 MBTI
  * 5. init() / destroy() - 生命周期管理
  */
 
-import type { ExecTrace, SoulAmendment, NexusScoring } from '@/types'
+import type { ExecTrace, SoulAmendment, DunScoring } from '@/types'
 import { SOUL_EVOLUTION_CONFIG } from '@/types'
-import { nexusScoringService } from './nexusScoringService'
+import { dunScoringService } from './dunScoringService'
 import { computeBehavioralModifiers, computeExpressedMBTI } from './mbtiAnalyzer'
-import { chat, isLLMConfigured } from './llmService'
+import { chatBackground, isLLMConfigured } from './llmService'
 
 // ── 懒加载 store（打破循环依赖）────────────────
 // 循环链: store/index → aiSlice → LocalClawService → 本文件 → store/index
@@ -82,7 +82,7 @@ export function destroy(): void {
  * 每次任务执行完成后调用
  * 累计计数 → 达到阈值时自动触发 triggerCheck
  */
-export function onTraceCompleted(_trace: ExecTrace, _nexusId: string): void {
+export function onTraceCompleted(_trace: ExecTrace, _dunId: string): void {
   tasksSinceLastCheck++
 
   // 每次任务完成后实时刷新表达型 MBTI（不依赖修正案）
@@ -103,19 +103,19 @@ export function onTraceCompleted(_trace: ExecTrace, _nexusId: string): void {
   }
 }
 
-// ── 核心: 跨 Nexus 模式检测 ─────────────────
+// ── 核心: 跨 Dun 模式检测 ─────────────────
 
 /**
- * 聚合所有 Nexus 评分数据，检测跨域行为模式
+ * 聚合所有 Dun 评分数据，检测跨域行为模式
  * 若发现显著模式 → LLM 萃取修正案 → 添加为 draft
  */
 export async function triggerCheck(): Promise<void> {
-  const scorings = nexusScoringService.getAllScorings()
-  const nexusCount = scorings.length
+  const scorings = dunScoringService.getAllScorings()
+  const dunCount = scorings.length
 
-  // 跨 Nexus 最小数量检查
-  if (nexusCount < SOUL_EVOLUTION_CONFIG.MIN_NEXUS_COUNT) {
-    console.log(`[SoulEvolution] Skip: only ${nexusCount} nexus(es), need >= ${SOUL_EVOLUTION_CONFIG.MIN_NEXUS_COUNT}`)
+  // 跨 Dun 最小数量检查
+  if (dunCount < SOUL_EVOLUTION_CONFIG.MIN_DUN_COUNT) {
+    console.log(`[SoulEvolution] Skip: only ${dunCount} dun(es), need >= ${SOUL_EVOLUTION_CONFIG.MIN_DUN_COUNT}`)
     return
   }
 
@@ -129,11 +129,34 @@ export async function triggerCheck(): Promise<void> {
   console.log(`[SoulEvolution] Detected ${signals.length} signal(s):`, signals.map(s => s.label))
 
   // 检查是否已存在相似修正案 (避免重复)
-  const existingAmendments: SoulAmendment[] = getStore().getState().amendments
+  // 只有 approved 和 draft 状态的修正案才阻止新信号
+  // archived/rejected 的修正案已失效，不应继续阻止
+  const existingAmendments: SoulAmendment[] = [
+    ...getStore().getState().amendments,
+    ...getStore().getState().draftAmendments,
+  ]
+  const activeAmendments = existingAmendments.filter(
+    (a) => a.status === 'approved' || a.status === 'draft',
+  )
+
+  const DEDUP_STALENESS_MS = 7 * 24 * 60 * 60 * 1000 // 7 天后修正案不再阻止同类新信号
+
   const newSignals = signals.filter(
-    (sig) => !existingAmendments.some(
-      (a) => a.status === 'approved' && a.content.toLowerCase().includes(sig.label.toLowerCase()),
-    ),
+    (sig) => !activeAmendments.some((a) => {
+      // 精确匹配 signalLabel (同一信号不重复生成)
+      if (a.source.signalLabel === sig.label) return true
+
+      // 语义去重: 仅对 approved 且未过期的修正案生效
+      // 超过 7 天的修正案不再阻止，允许行为变化后产生新洞察
+      if (a.status === 'approved') {
+        const age = Date.now() - (a.source.detectedAt || a.createdAt)
+        if (age < DEDUP_STALENESS_MS && isContentCoveringSameSignal(a.content, sig.label)) {
+          return true
+        }
+      }
+
+      return false
+    }),
   )
 
   if (newSignals.length === 0) {
@@ -158,33 +181,84 @@ export async function triggerCheck(): Promise<void> {
   refreshExpressedMBTI()
 }
 
+/**
+ * 从 signalLabel 中提取工具名
+ * 例: "heavy_runCmd_usage" → "runCmd", "increasing_webSearch_trend" → "webSearch"
+ */
+function extractToolNameFromLabel(signalLabel: string | undefined): string | null {
+  if (!signalLabel) return null
+  const match = signalLabel.match(/^(?:heavy_|increasing_)(.+?)(?:_usage|_trend)$/)
+  return match ? match[1] : null
+}
+
+/**
+ * 工具名 → 中文别名映射表，用于语义去重
+ * LLM 生成的修正案 content 可能使用这些中文别名而非工具原名
+ */
+const TOOL_NAME_ALIASES: Record<string, string[]> = {
+  runCmd: ['命令行', '终端', '指令', 'cmd', 'shell', '系统操作', '系统命令'],
+  webSearch: ['网络搜索', '网页搜索', '搜索工具', '信息检索', '信息搜索'],
+  webFetch: ['网页抓取', '网页获取', '抓取工具', '网页爬取', '外部信息'],
+  listDir: ['目录', '文件列表', '文件布局', '项目结构'],
+  readFile: ['读取文件', '文件读取', '文件内容'],
+  writeFile: ['写入文件', '文件写入', '文件修改'],
+  searchMemory: ['记忆搜索', '搜索记忆', '记忆检索'],
+  browser_navigate: ['浏览器', '网页浏览', '网页探索', '浏览器导航'],
+}
+
+/**
+ * 语义去重: 检查已有修正案的 content 是否已覆盖新信号所描述的同一工具
+ * 解决 LLM 将工具名翻译为中文后无法精确匹配的问题
+ */
+function isContentCoveringSameSignal(existingContent: string, newLabel: string): boolean {
+  const toolName = extractToolNameFromLabel(newLabel)
+  if (!toolName) return false
+
+  const contentLower = existingContent.toLowerCase()
+
+  // 1. 直接检查工具原名是否出现在 content 中
+  if (contentLower.includes(toolName.toLowerCase())) return true
+
+  // 2. 检查工具的中文别名是否出现在 content 中
+  const aliases = TOOL_NAME_ALIASES[toolName]
+  if (aliases) {
+    for (const alias of aliases) {
+      if (contentLower.includes(alias.toLowerCase())) return true
+    }
+  }
+
+  return false
+}
+
 // ── 行为信号检测 ─────────────────────────────
 
 interface BehavioralSignal {
   label: string           // 信号标签 (用于去重 + LLM prompt)
   type: 'tool_preference' | 'success_pattern' | 'style_shift'
   evidence: string[]      // 证据摘要 (<=3)
-  nexusIds: string[]      // 来源 Nexus
+  dunIds: string[]      // 来源 Dun
   strength: number        // 信号强度 0~1
 }
 
 /**
- * 从所有 Nexus 评分中提取跨域行为信号
+ * 从所有 Dun 评分中提取跨域行为信号
  */
 function detectBehavioralSignals(
-  scorings: Array<{ nexusId: string; scoring: NexusScoring }>,
+  scorings: Array<{ dunId: string; scoring: DunScoring }>,
 ): BehavioralSignal[] {
   const signals: BehavioralSignal[] = []
 
-  // --- 1. 工具偏好信号: 某工具在多个 Nexus 中使用频率异常高 ---
-  const toolAggregates = new Map<string, { totalCalls: number; nexusIds: string[]; successRate: number; totalSuccess: number }>()
+  // --- 1. 工具偏好信号: 某工具在多个 Dun 中使用频率异常高 ---
+  const toolAggregates = new Map<string, { totalCalls: number; dunIds: string[]; successRate: number; totalSuccess: number }>()
 
-  for (const { nexusId, scoring } of scorings) {
-    for (const [toolName, dim] of Object.entries(scoring.dimensions)) {
-      const agg = toolAggregates.get(toolName) || { totalCalls: 0, nexusIds: [], successRate: 0, totalSuccess: 0 }
+  for (const { dunId, scoring } of scorings) {
+    const dims = scoring.dimensions
+    if (!dims || typeof dims !== 'object') continue
+    for (const [toolName, dim] of Object.entries(dims)) {
+      const agg = toolAggregates.get(toolName) || { totalCalls: 0, dunIds: [], successRate: 0, totalSuccess: 0 }
       agg.totalCalls += dim.calls
       agg.totalSuccess += dim.successes
-      if (!agg.nexusIds.includes(nexusId)) agg.nexusIds.push(nexusId)
+      if (!agg.dunIds.includes(dunId)) agg.dunIds.push(dunId)
       toolAggregates.set(toolName, agg)
     }
   }
@@ -197,27 +271,27 @@ function detectBehavioralSignals(
 
   if (grandTotalCalls > SOUL_EVOLUTION_CONFIG.TOOL_PREF_MIN_TOTAL_CALLS) {
     for (const [toolName, agg] of toolAggregates.entries()) {
-      // 跨 Nexus 使用 + 占比 > 15% → 工具偏好信号
-      if (agg.nexusIds.length >= SOUL_EVOLUTION_CONFIG.TOOL_PREF_MIN_NEXUS_SPREAD && agg.totalCalls / grandTotalCalls > 0.15) {
+      // 跨 Dun 使用 + 占比 > 15% → 工具偏好信号
+      if (agg.dunIds.length >= SOUL_EVOLUTION_CONFIG.TOOL_PREF_MIN_DUN_SPREAD && agg.totalCalls / grandTotalCalls > 0.15) {
         signals.push({
           label: `heavy_${toolName}_usage`,
           type: 'tool_preference',
           evidence: [
-            `${toolName} called ${agg.totalCalls} times across ${agg.nexusIds.length} nexuses`,
+            `${toolName} called ${agg.totalCalls} times across ${agg.dunIds.length} duns`,
             `Accounts for ${(agg.totalCalls / grandTotalCalls * 100).toFixed(0)}% of all tool calls`,
             `Success rate: ${(agg.successRate * 100).toFixed(0)}%`,
           ],
-          nexusIds: agg.nexusIds,
+          dunIds: agg.dunIds,
           strength: Math.min(1, agg.totalCalls / grandTotalCalls * 2),
         })
       }
     }
   }
 
-  // --- 2. 成功模式信号: 所有 Nexus 的平均成功率极端偏高/低 ---
+  // --- 2. 成功模式信号: 所有 Dun 的平均成功率极端偏高/低 ---
   if (scorings.length >= SOUL_EVOLUTION_CONFIG.SUCCESS_PATTERN_MIN_SCORINGS) {
-    const avgSuccess = scorings.reduce((sum, s) => sum + s.scoring.successRate, 0) / scorings.length
-    const totalRuns = scorings.reduce((sum, s) => sum + s.scoring.totalRuns, 0)
+    const avgSuccess = scorings.reduce((sum, s) => sum + (s.scoring.successRate ?? 0), 0) / scorings.length
+    const totalRuns = scorings.reduce((sum, s) => sum + (s.scoring.totalRuns ?? 0), 0)
 
     if (totalRuns >= 10) {
       if (avgSuccess > 0.85) {
@@ -225,10 +299,10 @@ function detectBehavioralSignals(
           label: 'consistently_high_success',
           type: 'success_pattern',
           evidence: [
-            `Average success rate: ${(avgSuccess * 100).toFixed(0)}% across ${scorings.length} nexuses`,
+            `Average success rate: ${(avgSuccess * 100).toFixed(0)}% across ${scorings.length} duns`,
             `Total runs: ${totalRuns}`,
           ],
-          nexusIds: scorings.map(s => s.nexusId),
+          dunIds: scorings.map(s => s.dunId),
           strength: Math.min(1, (avgSuccess - 0.7) * 3),
         })
       } else if (avgSuccess < 0.35) {
@@ -236,10 +310,10 @@ function detectBehavioralSignals(
           label: 'consistently_low_success',
           type: 'success_pattern',
           evidence: [
-            `Average success rate: ${(avgSuccess * 100).toFixed(0)}% across ${scorings.length} nexuses`,
+            `Average success rate: ${(avgSuccess * 100).toFixed(0)}% across ${scorings.length} duns`,
             `Total runs: ${totalRuns}`,
           ],
-          nexusIds: scorings.map(s => s.nexusId),
+          dunIds: scorings.map(s => s.dunId),
           strength: Math.min(1, (0.5 - avgSuccess) * 3),
         })
       }
@@ -251,7 +325,9 @@ function detectBehavioralSignals(
   let recentTotal = 0
 
   for (const { scoring } of scorings) {
-    for (const run of scoring.recentRuns.slice(-10)) {
+    const runs = scoring.recentRuns
+    if (!Array.isArray(runs)) continue
+    for (const run of runs.slice(-10)) {
       for (const tool of run.toolsCalled) {
         recentToolCounts.set(tool, (recentToolCounts.get(tool) || 0) + 1)
         recentTotal++
@@ -276,7 +352,7 @@ function detectBehavioralSignals(
             `${toolName} recent usage: ${(recentRatio * 100).toFixed(0)}% (was ${(historicalRatio * 100).toFixed(0)}%)`,
             `Shift detected across recent runs`,
           ],
-          nexusIds: historicalAgg.nexusIds,
+          dunIds: historicalAgg.dunIds,
           strength: Math.min(1, (recentRatio - historicalRatio) * 5),
         })
       }
@@ -297,7 +373,7 @@ function detectBehavioralSignals(
  */
 async function extractAmendment(
   signal: BehavioralSignal,
-  scorings: Array<{ nexusId: string; scoring: NexusScoring }>,
+  scorings: Array<{ dunId: string; scoring: DunScoring }>,
 ): Promise<SoulAmendment | null> {
   if (!isLLMConfigured()) {
     // LLM 不可用 → 降级为模板生成
@@ -306,10 +382,10 @@ async function extractAmendment(
 
   const evidenceBlock = signal.evidence.map((e, i) => `${i + 1}. ${e}`).join('\n')
   const scoringSummary = scorings.slice(0, 5).map(s =>
-    `- Nexus "${s.nexusId}": score=${s.scoring.score}, runs=${s.scoring.totalRuns}, success=${(s.scoring.successRate * 100).toFixed(0)}%`,
+    `- Dun "${s.dunId}": score=${s.scoring.score}, runs=${s.scoring.totalRuns}, success=${(s.scoring.successRate * 100).toFixed(0)}%`,
   ).join('\n')
 
-  const prompt = `You are analyzing behavioral patterns of an AI agent across multiple workspaces (called "Nexuses").
+  const prompt = `You are analyzing behavioral patterns of an AI agent across multiple workspaces (called "Dunes").
 
 ## Detected Signal
 Type: ${signal.type}
@@ -317,7 +393,7 @@ Label: ${signal.label}
 Evidence:
 ${evidenceBlock}
 
-## Nexus Scoring Summary
+## Dun Scoring Summary
 ${scoringSummary}
 
 ## Task
@@ -331,10 +407,14 @@ Return ONLY a JSON object: {"preference":"<your statement>","confidence":0.0-1.0
 Do not include any other text.`
 
   try {
-    const result = await chat([
+    const result = await chatBackground([
       { role: 'system', content: 'You are a behavioral analyst. Output ONLY valid JSON.' },
       { role: 'user', content: prompt },
-    ])
+    ], { priority: 8 })
+
+    if (!result) {
+      return createTemplateAmendment(signal)
+    }
 
     const match = result.match(/\{[\s\S]*?"preference"\s*:\s*"([^"]+)"[\s\S]*?"confidence"\s*:\s*([\d.]+)[\s\S]*?\}/)
     if (!match) {
@@ -388,9 +468,10 @@ function buildAmendment(content: string, signal: BehavioralSignal): SoulAmendmen
     id: `amend-${now}-${Math.random().toString(36).slice(2, 8)}`,
     content,
     source: {
-      nexusIds: signal.nexusIds.slice(0, 5),
+      dunIds: signal.dunIds.slice(0, 5),
       evidence: signal.evidence.slice(0, 3),
       detectedAt: now,
+      signalLabel: signal.label,
     },
     status: 'draft',
     weight: SOUL_EVOLUTION_CONFIG.INITIAL_DRAFT_WEIGHT,
@@ -406,31 +487,39 @@ function buildAmendment(content: string, signal: BehavioralSignal): SoulAmendmen
  * 当修正案变化或衰减发生后调用
  */
 export function refreshExpressedMBTI(): void {
-  const state = getStore().getState()
-  const base = state.soulMBTIBase
-  if (!base) return
+  try {
+    const store = getStore()
+    if (!store) return
+    const state = store.getState()
+    const base = state.soulMBTIBase
+    if (!base) return
 
-  // 收集所有 Nexus 评分
-  const scoringMap: Record<string, NexusScoring> = {}
-  const nexuses = state.nexuses
-  for (const [id, nexus] of nexuses.entries()) {
-    if (nexus.scoring) {
-      scoringMap[id] = nexus.scoring
+    // 收集所有 Dun 评分
+    const duns = state.duns
+    if (!duns || typeof duns.entries !== 'function') return
+
+    const scoringMap: Record<string, DunScoring> = {}
+    for (const [id, dun] of duns.entries()) {
+      if (dun.scoring) {
+        scoringMap[id] = dun.scoring
+      }
     }
-  }
 
-  // 计算行为修正因子
-  const amendments = state.amendments
-  const modifiers = computeBehavioralModifiers(scoringMap, amendments)
+    // 计算行为修正因子
+    const amendments = state.amendments
+    const modifiers = computeBehavioralModifiers(scoringMap, amendments)
 
-  // 合成表达型
-  const { result, axes } = computeExpressedMBTI(base, modifiers)
+    // 合成表达型
+    const { result, axes } = computeExpressedMBTI(base, modifiers)
 
-  // 更新 store
-  state.updateExpressedMBTI(result, axes)
+    // 更新 store
+    state.updateExpressedMBTI(result, axes)
 
-  if (base.type !== result.type) {
-    console.log(`[SoulEvolution] MBTI drift: ${base.type.toUpperCase()} → ${result.type.toUpperCase()}`)
+    if (base.type !== result.type) {
+      console.log(`[SoulEvolution] MBTI drift: ${base.type.toUpperCase()} → ${result.type.toUpperCase()}`)
+    }
+  } catch (err) {
+    console.warn('[SoulEvolution] refreshExpressedMBTI failed:', err)
   }
 }
 

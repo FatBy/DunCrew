@@ -95,13 +95,24 @@ export function SkillsHouseView() {
 
   const handleEnvChange = useCallback((key: string, value: string) => {
     if (inspecting) {
-      setSkillEnvValue(inspecting._raw.name, key, value)
+      // 同时存储到 name 和 toolName 两个 key 下, 确保 mapper 能读到
+      const name = inspecting._raw.name
+      const toolName = inspecting._raw.toolName
+      setSkillEnvValue(name, key, value)
+      if (toolName && toolName !== name) {
+        setSkillEnvValue(toolName, key, value)
+      }
     }
   }, [inspecting, setSkillEnvValue])
 
-  // 当前选中技能的 envValues
+  // 当前选中技能的 envValues (兼容 name / toolName 两种 key)
   const inspectingEnvValues = inspecting
-    ? skillEnvValues[inspecting._raw.name] || {}
+    ? {
+        ...(skillEnvValues[inspecting._raw.name] || {}),
+        ...((inspecting._raw.toolName && inspecting._raw.toolName !== inspecting._raw.name)
+          ? (skillEnvValues[inspecting._raw.toolName] || {})
+          : {}),
+      }
     : {}
 
   return (
@@ -140,6 +151,8 @@ export function SkillsHouseView() {
           <SkillsGridView
             skills={filteredSkills}
             allSkills={allModels}
+            domains={domains}
+            isShowingAll={selection.kind === 'special' && selection.filter === 'all'}
             onSelectSkill={handleSelectSkill}
           />
         )}

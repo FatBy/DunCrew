@@ -1,6 +1,6 @@
-import { useState, useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { User, Bot, AlertCircle, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, MessageSquare, Cloud, Search, FileText, Terminal } from 'lucide-react'
+import { User, Bot, AlertCircle, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, MessageSquare, Cloud, Search, FileText, Terminal, ThumbsUp, RefreshCw } from 'lucide-react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { cn } from '@/utils/cn'
 import type { ChatMessage as ChatMessageType, ExecutionStatus } from '@/types'
@@ -8,6 +8,8 @@ import { MarkdownRenderer } from './markdown/MarkdownRenderer'
 import { DocumentView, isLongFormContent } from './markdown/DocumentView'
 import { parseSuggestions, SuggestionChips } from './SuggestionChips'
 import { FileCard } from '@/components/shared/FileCard'
+import { useT } from '@/i18n'
+import { useStore } from '@/store'
 
 // 检测输出类型
 function detectOutputType(output: string): 'weather' | 'search' | 'file' | 'file_created' | 'command' | 'plain' {
@@ -43,13 +45,14 @@ function detectOutputType(output: string): 'weather' | 'search' | 'file' | 'file
 
 // 格式化天气输出
 function WeatherOutput({ content }: { content: string }) {
+  const t = useT()
   const lines = content.split('\n').filter(l => l.trim())
   
   return (
     <div className="space-y-2 p-4">
       <div className="flex items-center gap-2 text-cyan-400">
         <Cloud className="w-5 h-5" />
-        <span className="text-sm font-medium">天气信息</span>
+        <span className="text-sm font-medium">{t('msg.weather_info')}</span>
       </div>
       
       <div className="grid gap-2">
@@ -89,13 +92,14 @@ function WeatherOutput({ content }: { content: string }) {
 
 // 格式化搜索输出
 function SearchOutput({ content }: { content: string }) {
+  const t = useT()
   const lines = content.split('\n').filter(l => l.trim())
   
   return (
     <div className="space-y-2 p-4">
       <div className="flex items-center gap-2 text-purple-400">
         <Search className="w-5 h-5" />
-        <span className="text-sm font-medium">搜索结果</span>
+        <span className="text-sm font-medium">{t('msg.search_results')}</span>
       </div>
       
       <div className="space-y-1.5 max-h-80 overflow-y-auto">
@@ -111,11 +115,12 @@ function SearchOutput({ content }: { content: string }) {
 
 // 格式化文件输出
 function FileOutput({ content }: { content: string }) {
+  const t = useT()
   return (
     <div className="space-y-2 p-4">
       <div className="flex items-center gap-2 text-amber-400">
         <FileText className="w-5 h-5" />
-        <span className="text-sm font-medium">文件内容</span>
+        <span className="text-sm font-medium">{t('msg.file_content')}</span>
       </div>
       
       <pre className="text-sm text-stone-600 leading-relaxed bg-stone-100/80 rounded-lg p-3 overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap">
@@ -127,6 +132,7 @@ function FileOutput({ content }: { content: string }) {
 
 // 格式化命令输出
 function CommandOutput({ content }: { content: string }) {
+  const t = useT()
   // 解析 Exit Code 并高亮显示
   const exitCodeMatch = content.match(/Exit Code:\s*(\d+)(?:\s*\(([^)]+)\))?/)
   const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1]) : null
@@ -137,7 +143,7 @@ function CommandOutput({ content }: { content: string }) {
     <div className="space-y-2 p-4">
       <div className="flex items-center gap-2 text-emerald-400">
         <Terminal className="w-5 h-5" />
-        <span className="text-sm font-medium">命令输出</span>
+        <span className="text-sm font-medium">{t('msg.command_output')}</span>
         {exitCode !== null && (
           <span className={cn(
             'ml-auto text-xs font-mono px-2 py-0.5 rounded',
@@ -167,6 +173,7 @@ interface FileCreatedData {
 }
 
 function FileCreatedOutput({ content }: { content: string }) {
+  const t = useT()
   // 解析数据
   const data: FileCreatedData = useMemo(() => {
     try {
@@ -195,7 +202,7 @@ function FileCreatedOutput({ content }: { content: string }) {
     <div className="space-y-2 p-4">
       <div className="flex items-center gap-2 text-emerald-400">
         <CheckCircle2 className="w-5 h-5" />
-        <span className="text-sm font-medium">文件已创建</span>
+        <span className="text-sm font-medium">{t('msg.file_created')}</span>
       </div>
       
       {data.filePath ? (
@@ -297,6 +304,7 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
   
   // 任务建议模式
   if (execution.status === 'suggestion') {
+    const t = useT()
     const handleCopy = async () => {
       if (content) {
         await navigator.clipboard.writeText(content)
@@ -314,10 +322,10 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
         <div className="flex items-center gap-2 mb-2">
           <MessageSquare className="w-4 h-4 text-purple-400" />
           <span className="text-xs font-mono text-purple-400 font-medium">
-            任务建议
+            {t('msg.task_suggestion')}
           </span>
           <span className="text-[13px] font-mono text-stone-300 ml-auto">
-            本地服务未启动
+            {t('msg.local_service_not_started')}
           </span>
         </div>
         
@@ -338,12 +346,12 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
             {copied ? (
               <>
                 <Check className="w-3.5 h-3.5" />
-                已复制
+                {t('msg.copied')}
               </>
             ) : (
               <>
                 <Copy className="w-3.5 h-3.5" />
-                复制任务
+                {t('msg.copy_task')}
               </>
             )}
           </button>
@@ -353,11 +361,12 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
   }
   
   // 执行状态配置
+  const t = useT()
   const configs: Record<string, { icon: typeof Clock; color: string; label: string }> = {
-    pending: { icon: Clock, color: 'amber', label: '准备执行...' },
-    running: { icon: Loader2, color: 'cyan', label: '执行中...' },
-    success: { icon: CheckCircle2, color: 'emerald', label: '执行完成' },
-    error: { icon: XCircle, color: 'red', label: '执行失败' },
+    pending: { icon: Clock, color: 'amber', label: t('msg.pending_execution') },
+    running: { icon: Loader2, color: 'cyan', label: t('msg.executing') },
+    success: { icon: CheckCircle2, color: 'emerald', label: t('msg.execution_complete') },
+    error: { icon: XCircle, color: 'red', label: t('msg.execution_failed') },
   }
   const config = configs[execution.status] || configs.pending
   const Icon = config.icon
@@ -435,6 +444,77 @@ function ExecutionCard({ execution, content }: { execution: ExecutionStatus; con
   )
 }
 
+// 消息操作栏 (复制、重新生成、点赞)
+function MessageActions({ message }: { message: ChatMessageType }) {
+  const [copied, setCopied] = useState(false)
+  const likeMessage = useStore(s => s.likeMessage)
+  const regenerateMessage = useStore(s => s.regenerateMessage)
+  const chatContext = useStore(s => s.chatContext)
+  const chatStreaming = useStore(s => s.chatStreaming)
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(message.content).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }, [message.content])
+
+  const handleRegenerate = useCallback(() => {
+    if (chatStreaming) return
+    regenerateMessage(message.id, chatContext)
+  }, [message.id, chatContext, chatStreaming, regenerateMessage])
+
+  const handleLike = useCallback(() => {
+    likeMessage(message.id)
+  }, [message.id, likeMessage])
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex items-center gap-0.5 mt-1 ml-1"
+    >
+      {/* 复制 */}
+      <button
+        onClick={handleCopy}
+        className="p-1.5 rounded-md text-stone-400 hover:text-stone-600 hover:bg-stone-100 transition-colors"
+        title="复制"
+      >
+        {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+      </button>
+
+      {/* 重新生成 */}
+      <button
+        onClick={handleRegenerate}
+        disabled={chatStreaming}
+        className={cn(
+          'p-1.5 rounded-md transition-colors',
+          chatStreaming
+            ? 'text-stone-300 cursor-not-allowed'
+            : 'text-stone-400 hover:text-stone-600 hover:bg-stone-100'
+        )}
+        title="重新生成"
+      >
+        <RefreshCw className="w-3.5 h-3.5" />
+      </button>
+
+      {/* 点赞 */}
+      <button
+        onClick={handleLike}
+        className={cn(
+          'p-1.5 rounded-md transition-colors',
+          message.liked
+            ? 'text-amber-500 bg-amber-50'
+            : 'text-stone-400 hover:text-stone-600 hover:bg-stone-100'
+        )}
+        title="点赞"
+      >
+        <ThumbsUp className={cn('w-3.5 h-3.5', message.liked && 'fill-amber-500')} />
+      </button>
+    </motion.div>
+  )
+}
+
 // 文件创建卡片 (基于结构化数据，用于消息附件)
 interface ChatMessageProps {
   message: ChatMessageType
@@ -442,6 +522,7 @@ interface ChatMessageProps {
 }
 
 export function ChatMessage({ message, containerWidth = 'main' }: ChatMessageProps) {
+  const t = useT()
   const isUser = message.role === 'user'
   const isError = message.error
   const hasExecution = !!message.execution
@@ -462,7 +543,7 @@ export function ChatMessage({ message, containerWidth = 'main' }: ChatMessagePro
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="space-y-2"
+      className="space-y-2 group/msg"
     >
       {/* 长文档视图 (助手消息，非 execution，内容较长) */}
       {isAssistantLongForm && !(message.execution?.status === 'suggestion') && (
@@ -475,6 +556,9 @@ export function ChatMessage({ message, containerWidth = 'main' }: ChatMessagePro
               aiContent={message.content}
             />
           )}
+          <div className="max-w-3xl mx-auto opacity-0 group-hover/msg:opacity-100 transition-opacity">
+            <MessageActions message={message} />
+          </div>
         </>
       )}
 
@@ -527,6 +611,12 @@ export function ChatMessage({ message, containerWidth = 'main' }: ChatMessagePro
                 aiContent={message.content}
               />
             )}
+            {/* 消息操作栏 (仅 assistant) */}
+            {!isUser && (
+              <div className="opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                <MessageActions message={message} />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -542,7 +632,7 @@ export function ChatMessage({ message, containerWidth = 'main' }: ChatMessagePro
           <div className="flex items-center gap-2 text-emerald-400 px-1">
             <CheckCircle2 className="w-4 h-4" />
             <span className="text-xs font-mono font-medium">
-              {message.createdFiles.length === 1 ? '已创建文件' : `已创建 ${message.createdFiles.length} 个文件`}
+              {message.createdFiles.length === 1 ? t('msg.created_file') : `${t('msg.created_files')} ${message.createdFiles.length} ${t('msg.files_count')}`}
             </span>
           </div>
           {message.createdFiles.map((file, i) => (
@@ -559,6 +649,7 @@ interface StreamingMessageProps {
 }
 
 export function StreamingMessage({ content }: StreamingMessageProps) {
+  const t = useT()
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -585,7 +676,7 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-300 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400" />
               </span>
-              <span className="animate-pulse">思考中...</span>
+              <span className="animate-pulse">{t('task.agent_thinking')}</span>
             </span>
           )}
         </div>

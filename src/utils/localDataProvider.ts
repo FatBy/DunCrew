@@ -66,7 +66,7 @@ export function getLocalSoulData(): LocalSoulData | null {
   const identityMd = getIdentityMd()
   
   // 从 IDENTITY.md 提取名字和 emoji（如果有）
-  let name = 'DunCrew Agent'
+  let name = 'DunCrew 智能体'
   let symbol = '🤖'
   
   if (identityMd) {
@@ -80,7 +80,7 @@ export function getLocalSoulData(): LocalSoulData | null {
   return {
     identity: {
       name,
-      essence: parsed.subtitle || parsed.title || 'AI Assistant',
+      essence: parsed.subtitle || parsed.title || 'AI 助手',
       vibe: parsed.vibeStatement ? parsed.vibeStatement.slice(0, 100) : '',
       symbol,
     },

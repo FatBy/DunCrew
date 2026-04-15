@@ -9,6 +9,12 @@
 
 import { ABILITY_DOMAIN_CONFIGS } from '@/services/skillStatsService'
 import { skillStatsService } from '@/services/skillStatsService'
+import {
+  computeBayesianSuccessRate,
+  computeFreshnessScore,
+  computeQualityPrior,
+  computeGlobalAverageSuccessRate,
+} from '@/services/skillRankingService'
 import type { OpenClawSkill, AbilityDomain, SkillSource } from '@/types'
 
 // ============================================
@@ -35,6 +41,14 @@ export interface UISkillModel {
   source: SkillSource            // 来源: builtin(系统内置) | community(社区下载) | user(用户自建)
   subGroupKey?: string           // 所属子组 key (由 computeSubGroups 回写)
   subGroupLabel?: string         // 所属子组显示名
+  /** 综合排序分 (0-100, 浏览模式下不含语义分) */
+  rankScore: number
+  /** 各维度明细 (0-1) */
+  scoreBreakdown: {
+    usageScore: number       // 贝叶斯平均成功率
+    freshnessScore: number   // 新鲜度衰减
+    qualityScore: number     // SKILL.md 完整度
+  }
   // 保留原始引用, 督查面板取额外信息
   _raw: OpenClawSkill
 }
@@ -294,6 +308,16 @@ export function mapSkillToUIModel(
 
   const source = inferSource(skill)
 
+  // 多信号融合评分 (浏览模式: 不含语义分，使用 3 维加权)
+  const globalRate = computeGlobalAverageSuccessRate()
+  const usageScore = computeBayesianSuccessRate(skillId, globalRate)
+  const freshnessScore = computeFreshnessScore(skill)
+  const qualityScore = computeQualityPrior(skill)
+  // 浏览模式权重: 使用 0.50 / 新鲜度 0.25 / 质量 0.25
+  const rankScore = Math.round(
+    (0.50 * usageScore + 0.25 * freshnessScore + 0.25 * qualityScore) * 100,
+  )
+
   return {
     id: skillId,
     name: skill.name,
@@ -312,6 +336,8 @@ export function mapSkillToUIModel(
     domain,
     isDormant,
     source,
+    rankScore,
+    scoreBreakdown: { usageScore, freshnessScore, qualityScore },
     _raw: skill,
   }
 }
@@ -327,7 +353,11 @@ export function mapAllSkills(
   const seenIds = new Set<string>()
   return skills.map((s, index) => {
     const envKey = s.toolName || s.name
-    const model = mapSkillToUIModel(s, allEnvValues[envKey])
+    // 兼容: env 可能存在 name 或 toolName 下, 合并两者
+    const envForSkill = envKey !== s.name
+      ? { ...(allEnvValues[s.name] || {}), ...(allEnvValues[envKey] || {}) }
+      : allEnvValues[envKey] || {}
+    const model = mapSkillToUIModel(s, envForSkill)
     // 保证 id 唯一: 同名技能追加 index 后缀
     if (seenIds.has(model.id)) {
       model.id = `${model.id}_${index}`
@@ -545,8 +575,12 @@ export function groupByDomain(models: UISkillModel[]): DomainGroup[] {
     groups.push(group)
   }
 
-  // 按总调用量降序
-  groups.sort((a, b) => b.totalUsage - a.totalUsage)
+  // 按域内平均 rankScore 降序
+  groups.sort((a, b) => {
+    const avgA = a.skills.length > 0 ? a.skills.reduce((s, x) => s + x.rankScore, 0) / a.skills.length : 0
+    const avgB = b.skills.length > 0 ? b.skills.reduce((s, x) => s + x.rankScore, 0) / b.skills.length : 0
+    return avgB - avgA
+  })
   return groups
 }
 
@@ -574,37 +608,4 @@ export function filterBySpecial(models: UISkillModel[], filter: SpecialFilter): 
     default:
       return models
   }
-}
-
-// ============================================
-// Glow Sync: 查找与目标技能共享资源的技能
-// ============================================
-
-export interface GlowRelation {
-  skillId: string
-  type: 'shared-tool' | 'shared-env'
-}
-
-export function findGlowRelations(
-  target: UISkillModel,
-  all: UISkillModel[],
-): GlowRelation[] {
-  const relations: GlowRelation[] = []
-  const targetTools = new Set(target.toolNames)
-  const targetEnvs = new Set(target._raw.requires?.env ?? [])
-
-  for (const other of all) {
-    if (other.id === target.id) continue
-    // 共享工具
-    if (other.toolNames.some((t) => targetTools.has(t))) {
-      relations.push({ skillId: other.id, type: 'shared-tool' })
-      continue
-    }
-    // 共享环境依赖
-    const otherEnvs = other._raw.requires?.env ?? []
-    if (otherEnvs.some((e) => targetEnvs.has(e))) {
-      relations.push({ skillId: other.id, type: 'shared-env' })
-    }
-  }
-  return relations
 }

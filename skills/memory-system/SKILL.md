@@ -1,8 +1,43 @@
 ---
 name: memory-system
-description: "Unified memory search and management system"
+description: "Unified memory search and management system for retrieving, storing, and organizing information across daily logs, persistent memory, SOPs, and execution traces. Use this skill to recall past events, manage knowledge bases, update important notes, or filter historical data by tags and time ranges."
 version: "1.0.0"
 author: "DunCrew"
+tags:
+  - memory
+  - search
+  - data-management
+  - knowledge-base
+keywords:
+  - 记忆管理
+  - 记忆搜索
+  - 历史记录
+  - 知识检索
+  - memory management
+  - search memory
+  - recall
+  - update memory
+  - 笔记
+  - 日志
+inputs:
+  action:
+    type: string
+    required: true
+    enum: [search, update]
+    description: "Action to perform on the memory system"
+  query:
+    type: string
+    required: false
+    description: "Search query (for search) or memory content (for update)"
+  target:
+    type: string
+    required: false
+    enum: [daily, persistent, sop, trace]
+    description: "Target memory type or source to operate on"
+  tags:
+    type: array
+    required: false
+    description: "Tags to filter search results or assign to new memory"
 executable: execute.py
 runtime: python
 dangerLevel: safe

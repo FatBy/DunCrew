@@ -1,54 +1,56 @@
 // ============================================
-// DashboardView - 暖色孵化室 Nexus Dashboard
+// DashboardView - 暖色孵化室 Dun Dashboard
 // 数据转换层 + 双圆轨道布局 + 拖拽 + 萌宠圆环渲染
 // ============================================
 
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useStore } from '@/store'
+import { useT } from '@/i18n'
 import { calculateClusteredOrbits } from './clusteredOrbits'
 import { IncubatorPod, type AgentData } from './IncubatorPod'
 import { inferRole, mapToPrototypeStage, stageToLevel } from './roleInference'
-import { getGrowthStage, getDefaultSpecies, getNexusEmoji } from './nexusGrowth'
+import { getGrowthStage, getDefaultSpecies, getDunEmoji, type AnimalSpecies } from './dunGrowth'
 
 export function DashboardView() {
-  const nexuses = useStore((s) => s.nexuses)
-  const selectedNexusId = useStore((s) => s.selectedNexusId)
-  const executingNexusId = useStore((s) => s.executingNexusId)
-  const selectNexus = useStore((s) => s.selectNexus)
-  const openNexusPanel = useStore((s) => s.openNexusPanel)
+  const t = useT()
+  const duns = useStore((s) => s.duns)
+  const selectedDunId = useStore((s) => s.selectedDunId)
+  const executingDunId = useStore((s) => s.executingDunId)
+  const selectDun = useStore((s) => s.selectDun)
+  const openDunPanel = useStore((s) => s.openDunPanel)
   const currentView = useStore((s) => s.currentView)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const isHouseOpen = currentView !== 'world'
 
   // ==========================================
-  // 数据转换: NexusEntity → AgentData
+  // 数据转换: DunEntity → AgentData
   // ==========================================
-  const nexusArray = useMemo(() => Array.from(nexuses.values()), [nexuses])
+  const dunArray = useMemo(() => Array.from(duns.values()), [duns])
 
   const agents: AgentData[] = useMemo(() => {
-    return nexusArray.map(nexus => {
-      const role = inferRole(nexus)
-      const scoring = nexus.scoring
+    return dunArray.map(dun => {
+      const role = inferRole(dun)
+      const scoring = dun.scoring
       const growthStage = scoring ? getGrowthStage(scoring.score, scoring.totalRuns) : 'egg'
-      const species = (nexus as any).species || getDefaultSpecies(nexus.id)
-      const animalEmoji = getNexusEmoji(species, scoring ?? undefined)
+      const species = dun.species as AnimalSpecies || getDefaultSpecies(dun.id)
+      const animalEmoji = getDunEmoji(species, scoring ?? undefined)
       return {
-        id: nexus.id,
-        name: nexus.label || nexus.id,
+        id: dun.id,
+        name: dun.label || dun.id,
         role,
         animalEmoji,
         level: stageToLevel(growthStage),
         xp: scoring?.score ?? 0,
         maxXp: 100,
-        status: executingNexusId === nexus.id ? 'working' as const : 'idle' as const,
+        status: executingDunId === dun.id ? 'working' as const : 'idle' as const,
         stage: mapToPrototypeStage(growthStage),
         offsetX: 0,
         offsetY: 0,
       }
     })
-  }, [nexusArray, executingNexusId])
+  }, [dunArray, executingDunId])
 
   // ==========================================
   // 轨道布局
@@ -171,14 +173,14 @@ export function DashboardView() {
   }, [])
 
   const handleNodeClick = useCallback((agentId: string) => {
-    selectNexus(agentId)
-    openNexusPanel(agentId)
-  }, [selectNexus, openNexusPanel])
+    selectDun(agentId)
+    openDunPanel(agentId)
+  }, [selectDun, openDunPanel])
 
   const handleBgClick = useCallback(() => {
     if (panMoved.current) return
-    selectNexus(null)
-  }, [selectNexus])
+    selectDun(null)
+  }, [selectDun])
 
   // ==========================================
   // 渲染
@@ -240,7 +242,7 @@ export function DashboardView() {
             >
               <IncubatorPod
                 data={{ ...agent, offsetX: offset.offsetX, offsetY: offset.offsetY }}
-                isSelected={selectedNexusId === agent.id}
+                isSelected={selectedDunId === agent.id}
                 onClick={handleNodeClick}
               />
             </div>
@@ -257,11 +259,11 @@ export function DashboardView() {
       />
 
       {/* 空状态 */}
-      {nexuses.size === 0 && (
+      {duns.size === 0 && (
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none">
           <div className="text-5xl mb-4">{'\uD83E\uDD5A'}</div>
           <p className="text-sm font-mono tracking-wider" style={{ color: '#b0a898' }}>
-            等待 Nexus 孵化中...
+            {t('dashboard.incubating')}
           </p>
         </div>
       )}

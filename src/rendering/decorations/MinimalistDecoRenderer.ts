@@ -36,7 +36,7 @@ export class MinimalistDecoRenderer implements DecoLayerRenderer {
 
   private propsMap: Map<string, { gx: number; gy: number; props: Prop[] }> = new Map()
 
-  updateNexusPositions(positions: GridPosition[]): void {
+  updateDunPositions(positions: GridPosition[]): void {
     const newKeys = new Set<string>()
 
     for (const pos of positions) {

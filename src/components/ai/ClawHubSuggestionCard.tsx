@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, X, ExternalLink, Loader2 } from 'lucide-react'
 import { useStore } from '@/store'
+import { useT } from '@/i18n'
 import type { ClawHubSuggestion, ClawHubSkillSummary } from '@/types'
 
 interface ClawHubSuggestionCardProps {
@@ -13,6 +14,8 @@ function SkillRow({ skill, onInstall, installing }: {
   onInstall: (slug: string) => void
   installing: boolean
 }) {
+  const t = useT()
+  
   return (
     <div className="flex items-center justify-between py-2 px-3 bg-stone-100/80 rounded-lg">
       <div className="flex items-center gap-2 min-w-0">
@@ -35,7 +38,7 @@ function SkillRow({ skill, onInstall, installing }: {
           {installing ? (
             <Loader2 className="w-3 h-3 animate-spin" />
           ) : (
-            '安装'
+            t('common.install')
           )}
         </button>
       </div>
@@ -49,6 +52,7 @@ function formatDownloads(count: number): string {
 }
 
 export function ClawHubSuggestionCard({ suggestion }: ClawHubSuggestionCardProps) {
+  const t = useT()
   const [dismissed, setDismissed] = useState(false)
   const dismissSuggestion = useStore(s => s.dismissClawHubSuggestion)
   const installSkill = useStore(s => s.clawHubInstallSkill)
@@ -88,9 +92,9 @@ export function ClawHubSuggestionCard({ suggestion }: ClawHubSuggestionCardProps
           <div className="flex items-center gap-2">
             <Search className="w-4 h-4 text-cyan-400" />
             <span className="text-sm font-medium text-cyan-400">
-              发现匹配技能
+              {t('clawhub.match_found')}
             </span>
-            <span className="text-xs text-stone-300">来自 ClawHub</span>
+            <span className="text-xs text-stone-300">{t('clawhub.from_clawhub')}</span>
           </div>
           <button
             onClick={handleDismiss}
@@ -102,7 +106,7 @@ export function ClawHubSuggestionCard({ suggestion }: ClawHubSuggestionCardProps
 
         {/* 触发信息 */}
         <div className="px-4 py-2 text-xs text-stone-400">
-          执行 <code className="px-1 py-0.5 bg-stone-100 rounded text-stone-600">{suggestion.triggerTool}</code> 时未找到对应工具
+          {t('clawhub.tool_not_found', { tool: suggestion.triggerTool })}
         </div>
 
         {/* 匹配结果列表 */}
@@ -123,14 +127,14 @@ export function ClawHubSuggestionCard({ suggestion }: ClawHubSuggestionCardProps
             onClick={handleDismiss}
             className="text-xs text-stone-400 hover:text-stone-500 transition-colors"
           >
-            跳过
+            {t('clawhub.skip')}
           </button>
           <button
             onClick={handleBrowseMore}
             className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
           >
             <ExternalLink className="w-3 h-3" />
-            浏览更多
+            {t('clawhub.browse_more')}
           </button>
         </div>
       </motion.div>

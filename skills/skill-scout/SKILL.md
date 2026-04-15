@@ -3,6 +3,7 @@ name: skill-scout
 description: "监测全球 SKILL 社区（OpenClaw 等），根据用户现有技能和目标推荐并安装新技能"
 version: "1.0.0"
 author: "DunCrew"
+dangerLevel: "high"
 metadata:
   openclaw:
     emoji: "🔭"

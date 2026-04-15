@@ -14,9 +14,11 @@ import type {
   ChildRunRecord,
   ChildOutcome,
   AgentPhase,
+  ChildContextEnvelope,
 } from '@/types'
 import { CHILD_LIMITS } from '@/types'
 import { agentEventBus } from './agentEventBus'
+import { getLLMConfig } from './llmService'
 
 // ============================================
 // 子智能体管理器
@@ -65,15 +67,15 @@ class ChildAgentManager {
     // 3. 创建子运行记录
     const childRunId = `child-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const childSessionId = `session-child-${Date.now()}`
-    const model = params.model || (window as any).__ddos_llm_model || 'unknown'
-    const nexusId = params.nexusId || 'default'
+    const model = params.model || getLLMConfig().model || 'unknown'
+    const dunId = params.dunId || 'default'
 
     const record: ChildRunRecord = {
       runId: childRunId,
       childSessionId,
       parentSessionId,
-      nexusId,
-      nexusLabel: nexusId, // 后续可从 store 获取真实 label
+      dunId,
+      dunLabel: dunId, // 后续可从 store 获取真实 label
       task: params.task,
       status: 'pending',
       depth: currentDepth + 1,
@@ -90,7 +92,7 @@ class ChildAgentManager {
     agentEventBus.childSpawned({
       childRunId,
       childSessionId,
-      nexusId,
+      dunId,
       task: params.task,
       depth: currentDepth + 1,
       model,
@@ -109,8 +111,41 @@ class ChildAgentManager {
       status: 'accepted',
       childSessionId,
       runId: childRunId,
-      nexusId,
+      dunId,
     }
+  }
+
+  // ═══ V8: 碱基 Ledger 驱动的 spawn ═══
+
+  /**
+   * V8: 带上下文信封的 spawn（由 Transcriptase 触发）
+   *
+   * 相比普通 spawn，额外携带 ChildContextEnvelope（mRNA），
+   * 子 Agent 可以从中获取父 Ledger 快照和共享 facts。
+   */
+  async spawnWithEnvelope(
+    _parentRunId: string,
+    parentSessionId: string,
+    params: SpawnChildParams,
+    envelope: ChildContextEnvelope,
+    currentDepth: number = 0,
+  ): Promise<SpawnChildResult> {
+    // 将 envelope 附加到 params
+    const enrichedParams: SpawnChildParams = {
+      ...params,
+      contextEnvelope: envelope,
+      // 使用 envelope 的超时设置
+      timeout: Math.ceil(envelope.returnContract.maxDurationMs / 1000),
+    }
+
+    // 复用现有 spawn 逻辑
+    const result = await this.spawn(_parentRunId, parentSessionId, enrichedParams, currentDepth)
+
+    if (result.status === 'accepted' && result.runId) {
+      console.log(`[ChildAgent] V8: Spawned with envelope, parent seq: ${envelope.parentBaseSequence.slice(0, 40)}...`)
+    }
+
+    return result
   }
 
   // ═══ 生命周期管理 ═══
@@ -158,7 +193,7 @@ class ChildAgentManager {
     // 发出完成事件
     agentEventBus.childCompleted({
       childRunId,
-      nexusId: record.nexusId,
+      dunId: record.dunId,
       success: outcome.success,
       result: outcome.result,
       error: outcome.error,
@@ -201,7 +236,7 @@ class ChildAgentManager {
 
     agentEventBus.childCompleted({
       childRunId,
-      nexusId: record.nexusId,
+      dunId: record.dunId,
       success: false,
       error: reason,
       durationMs: record.outcome.durationMs,
@@ -259,7 +294,7 @@ class ChildAgentManager {
 
     agentEventBus.childCompleted({
       childRunId,
-      nexusId: record.nexusId,
+      dunId: record.dunId,
       success: false,
       error: record.outcome.error,
       durationMs: record.outcome.durationMs,

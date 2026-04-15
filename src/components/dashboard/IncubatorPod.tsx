@@ -5,7 +5,8 @@
 
 import React, { useState, useEffect } from 'react'
 import { Sparkles, Heart, Zap, Activity } from 'lucide-react'
-import type { NexusRole } from './roleInference'
+import type { DunRole } from './roleInference'
+import { useT } from '@/i18n'
 
 // ==========================================
 // 数据接口
@@ -14,7 +15,7 @@ import type { NexusRole } from './roleInference'
 export interface AgentData {
   id: string
   name: string
-  role: NexusRole
+  role: DunRole
   animalEmoji: string
   level: number
   xp: number
@@ -92,6 +93,7 @@ function getTheme(stage: string): StageTheme {
 // ==========================================
 
 export const IncubatorPod: React.FC<IncubatorPodProps> = ({ data, isSelected, onClick }) => {
+  const t = useT()
   const [elapsed, setElapsed] = useState(0)
   const theme = getTheme(data.stage)
   const isWorking = data.status === 'working'
@@ -219,7 +221,7 @@ export const IncubatorPod: React.FC<IncubatorPodProps> = ({ data, isSelected, on
             <span className="text-[11px] font-bold text-sky-500 bg-sky-50 px-3 py-1.5 rounded-full"
               style={{ borderWidth: '1px', borderColor: '#e0f2fe' }}
             >
-              任务执行中
+              {t('pod.task_running')}
             </span>
           )}
         </div>
@@ -244,12 +246,12 @@ export const IncubatorPod: React.FC<IncubatorPodProps> = ({ data, isSelected, on
                 <span className="text-amber-500 font-bold text-xs">{elapsed}s</span>
               </div>
               <div className="text-stone-600 text-xs leading-relaxed font-medium">
-                正在分析目标网页结构...<br />等我抓取一下数据哦！
+                {t('pod.thinking_analyzing')}<br />{t('pod.thinking_fetching')}
               </div>
             </>
           ) : (
             <div className="text-stone-500 text-xs leading-relaxed font-medium text-center py-2">
-              待命中... 随时准备出发！
+              {t('pod.idle_standby')}
             </div>
           )}
         </div>
@@ -258,7 +260,7 @@ export const IncubatorPod: React.FC<IncubatorPodProps> = ({ data, isSelected, on
         <div>
           <div className="flex justify-between text-[11px] font-bold mb-2">
             <span className="text-stone-400 flex items-center gap-1">
-              <Heart className="w-3 h-3 text-rose-400" /> 进化能量
+              <Heart className="w-3 h-3 text-rose-400" /> {t('pod.evolution_energy')}
             </span>
             <span className={percent > 90 ? 'text-rose-500 animate-pulse' : 'text-stone-500'}>
               {data.xp} / {data.maxXp}

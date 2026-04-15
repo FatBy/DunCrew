@@ -3,7 +3,7 @@
 // 根据节点数量自动扩展环数（2~N 环），每环容量合理，间距均匀
 // ============================================
 
-import type { NexusRole } from './roleInference'
+import type { DunRole } from './roleInference'
 
 export interface OrbitPosition {
   offsetX: number
@@ -33,9 +33,9 @@ function maxNodesForRadius(radius: number): number {
  * 返回每环的节点数组
  */
 function distributeToRings(
-  satellites: Array<{ id: string; role: NexusRole }>,
-): Array<{ radius: number; nodes: Array<{ id: string; role: NexusRole }> }> {
-  const rings: Array<{ radius: number; nodes: Array<{ id: string; role: NexusRole }> }> = []
+  satellites: Array<{ id: string; role: DunRole }>,
+): Array<{ radius: number; nodes: Array<{ id: string; role: DunRole }> }> {
+  const rings: Array<{ radius: number; nodes: Array<{ id: string; role: DunRole }> }> = []
   let remaining = [...satellites]
   let ringIndex = 0
 
@@ -68,7 +68,7 @@ function distributeToRings(
  * - 所有坐标为相对容器中心的偏移量
  */
 export function calculateClusteredOrbits(
-  nodes: Array<{ id: string; role: NexusRole }>,
+  nodes: Array<{ id: string; role: DunRole }>,
 ): Map<string, OrbitPosition> {
   const result = new Map<string, OrbitPosition>()
   if (!nodes || nodes.length === 0) return result

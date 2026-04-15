@@ -1,3 +1,5 @@
+@import url('https://puhuiti.oss-cn-hangzhou.aliyuncs.com/AlibabaPuHuiTi-3/AlibabaPuHuiTi-3-55-Regular/AlibabaPuHuiTi-3-55-Regular.css');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -60,6 +62,7 @@ body,
   background-color: rgb(var(--color-bg-primary));
   color: rgb(var(--color-text-primary));
   font-size: calc(17px * var(--font-scale));
+  font-family: 'Alibaba PuHuiTi 3', 'Alibaba PuHuiTi', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
 /* ============================================

@@ -2,7 +2,7 @@
 // DunCrew 渲染器架构 - 核心类型定义
 // ============================================
 
-import type { NexusEntity, CameraState, RenderSettings } from '@/types'
+import type { DunEntity, CameraState, RenderSettings } from '@/types'
 import type { CanvasPalette } from '@/types/theme'
 
 // ============================================
@@ -57,12 +57,12 @@ export interface EnergyCoreState {
 // ============================================
 
 export interface RenderState {
-  nexuses: Map<string, NexusEntity>
+  duns: Map<string, DunEntity>
   camera: CameraState
-  selectedNexusId: string | null
+  selectedDunId: string | null
   renderSettings: RenderSettings
   energyCore?: EnergyCoreState
-  executingNexusId?: string | null
+  executingDunId?: string | null
   executionStartTime?: number | null
 }
 
@@ -89,28 +89,28 @@ export interface BackgroundRenderer {
 
 /**
  * 实体渲染器
- * 负责渲染 Nexus 节点 (积木块)
+ * 负责渲染 Dun 节点 (积木块)
  */
 export interface EntityRenderer {
   readonly id: string
   
-  /** 判断是否能渲染此 Nexus */
-  canRender(nexus: NexusEntity): boolean
+  /** 判断是否能渲染此 Dun */
+  canRender(dun: DunEntity): boolean
   
-  /** 渲染单个 Nexus 节点 */
+  /** 渲染单个 Dun 节点 */
   render(
     ctx: RenderContext,
-    nexus: NexusEntity,
+    dun: DunEntity,
     screenPos: Point,
     isSelected: boolean,
     timestamp: number,
   ): void
   
   /** 获取缓存的渲染结果 (可选) */
-  getCache?(nexus: NexusEntity): OffscreenCanvas | HTMLCanvasElement | null
+  getCache?(dun: DunEntity): OffscreenCanvas | HTMLCanvasElement | null
   
   /** 使缓存失效 (可选) */
-  invalidateCache?(nexusId: string): void
+  invalidateCache?(dunId: string): void
   
   /** 清理所有缓存 (可选) */
   clearCache?(): void
@@ -191,7 +191,7 @@ export interface GridRenderer {
   render(ctx: RenderContext): void
   
   /** 更新建筑位置（用于生成道路网络等） */
-  updateNexusPositions?(positions: GridPosition[]): void
+  updateDunPositions?(positions: GridPosition[]): void
   
   /** 清理资源 (可选) */
   dispose?(): void
@@ -209,7 +209,7 @@ export interface DecoLayerRenderer {
   readonly id: string
   
   /** 更新建筑位置（用于避开建筑区域） */
-  updateNexusPositions?(positions: GridPosition[]): void
+  updateDunPositions?(positions: GridPosition[]): void
   
   /** 渲染装饰层 */
   render(ctx: RenderContext): void

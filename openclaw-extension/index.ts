@@ -2,18 +2,18 @@
  * DunCrew OpenClaw Extension — Main entry point.
  *
  * Registers hooks:
- *   - before_prompt_build: Inject System Brief, Nexus profile, SOP, Gene Pool hints
+ *   - before_prompt_build: Inject System Brief, Dun profile, SOP, Gene Pool hints
  *   - after_tool_call:     Track SOP progress, update recent entities, Gene Pool match + trace
- *   - llm_output:          Detect SOP adoption, parse ACTIVATE_NEXUS & SOP_REWRITE tags
+ *   - llm_output:          Detect SOP adoption, parse ACTIVATE_DUN & SOP_REWRITE tags
  *   - session_start:       Initialize SOP tracker, reset Gene Pool session
  *   - agent_end:           Record experience, harvest genes, broadcast XP update
  *
- * All Nexus data is persisted in {dataDir}/nexuses/{nexusId}/ as plain files.
+ * All Dun data is persisted in {dataDir}/duns/{dunId}/ as plain files.
  * Gene Pool data is persisted in {dataDir}/genes/ as JSON files.
  */
 
 import { join, dirname } from "path";
-import { NexusManager, type SOPMode } from "./src/nexus-manager.js";
+import { DunManager, type SOPMode } from "./src/dun-manager.js";
 import { DDOS_SYSTEM_BRIEF } from "./src/system-brief.js";
 import { ExtensionGenePool } from "./src/gene-pool.js";
 
@@ -21,9 +21,9 @@ import { ExtensionGenePool } from "./src/gene-pool.js";
 // Plugin state (initialized in register())
 // ============================================
 
-let nexusManager: NexusManager;
+let dunManager: DunManager;
 let genePool: ExtensionGenePool;
-let activeNexusId: string | null = null;
+let activeDunId: string | null = null;
 let sessionTaskMessage = "";
 let sessionToolsUsed: string[] = [];
 let sessionStartTime = 0;
@@ -46,10 +46,10 @@ let broadcastFn: ((event: string, payload: unknown) => void) | null = null;
 // ============================================
 
 interface DdosPluginConfig {
-  nexusDataDir?: string;
+  dunDataDir?: string;
   enableSOPInjection?: boolean;
   enableSOPEvolution?: boolean;
-  enableNexusCatalog?: boolean;
+  enableDunCatalog?: boolean;
   enableAnaphoraResolution?: boolean;
   enableExperienceRecording?: boolean;
   enableGenePool?: boolean;
@@ -58,10 +58,10 @@ interface DdosPluginConfig {
 }
 
 const DEFAULT_CONFIG: Required<DdosPluginConfig> = {
-  nexusDataDir: "",
+  dunDataDir: "",
   enableSOPInjection: true,
   enableSOPEvolution: true,
-  enableNexusCatalog: true,
+  enableDunCatalog: true,
   enableAnaphoraResolution: true,
   enableExperienceRecording: true,
   enableGenePool: true,
@@ -74,18 +74,18 @@ function resolveConfig(raw?: Record<string, unknown>): Required<DdosPluginConfig
 }
 
 // ============================================
-// Helper: select active Nexus by trigger matching
+// Helper: select active Dun by trigger matching
 // ============================================
 
-function matchNexusByTrigger(
+function matchDunByTrigger(
   query: string,
-  manager: NexusManager
+  manager: DunManager
 ): string | null {
   const queryLower = query.toLowerCase();
-  const nexusIds = manager.listNexuses();
+  const dunIds = manager.listDuns();
 
-  for (const nid of nexusIds) {
-    const meta = manager.loadNexusMeta(nid);
+  for (const nid of dunIds) {
+    const meta = manager.loadDunMeta(nid);
     if (!meta?.triggers) continue;
     for (const trigger of meta.triggers) {
       if (queryLower.includes(trigger.toLowerCase())) {
@@ -114,26 +114,26 @@ const plugin = {
   id: "ddos",
   name: "DunCrew Integration",
   description:
-    "Nexus-driven SOP execution, experience tracking, Gene Pool self-healing, and adaptive context injection for OpenClaw agents.",
+    "Dun-driven SOP execution, experience tracking, Gene Pool self-healing, and adaptive context injection for OpenClaw agents.",
 
   register(api: any) {
     const cfg = resolveConfig(api.pluginConfig);
-    const dataDir = cfg.nexusDataDir || join(dirname(api.source), "data");
-    nexusManager = new NexusManager(dataDir);
+    const dataDir = cfg.dunDataDir || join(dirname(api.source), "data");
+    dunManager = new DunManager(dataDir);
     genePool = new ExtensionGenePool(dataDir);
 
-    api.logger.info(`[DunCrew] Nexus data dir: ${dataDir}`);
+    api.logger.info(`[DunCrew] Dun data dir: ${dataDir}`);
     api.logger.info(
       `[DunCrew] Config: SOP=${cfg.enableSOPInjection}, Anaphora=${cfg.enableAnaphoraResolution}, Experience=${cfg.enableExperienceRecording}, GenePool=${cfg.enableGenePool}`
     );
     api.logger.info(
-      `[DunCrew] Loaded ${nexusManager.listNexuses().length} nexuses, ${genePool.getGeneCount()} genes`
+      `[DunCrew] Loaded ${dunManager.listDuns().length} duns, ${genePool.getGeneCount()} genes`
     );
 
     // ========================================
     // Hook: before_prompt_build
     // T1: System Brief (cacheable, first time only)
-    // T2: Nexus Profile (dynamic, every turn)
+    // T2: Dun Profile (dynamic, every turn)
     // T3: Gene Pool hints (dynamic, after errors)
     // Existing: SOP context + anaphora hints + rules
     // ========================================
@@ -150,37 +150,37 @@ const plugin = {
         api.logger.info("[DunCrew] System Brief injected via prependSystemContext");
       }
 
-      // ── Auto-detect active Nexus from user message ──
+      // ── Auto-detect active Dun from user message ──
       const userMessage = event?.userMessage || event?.message || "";
-      if (!activeNexusId && userMessage) {
-        activeNexusId = matchNexusByTrigger(userMessage, nexusManager);
-        if (activeNexusId) {
-          api.logger.info(`[DunCrew] Nexus matched by trigger: ${activeNexusId}`);
+      if (!activeDunId && userMessage) {
+        activeDunId = matchDunByTrigger(userMessage, dunManager);
+        if (activeDunId) {
+          api.logger.info(`[DunCrew] Dun matched by trigger: ${activeDunId}`);
         }
       }
 
-      // ── T2: Nexus Profile (every turn when active) ──
-      if (activeNexusId) {
-        const profile = nexusManager.buildNexusProfile(activeNexusId);
+      // ── T2: Dun Profile (every turn when active) ──
+      if (activeDunId) {
+        const profile = dunManager.buildDunProfile(activeDunId);
         if (profile) {
           dynamicParts.push(profile);
         }
       }
 
       // ── Existing: SOP context ──
-      if (activeNexusId && cfg.enableSOPInjection) {
+      if (activeDunId && cfg.enableSOPInjection) {
         if (promptBuildCount === 1) {
-          const sopCtx = nexusManager.buildSOPContext(
-            activeNexusId,
+          const sopCtx = dunManager.buildSOPContext(
+            activeDunId,
             cfg.maxSOPContentLength
           );
           if (sopCtx) {
             dynamicParts.push(sopCtx);
           }
 
-          const evaluation = nexusManager.evaluateSOPApplicability(
+          const evaluation = dunManager.evaluateSOPApplicability(
             userMessage || sessionTaskMessage,
-            activeNexusId
+            activeDunId
           );
           sopMode = evaluation.mode;
           sopActive = sopMode === "strict";
@@ -189,14 +189,14 @@ const plugin = {
             `[DunCrew] SOP evaluation: mode=${sopMode}, reason="${evaluation.reason}"`
           );
 
-          const directive = nexusManager.buildSOPDirective(activeNexusId, sopMode);
+          const directive = dunManager.buildSOPDirective(activeDunId, sopMode);
           if (directive) {
             dynamicParts.push("\n" + directive);
           }
         } else if (sopActive) {
           if (promptBuildCount - lastSOPReminderAt >= SOP_REMINDER_INTERVAL) {
-            const reminder = nexusManager.buildSOPReminder(
-              activeNexusId,
+            const reminder = dunManager.buildSOPReminder(
+              activeDunId,
               sessionToolsUsed,
               lastToolResult
             );
@@ -211,8 +211,8 @@ const plugin = {
         }
 
         if (userMessage) {
-          const experiences = nexusManager.searchExperiences(
-            activeNexusId,
+          const experiences = dunManager.searchExperiences(
+            activeDunId,
             userMessage,
             3
           );
@@ -223,27 +223,27 @@ const plugin = {
           }
         }
 
-        const rulesCtx = nexusManager.buildRulesContext(activeNexusId);
+        const rulesCtx = dunManager.buildRulesContext(activeDunId);
         if (rulesCtx) {
           dynamicParts.push("\n" + rulesCtx);
         }
 
         // ── SOP Evolution: improvement hints + rewrite request ──
         if (cfg.enableSOPEvolution && promptBuildCount === 1) {
-          const sopHints = nexusManager.buildSOPImprovementHints(activeNexusId);
+          const sopHints = dunManager.buildSOPImprovementHints(activeDunId);
           if (sopHints) {
             dynamicParts.push("\n" + sopHints);
             api.logger.info("[DunCrew] SOP improvement hints injected");
           }
 
-          const rewriteReq = nexusManager.buildSOPRewriteRequest(activeNexusId);
+          const rewriteReq = dunManager.buildSOPRewriteRequest(activeDunId);
           if (rewriteReq) {
             dynamicParts.push("\n" + rewriteReq);
             api.logger.info("[DunCrew] SOP rewrite request injected");
           }
 
           // ── Golden Path hint injection ──
-          const goldenPathHint = nexusManager.buildGoldenPathHint(activeNexusId);
+          const goldenPathHint = dunManager.buildGoldenPathHint(activeDunId);
           if (goldenPathHint) {
             dynamicParts.push("\n" + goldenPathHint);
             api.logger.info("[DunCrew] Golden Path hint injected");
@@ -251,18 +251,18 @@ const plugin = {
         }
       }
 
-      // ── Nexus Catalog (when no active Nexus) ──
-      if (!activeNexusId && cfg.enableNexusCatalog && promptBuildCount <= 2) {
-        const catalog = nexusManager.buildNexusCatalog();
+      // ── Dun Catalog (when no active Dun) ──
+      if (!activeDunId && cfg.enableDunCatalog && promptBuildCount <= 2) {
+        const catalog = dunManager.buildDunCatalog();
         if (catalog) {
           dynamicParts.push("\n" + catalog);
-          api.logger.info("[DunCrew] Nexus catalog injected (no active Nexus)");
+          api.logger.info("[DunCrew] Dun catalog injected (no active Dun)");
         }
       }
 
       // ── Existing: Anaphora resolution ──
       if (cfg.enableAnaphoraResolution) {
-        const anaphoraHint = nexusManager.buildAnaphoraHint(
+        const anaphoraHint = dunManager.buildAnaphoraHint(
           cfg.recentEntityExpireMs
         );
         if (anaphoraHint) {
@@ -278,9 +278,9 @@ const plugin = {
           api.logger.info("[DunCrew] Gene Pool hints injected into context");
         }
 
-        // ── Pre-check hints: inject on first prompt when Nexus is active ──
-        if (promptBuildCount === 1 && activeNexusId) {
-          const preCheckHints = genePool.buildPreCheckHints(activeNexusId);
+        // ── Pre-check hints: inject on first prompt when Dun is active ──
+        if (promptBuildCount === 1 && activeDunId) {
+          const preCheckHints = genePool.buildPreCheckHints(activeDunId);
           if (preCheckHints) {
             dynamicParts.push("\n" + preCheckHints);
             api.logger.info("[DunCrew] Pre-check hints injected from Gene Pool");
@@ -338,12 +338,12 @@ const plugin = {
 
       // Existing: Update recent entities for anaphora resolution
       if (cfg.enableAnaphoraResolution) {
-        nexusManager.updateRecentEntities(toolName, toolArgs, toolResult);
+        dunManager.updateRecentEntities(toolName, toolArgs, toolResult);
       }
 
       // Existing: Infer SOP progress
-      if (activeNexusId && cfg.enableSOPInjection) {
-        nexusManager.inferSOPProgress(activeNexusId, toolName, toolResult);
+      if (activeDunId && cfg.enableSOPInjection) {
+        dunManager.inferSOPProgress(activeDunId, toolName, toolResult);
       }
 
       // ── T4: Record tool call in session trace ──
@@ -377,32 +377,32 @@ const plugin = {
       if (!responseText) return;
 
       // ── Existing: SOP adoption detection ──
-      if (activeNexusId && sopFirstReply && sopMode === "optional") {
+      if (activeDunId && sopFirstReply && sopMode === "optional") {
         sopFirstReply = false;
-        const adopted = nexusManager.detectSOPAdoption(responseText);
+        const adopted = dunManager.detectSOPAdoption(responseText);
         sopActive = adopted;
         api.logger.info(
           `[DunCrew] SOP adoption detection: ${adopted ? "FOLLOW" : "FREE"}`
         );
       }
 
-      // ── Nexus Catalog: parse <ACTIVATE_NEXUS> ──
-      if (!activeNexusId && cfg.enableNexusCatalog) {
-        const nexusMatch = responseText.match(
-          /<ACTIVATE_NEXUS>(\S+)<\/ACTIVATE_NEXUS>/
+      // ── Dun Catalog: parse <ACTIVATE_DUN> ──
+      if (!activeDunId && cfg.enableDunCatalog) {
+        const dunMatch = responseText.match(
+          /<ACTIVATE_DUN>(\S+)<\/ACTIVATE_DUN>/
         );
-        if (nexusMatch) {
-          const candidateId = nexusMatch[1];
-          const meta = nexusManager.loadNexusMeta(candidateId);
+        if (dunMatch) {
+          const candidateId = dunMatch[1];
+          const meta = dunManager.loadDunMeta(candidateId);
           if (meta) {
-            activeNexusId = candidateId;
+            activeDunId = candidateId;
             if (meta.sopContent) {
-              nexusManager.createSOPTracker(
+              dunManager.createSOPTracker(
                 candidateId,
                 meta.name,
                 meta.sopContent
               );
-              const evaluation = nexusManager.evaluateSOPApplicability(
+              const evaluation = dunManager.evaluateSOPApplicability(
                 sessionTaskMessage,
                 candidateId
               );
@@ -411,53 +411,53 @@ const plugin = {
               sopFirstReply = sopMode === "optional";
             }
             api.logger.info(
-              `[DunCrew] Agent activated Nexus: ${candidateId} (${meta.name})`
+              `[DunCrew] Agent activated Dun: ${candidateId} (${meta.name})`
             );
             if (broadcastFn) {
               try {
-                const xpData = nexusManager.loadNexusXP(candidateId);
-                broadcastFn("ddos.nexus.activated", {
-                  nexusId: candidateId,
-                  nexusName: meta.name,
+                const xpData = dunManager.loadDunXP(candidateId);
+                broadcastFn("ddos.dun.activated", {
+                  dunId: candidateId,
+                  dunName: meta.name,
                   xp: xpData.xp,
                   level: xpData.level,
                   activatedBy: "agent",
                 });
               } catch (err) {
                 api.logger.warn(
-                  `[DunCrew] Failed to broadcast Nexus activation: ${err}`
+                  `[DunCrew] Failed to broadcast Dun activation: ${err}`
                 );
               }
             }
           } else {
             api.logger.warn(
-              `[DunCrew] Agent tried to activate unknown Nexus: ${candidateId}`
+              `[DunCrew] Agent tried to activate unknown Dun: ${candidateId}`
             );
           }
         }
       }
 
       // ── SOP Evolution: parse <SOP_REWRITE> ──
-      if (activeNexusId && cfg.enableSOPEvolution) {
+      if (activeDunId && cfg.enableSOPEvolution) {
         const sopMatch = responseText.match(
           /<SOP_REWRITE>([\s\S]*?)<\/SOP_REWRITE>/
         );
         if (sopMatch) {
           const newSOP = sopMatch[1].trim();
           if (newSOP.length > 50) {
-            const written = nexusManager.writeSOPContent(
-              activeNexusId,
+            const written = dunManager.writeSOPContent(
+              activeDunId,
               newSOP
             );
             if (written) {
-              nexusManager.resetSOPFitnessAfterRewrite(activeNexusId);
+              dunManager.resetSOPFitnessAfterRewrite(activeDunId);
               api.logger.info(
-                `[DunCrew] SOP rewritten by Agent for Nexus: ${activeNexusId}`
+                `[DunCrew] SOP rewritten by Agent for Dun: ${activeDunId}`
               );
               if (broadcastFn) {
                 try {
-                  broadcastFn("ddos.nexus.sopUpdated", {
-                    nexusId: activeNexusId,
+                  broadcastFn("ddos.dun.sopUpdated", {
+                    dunId: activeDunId,
                     updatedBy: "agent",
                   });
                 } catch (err) {
@@ -472,7 +472,7 @@ const plugin = {
       }
 
       // ── Skill Binding: parse <BIND_SKILL> ──
-      if (activeNexusId) {
+      if (activeDunId) {
         const bindMatches = responseText.matchAll(
           /<BIND_SKILL>([^<]+)<\/BIND_SKILL>/g
         );
@@ -480,12 +480,12 @@ const plugin = {
           const skillName = match[1].trim();
           if (skillName) {
             api.logger.info(
-              `[DunCrew] Agent binding skill "${skillName}" to Nexus ${activeNexusId}`
+              `[DunCrew] Agent binding skill "${skillName}" to Dun ${activeDunId}`
             );
             if (broadcastFn) {
               try {
-                broadcastFn("ddos.nexus.skillBound", {
-                  nexusId: activeNexusId,
+                broadcastFn("ddos.dun.skillBound", {
+                  dunId: activeDunId,
                   skillName,
                   boundBy: "agent",
                 });
@@ -509,7 +509,7 @@ const plugin = {
       sessionTaskMessage = event?.message || "";
       sessionToolsUsed = [];
       sessionStartTime = Date.now();
-      activeNexusId = null;
+      activeDunId = null;
       sopMode = "skip";
       sopActive = false;
       sopFirstReply = true;
@@ -525,22 +525,22 @@ const plugin = {
         genePool.resetSession();
       }
 
-      // Auto-match Nexus from initial message
+      // Auto-match Dun from initial message
       if (sessionTaskMessage) {
-        activeNexusId = matchNexusByTrigger(sessionTaskMessage, nexusManager);
+        activeDunId = matchDunByTrigger(sessionTaskMessage, dunManager);
       }
 
       // Initialize SOP tracker
-      if (activeNexusId) {
-        const meta = nexusManager.loadNexusMeta(activeNexusId);
+      if (activeDunId) {
+        const meta = dunManager.loadDunMeta(activeDunId);
         if (meta?.sopContent) {
-          nexusManager.createSOPTracker(
-            activeNexusId,
+          dunManager.createSOPTracker(
+            activeDunId,
             meta.name,
             meta.sopContent
           );
           api.logger.info(
-            `[DunCrew] SOP tracker initialized for Nexus: ${meta.name}`
+            `[DunCrew] SOP tracker initialized for Dun: ${meta.name}`
           );
         }
       }
@@ -559,7 +559,7 @@ const plugin = {
         `[DunCrew][DEBUG] agent_end event keys: [${eventKeys.join(", ")}]`
       );
       api.logger.info(
-        `[DunCrew][DEBUG] agent_end: activeNexusId=${activeNexusId}, enableGenePool=${cfg.enableGenePool}, traceLength=${genePool.getSessionTrace().length}`
+        `[DunCrew][DEBUG] agent_end: activeDunId=${activeDunId}, enableGenePool=${cfg.enableGenePool}, traceLength=${genePool.getSessionTrace().length}`
       );
 
       const duration = event?.durationMs || (Date.now() - sessionStartTime);
@@ -571,9 +571,9 @@ const plugin = {
       );
 
       // ── Existing: Record experience ──
-      if (activeNexusId && cfg.enableExperienceRecording && sessionTaskMessage) {
-        nexusManager.recordExperience(
-          activeNexusId,
+      if (activeDunId && cfg.enableExperienceRecording && sessionTaskMessage) {
+        dunManager.recordExperience(
+          activeDunId,
           isError ? "failure" : "success",
           {
             task: sessionTaskMessage,
@@ -588,7 +588,7 @@ const plugin = {
           }
         );
         api.logger.info(
-          `[DunCrew] Experience recorded for ${activeNexusId}: ${isError ? "failure" : "success"} (${Math.round(duration / 1000)}s)`
+          `[DunCrew] Experience recorded for ${activeDunId}: ${isError ? "failure" : "success"} (${Math.round(duration / 1000)}s)`
         );
       }
 
@@ -596,17 +596,17 @@ const plugin = {
       if (cfg.enableGenePool) {
         const traceSnapshot = genePool.getSessionTrace();
         api.logger.info(
-          `[DunCrew][DEBUG] Gene Pool harvest check: traceLength=${traceSnapshot.length}, activeNexus=${activeNexusId}`
+          `[DunCrew][DEBUG] Gene Pool harvest check: traceLength=${traceSnapshot.length}, activeDun=${activeDunId}`
         );
         if (traceSnapshot.length > 0) {
           api.logger.info(
             `[DunCrew][DEBUG] Session trace statuses: [${traceSnapshot.map(t => `${t.name}:${t.status}`).join(", ")}]`
           );
         }
-        const harvested = genePool.harvestGenes(activeNexusId || undefined);
+        const harvested = genePool.harvestGenes(activeDunId || undefined);
         if (harvested.length > 0) {
           api.logger.info(
-            `[DunCrew] Gene Pool: harvested ${harvested.length} new gene(s) for ${activeNexusId || "global"}`
+            `[DunCrew] Gene Pool: harvested ${harvested.length} new gene(s) for ${activeDunId || "global"}`
           );
         } else {
           api.logger.info(
@@ -616,7 +616,7 @@ const plugin = {
       }
 
       // ── T5: XP calculation and broadcast ──
-      if (activeNexusId) {
+      if (activeDunId) {
         let xpDelta = 0;
         if (isSuccess) {
           xpDelta = 10; // Base success XP
@@ -626,20 +626,20 @@ const plugin = {
           xpDelta = -2; // Failure penalty
         }
 
-        const currentXP = nexusManager.loadNexusXP(activeNexusId);
+        const currentXP = dunManager.loadDunXP(activeDunId);
         const newXP = Math.max(0, currentXP.xp + xpDelta);
-        nexusManager.saveNexusXP(activeNexusId, newXP);
-        const newLevel = NexusManager.xpToLevel(newXP);
+        dunManager.saveDunXP(activeDunId, newXP);
+        const newLevel = DunManager.xpToLevel(newXP);
 
         api.logger.info(
-          `[DunCrew] XP update: ${activeNexusId} ${xpDelta > 0 ? "+" : ""}${xpDelta} → XP ${newXP} (Lv${newLevel})`
+          `[DunCrew] XP update: ${activeDunId} ${xpDelta > 0 ? "+" : ""}${xpDelta} → XP ${newXP} (Lv${newLevel})`
         );
 
         // Broadcast to DunCrew frontend
         if (broadcastFn) {
           try {
-            broadcastFn("ddos.nexus.xpUpdate", {
-              nexusId: activeNexusId,
+            broadcastFn("ddos.dun.xpUpdate", {
+              dunId: activeDunId,
               xpDelta,
               newXP,
               newLevel,
@@ -655,14 +655,14 @@ const plugin = {
       }
 
       // ── SOP Evolution: compute and persist fitness ──
-      if (activeNexusId && cfg.enableSOPEvolution) {
+      if (activeDunId && cfg.enableSOPEvolution) {
         try {
           const sessionTrace = genePool.getSessionTrace();
-          const sopTracker = nexusManager.getSOPTracker(activeNexusId);
+          const sopTracker = dunManager.getSOPTracker(activeDunId);
           const { fitness, traceSummary } =
-            nexusManager.computeSessionFitness(sessionTrace, sopTracker ?? null, isSuccess);
+            dunManager.computeSessionFitness(sessionTrace, sopTracker ?? null, isSuccess);
           const updatedFitness =
-            nexusManager.updateSOPFitness(activeNexusId, traceSummary);
+            dunManager.updateSOPFitness(activeDunId, traceSummary);
           api.logger.info(
             `[DunCrew] SOP fitness: ${(fitness * 100).toFixed(0)}%, ema: ${(updatedFitness.ema * 100).toFixed(0)}% (${updatedFitness.totalExecutions} executions)`
           );
@@ -672,18 +672,18 @@ const plugin = {
       }
 
       // ── Golden Path: distill after sufficient successes ──
-      if (activeNexusId && isSuccess && cfg.enableSOPEvolution) {
+      if (activeDunId && isSuccess && cfg.enableSOPEvolution) {
         try {
-          const existing = nexusManager.loadGoldenPath(activeNexusId);
+          const existing = dunManager.loadGoldenPath(activeDunId);
           const DISTILL_COOLDOWN_MS = 600_000; // 10 minutes minimum between distillations
           const shouldDistill = !existing
             || (Date.now() - existing.lastDistilledAt > DISTILL_COOLDOWN_MS);
 
           if (shouldDistill) {
-            const goldenPath = nexusManager.distillGoldenPath(activeNexusId);
+            const goldenPath = dunManager.distillGoldenPath(activeDunId);
             if (goldenPath) {
               api.logger.info(
-                `[DunCrew] Golden Path distilled for ${activeNexusId}: ${goldenPath.recommendedToolChain.join(" -> ")} (confidence: ${Math.round(goldenPath.confidence * 100)}%)`
+                `[DunCrew] Golden Path distilled for ${activeDunId}: ${goldenPath.recommendedToolChain.join(" -> ")} (confidence: ${Math.round(goldenPath.confidence * 100)}%)`
               );
             }
           }
@@ -694,78 +694,78 @@ const plugin = {
     });
 
     // ========================================
-    // Register Gateway method: ddos.nexus.list
+    // Register Gateway method: ddos.dun.list
     // ========================================
     api.registerGatewayMethod(
-      "ddos.nexus.list",
+      "ddos.dun.list",
       async ({ context, respond }: any) => {
         captureBroadcast(context);
-        const nexusIds = nexusManager.listNexuses();
-        const nexuses = nexusIds
+        const dunIds = dunManager.listDuns();
+        const duns = dunIds
           .map((id: string) => {
-            const meta = nexusManager.loadNexusMeta(id);
+            const meta = dunManager.loadDunMeta(id);
             if (!meta) return null;
-            const xpData = nexusManager.loadNexusXP(id);
+            const xpData = dunManager.loadDunXP(id);
             return { ...meta, xp: xpData.xp, level: xpData.level };
           })
           .filter(Boolean);
-        respond(true, { nexuses });
+        respond(true, { duns });
       }
     );
 
     // ========================================
-    // Register Gateway method: ddos.nexus.get
+    // Register Gateway method: ddos.dun.get
     // ========================================
     api.registerGatewayMethod(
-      "ddos.nexus.get",
+      "ddos.dun.get",
       async ({ params, context, respond }: any) => {
         captureBroadcast(context);
-        const nexusId = params?.nexusId as string;
-        if (!nexusId) {
-          respond(false, undefined, { code: "INVALID_PARAMS", message: "nexusId required" });
+        const dunId = params?.dunId as string;
+        if (!dunId) {
+          respond(false, undefined, { code: "INVALID_PARAMS", message: "dunId required" });
           return;
         }
-        const meta = nexusManager.loadNexusMeta(nexusId);
+        const meta = dunManager.loadDunMeta(dunId);
         if (!meta) {
-          respond(false, undefined, { code: "NOT_FOUND", message: "Nexus not found" });
+          respond(false, undefined, { code: "NOT_FOUND", message: "Dun not found" });
           return;
         }
-        const tracker = nexusManager.getSOPTracker(nexusId);
-        const xpData = nexusManager.loadNexusXP(nexusId);
+        const tracker = dunManager.getSOPTracker(dunId);
+        const xpData = dunManager.loadDunXP(dunId);
         respond(true, {
-          nexus: { ...meta, xp: xpData.xp, level: xpData.level },
+          dun: { ...meta, xp: xpData.xp, level: xpData.level },
           sopTracker: tracker || null,
         });
       }
     );
 
     // ========================================
-    // Register Gateway method: ddos.nexus.activate
+    // Register Gateway method: ddos.dun.activate
     // ========================================
     api.registerGatewayMethod(
-      "ddos.nexus.activate",
+      "ddos.dun.activate",
       async ({ params, context, respond }: any) => {
         captureBroadcast(context);
-        const nexusId = params?.nexusId as string;
-        if (!nexusId) {
-          respond(false, undefined, { code: "INVALID_PARAMS", message: "nexusId required" });
+        const dunId = params?.dunId as string;
+        if (!dunId) {
+          respond(false, undefined, { code: "INVALID_PARAMS", message: "dunId required" });
           return;
         }
-        const meta = nexusManager.loadNexusMeta(nexusId);
+        const meta = dunManager.loadDunMeta(dunId);
         if (!meta) {
-          respond(false, undefined, { code: "NOT_FOUND", message: "Nexus not found" });
+          respond(false, undefined, { code: "NOT_FOUND", message: "Dun not found" });
           return;
         }
 
-        activeNexusId = nexusId;
+        activeDunId = dunId;
         if (meta.sopContent) {
-          nexusManager.createSOPTracker(nexusId, meta.name, meta.sopContent);
+          dunManager.createSOPTracker(dunId, meta.name, meta.sopContent);
         }
-        api.logger.info(`[DunCrew] Nexus activated: ${meta.name}`);
-        const xpData = nexusManager.loadNexusXP(nexusId);
+        api.logger.info(`[DunCrew] Dun activated: ${meta.name}`);
+        const xpData = dunManager.loadDunXP(dunId);
         respond(true, {
           ok: true,
-          nexus: { ...meta, xp: xpData.xp, level: xpData.level },
+          dun: { ...meta, xp: xpData.xp, level: xpData.level },
         });
       }
     );
@@ -785,7 +785,7 @@ const plugin = {
     );
 
     api.logger.info(
-      `[DunCrew] Extension registered. ${nexusManager.listNexuses().length} nexuses, ${genePool.getGeneCount()} genes found.`
+      `[DunCrew] Extension registered. ${dunManager.listDuns().length} duns, ${genePool.getGeneCount()} genes found.`
     );
   },
 };

@@ -2,7 +2,7 @@
  * MBTI 灵魂形象分析器
  * 规则打分(默认) + LLM 覆盖(可选)
  */
-import type { MBTIType, MBTIResult, SoulTruth, SoulBoundary, MBTIAxisScores, SoulAmendment, NexusScoring } from '@/types'
+import type { MBTIType, MBTIResult, SoulTruth, SoulBoundary, MBTIAxisScores, SoulAmendment, DunScoring } from '@/types'
 import { SOUL_EVOLUTION_CONFIG } from '@/types'
 import { isLLMConfigured, chat } from './llmService'
 
@@ -283,7 +283,7 @@ const SOCIAL_TOOLS = ['sendMessage', 'slack', 'email', 'telegram', 'discord']
 
 /** 从 Nexus 评分数据和已批准修正案计算行为修正因子 */
 export function computeBehavioralModifiers(
-  nexusScoringMap: Record<string, NexusScoring>,
+  nexusScoringMap: Record<string, DunScoring>,
   amendments: SoulAmendment[],
 ): MBTIAxisScores {
   const MAX = SOUL_EVOLUTION_CONFIG.MBTI_MAX_MODIFIER
@@ -300,11 +300,11 @@ export function computeBehavioralModifiers(
   let socialCount = 0
   let totalToolCalls = 0
   let totalSuccessRate = 0
-  let nexusCount = 0
+  let dunCount = 0
 
   for (const scoring of Object.values(nexusScoringMap)) {
     if (!scoring.dimensions) continue
-    nexusCount++
+    dunCount++
     totalSuccessRate += scoring.successRate
 
     for (const [toolName, dim] of Object.entries(scoring.dimensions)) {
@@ -335,8 +335,8 @@ export function computeBehavioralModifiers(
   }
 
   // J/P: 高成功率 → 偏 J (结构化); 低成功率可能表示更多探索 → 偏 P
-  if (nexusCount > 0) {
-    const avgSuccess = totalSuccessRate / nexusCount
+  if (dunCount > 0) {
+    const avgSuccess = totalSuccessRate / dunCount
     jpMod += (avgSuccess - 0.5) * 0.3
   }
 

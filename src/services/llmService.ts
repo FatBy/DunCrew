@@ -4,7 +4,7 @@
  * 支持流式 (SSE) 和非流式请求
  */
 
-import type { LLMConfig, ToolInfo } from '@/types'
+import type { LLMConfig, ToolInfo, ChannelBindings } from '@/types'
 import { getServerUrl } from '@/utils/env'
 
 // ============================================
@@ -49,6 +49,8 @@ export interface LLMStreamResult {
   finishReason: string | null
   // DeepSeek 思维模式的推理内容
   reasoningContent?: string
+  /** Layer 1 Token 采集：LLM 返回的 usage 数据 */
+  usage?: { prompt_tokens: number; completion_tokens: number }
 }
 
 // ============================================
@@ -94,20 +96,86 @@ function getLocalServerUrl(): string {
   return getServerUrl()
 }
 
+/**
+ * Store 配置读取器
+ *
+ * 由 App 初始化时注入，避免 llmService → store 的循环依赖。
+ * 注入后，getLLMConfig() 会优先从 linkStationSlice 读取配置。
+ */
+let storeConfigReader: (() => LLMConfig | null) | null = null
+let storeEmbedReader: (() => { apiKey: string; baseUrl: string; model: string } | null) | null = null
+let storeChannelReader: ((channel: string) => LLMConfig | null) | null = null
+
+/** 注入 Store 配置读取器（在 App 初始化时调用一次） */
+export function injectStoreConfigReader(
+  chatReader: () => LLMConfig | null,
+  embedReader: () => { apiKey: string; baseUrl: string; model: string } | null,
+  channelReader?: (channel: string) => LLMConfig | null,
+) {
+  storeConfigReader = chatReader
+  storeEmbedReader = embedReader
+  if (channelReader) {
+    storeChannelReader = channelReader
+  }
+}
+
+/**
+ * 获取指定通道的 LLM 配置
+ *
+ * 用于非 chat/embed 通道（如 imageGen、search 等）。
+ * 公开 API 使用 keyof ChannelBindings 约束，拼错通道名编译报错。
+ * 返回 null 表示该通道未配置。
+ */
+export function getChannelConfig(channel: keyof ChannelBindings): LLMConfig | null {
+  if (!storeChannelReader) return null
+  return storeChannelReader(channel)
+}
+
+/** 检查指定通道是否已配置 */
+export function isChannelConfigured(channel: keyof ChannelBindings): boolean {
+  return getChannelConfig(channel) !== null
+}
+
+/**
+ * 获取 LLM 配置
+ *
+ * 优先级链：
+ * 1. linkStationSlice 的 getActiveChatConfig()（如果 Store 已注入且有绑定）
+ * 2. localStorage 回退（兼容旧配置 & Store 未就绪时）
+ */
 export function getLLMConfig(): LLMConfig {
+  // 优先从 linkStationSlice 读取
+  if (storeConfigReader) {
+    const storeConfig = storeConfigReader()
+    if (storeConfig && storeConfig.apiKey && storeConfig.baseUrl && storeConfig.model) {
+      const embedConfig = storeEmbedReader?.()
+      return {
+        ...storeConfig,
+        embedApiKey: embedConfig?.apiKey || undefined,
+        embedBaseUrl: embedConfig?.baseUrl || undefined,
+        embedModel: embedConfig?.model || undefined,
+      }
+    }
+  }
+
+  // 回退：从 localStorage 读取（兼容旧配置）
   const formatRaw = localStorage.getItem(STORAGE_KEYS.API_FORMAT)
   return {
     apiKey: localStorage.getItem(STORAGE_KEYS.API_KEY) || '',
     baseUrl: localStorage.getItem(STORAGE_KEYS.BASE_URL) || '',
     model: localStorage.getItem(STORAGE_KEYS.MODEL) || '',
     apiFormat: (formatRaw as LLMConfig['apiFormat']) || 'auto',
-    // Embedding 配置（可选）
     embedApiKey: localStorage.getItem(STORAGE_KEYS.EMBED_API_KEY) || undefined,
     embedBaseUrl: localStorage.getItem(STORAGE_KEYS.EMBED_BASE_URL) || undefined,
     embedModel: localStorage.getItem(STORAGE_KEYS.EMBED_MODEL) || undefined,
   }
 }
 
+/**
+ * 保存 LLM 配置到 localStorage 和后端
+ * @deprecated 配置应通过 LinkStation Provider 管理。
+ * 此函数保留 localStorage 写入仅为兼容旧配置迁移路径。
+ */
 export function saveLLMConfig(config: Partial<LLMConfig>) {
   if (config.apiKey !== undefined) localStorage.setItem(STORAGE_KEYS.API_KEY, config.apiKey)
   if (config.baseUrl !== undefined) localStorage.setItem(STORAGE_KEYS.BASE_URL, config.baseUrl)
@@ -139,6 +207,8 @@ export function isLLMConfigured(): boolean {
   const config = getLLMConfig()
   return !!(config.apiKey && config.baseUrl && config.model)
 }
+
+
 
 /**
  * 将LLM配置持久化到后端服务器
@@ -558,6 +628,196 @@ export async function simpleChat(messages: SimpleChatMessage[]): Promise<string 
   }
 }
 
+// ============================================
+// 后台 LLM 调用（走串行队列 + 副对话模型）
+// ============================================
+
+import { backgroundQueue, injectChatFn } from './backgroundQueue'
+
+// 将 chat 函数注入队列（避免循环依赖）
+injectChatFn(chat)
+
+/**
+ * 后台 LLM 调用入口
+ *
+ * 所有后台服务（flush、ingest、soul evolution 等）应使用此函数而非 chat()。
+ * - 自动走副对话模型（chatSecondary），未配置时回退主对话
+ * - 通过串行队列限流（maxConcurrent=1, 间隔 2s）
+ * - 内置指数退避重试 + 429 全局暂停
+ * - 支持 AbortSignal 取消
+ *
+ * @returns LLM 响应文本，失败时返回 null
+ */
+export async function chatBackground(
+  messages: SimpleChatMessage[],
+  options?: { config?: Partial<LLMConfig>; signal?: AbortSignal; priority?: number },
+): Promise<string | null> {
+  const secondaryConfig = getChannelConfig('chatSecondary')
+  const baseConfig = secondaryConfig ?? getLLMConfig()
+  const mergedConfig = { ...baseConfig, ...options?.config }
+
+  // 诊断日志：确认副对话配置是否生效
+  if (!chatBackground._logged) {
+    chatBackground._logged = true
+    const source = secondaryConfig ? 'chatSecondary' : 'fallback(main)'
+    const maskedKey = mergedConfig.apiKey
+      ? `${mergedConfig.apiKey.slice(0, 6)}...${mergedConfig.apiKey.slice(-4)}`
+      : '(empty)'
+    console.log(`[chatBackground] Config source: ${source}, model: ${mergedConfig.model}, baseUrl: ${mergedConfig.baseUrl}, apiKey: ${maskedKey}`)
+  }
+
+  return backgroundQueue.enqueue(messages, {
+    config: mergedConfig,
+    signal: options?.signal,
+    priority: options?.priority ?? 10,
+  })
+}
+/** 内部标记：是否已输出过一次诊断日志 */
+chatBackground._logged = false
+
+/**
+ * 简化版后台调用，失败返回 null。
+ * 供 sopEvolutionService 等后台模块替代 simpleChat() 使用。
+ */
+export async function simpleChatBackground(
+  messages: SimpleChatMessage[],
+  signal?: AbortSignal,
+): Promise<string | null> {
+  return chatBackground(messages, { signal, priority: 10 })
+}
+
+// ============================================
+// 多模态视觉对话 (Vision Chat)
+// ============================================
+
+/** 视觉内容块类型 */
+type VisionContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'auto' } }
+
+/** 视觉对话消息（content 支持数组格式） */
+export type VisionChatMessage = {
+  role: 'system' | 'user' | 'assistant'
+  content: string | VisionContentPart[]
+}
+
+/**
+ * 多模态视觉对话
+ *
+ * 支持在消息中携带图片（base64 Data URI），调用支持 vision 的 LLM 模型。
+ * 使用主 chat 通道配置，不需要额外的 vision 通道。
+ */
+export async function visionChat(
+  messages: VisionChatMessage[],
+  config?: Partial<LLMConfig>,
+): Promise<string> {
+  const cfg = { ...getLLMConfig(), ...config }
+  if (!cfg.apiKey || !cfg.baseUrl || !cfg.model) {
+    throw new Error('LLM 未配置，请在设置中配置 API')
+  }
+
+  const format = resolveApiFormat(cfg as LLMConfig)
+  const localServer = getLocalServerUrl()
+  const proxyUrl = `${localServer}/api/llm/proxy`
+
+  let targetUrl: string
+  let headers: Record<string, string>
+  let requestBody: Record<string, unknown>
+
+  if (format === 'anthropic') {
+    // --- Anthropic 格式 ---
+    targetUrl = buildAnthropicUrl(cfg.baseUrl)
+    headers = buildAnthropicHeaders(cfg.apiKey)
+
+    // 提取 system 消息
+    let systemText = ''
+    const anthropicMessages: Array<{ role: string; content: unknown }> = []
+    for (const m of messages) {
+      if (m.role === 'system') {
+        systemText = typeof m.content === 'string' ? m.content : ''
+        continue
+      }
+      if (Array.isArray(m.content)) {
+        // 转换 VisionContentPart[] 为 Anthropic 格式
+        const contentBlocks: Array<Record<string, unknown>> = []
+        for (const part of m.content) {
+          if (part.type === 'text') {
+            contentBlocks.push({ type: 'text', text: part.text })
+          } else if (part.type === 'image_url') {
+            // 从 data URI 中提取 base64 和 media_type
+            const dataUri = part.image_url.url
+            const match = dataUri.match(/^data:([^;]+);base64,(.+)$/)
+            if (match) {
+              contentBlocks.push({
+                type: 'image',
+                source: { type: 'base64', media_type: match[1], data: match[2] },
+              })
+            }
+          }
+        }
+        anthropicMessages.push({ role: m.role, content: contentBlocks })
+      } else {
+        anthropicMessages.push({ role: m.role, content: m.content })
+      }
+    }
+
+    requestBody = {
+      model: cfg.model,
+      max_tokens: 4096,
+      stream: false,
+      ...(systemText ? { system: systemText } : {}),
+      messages: anthropicMessages,
+    }
+  } else {
+    // --- OpenAI 格式 ---
+    targetUrl = buildUrl(cfg.baseUrl)
+    headers = buildHeaders(cfg.apiKey)
+
+    // OpenAI 原生支持 content 数组格式
+    const openaiMessages = messages.map(m => ({
+      role: m.role,
+      content: m.content,
+    }))
+
+    requestBody = {
+      model: cfg.model,
+      messages: openaiMessages,
+      max_tokens: 4096,
+      stream: false,
+    }
+  }
+
+  const res = await fetch(proxyUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url: targetUrl,
+      headers,
+      apiKey: cfg.apiKey,
+      body: requestBody,
+      stream: false,
+    }),
+  })
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText)
+    throw new Error(`Vision LLM API 错误 (${res.status}): ${errText}`)
+  }
+
+  const data = await res.json()
+
+  if (format === 'anthropic') {
+    // Anthropic 响应: content 数组中提取 text 块
+    const contentBlocks = data.content || []
+    const texts = contentBlocks
+      .filter((b: { type: string }) => b.type === 'text')
+      .map((b: { text: string }) => b.text)
+    return texts.join('\n') || ''
+  }
+
+  return data.choices?.[0]?.message?.content || ''
+}
+
 /**
  * 流式调用 (SSE) - 支持 Function Calling + Anthropic 适配
  * 
@@ -570,6 +830,7 @@ export async function streamChat(
   signal?: AbortSignal,
   config?: Partial<LLMConfig>,
   tools?: Array<{ type: 'function'; function: FunctionDefinition }>,
+  onReasoningChunk?: (chunk: string) => void,
 ): Promise<LLMStreamResult> {
   const cfg = { ...getLLMConfig(), ...config }
   if (!cfg.apiKey || !cfg.baseUrl || !cfg.model) {
@@ -618,6 +879,8 @@ export async function streamChat(
         ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}),
       })),
       stream: true,
+      // Layer 1 Token 采集: 请求流式模式返回 usage 数据
+      stream_options: { include_usage: true },
     }
     if (tools && tools.length > 0) {
       body.tools = tools
@@ -656,6 +919,8 @@ export async function streamChat(
   let finishReason: string | null = null
   // tool_calls 累积器: index → { id, name, arguments }
   const toolCallAccumulator: Map<number, { id: string; name: string; arguments: string }> = new Map()
+  // Layer 1 Token 采集: usage 累积
+  let usageData: { prompt_tokens: number; completion_tokens: number } | undefined
 
   /** 构建最终结果的辅助函数 */
   const buildResult = (): LLMStreamResult => {
@@ -671,6 +936,7 @@ export async function streamChat(
       toolCalls,
       finishReason,
       reasoningContent: fullReasoningContent || undefined,
+      usage: usageData,
     }
   }
 
@@ -729,12 +995,23 @@ export async function streamChat(
                   acc.arguments += delta.partial_json
                 }
               }
+            } else if (eventType === 'message_start') {
+              // Layer 1 Token 采集 (Anthropic): input_tokens 在 message_start 中
+              const inputTokens = parsed.message?.usage?.input_tokens
+              if (typeof inputTokens === 'number') {
+                usageData = { prompt_tokens: inputTokens, completion_tokens: 0 }
+              }
             } else if (eventType === 'message_delta') {
               // 消息结束信息
               const stopReason = parsed.delta?.stop_reason
               if (stopReason === 'end_turn') finishReason = 'stop'
               else if (stopReason === 'tool_use') finishReason = 'tool_calls'
               else if (stopReason) finishReason = stopReason
+              // Layer 1 Token 采集 (Anthropic): output_tokens 在 message_delta 中
+              const outputTokens = parsed.usage?.output_tokens
+              if (typeof outputTokens === 'number' && usageData) {
+                usageData.completion_tokens = outputTokens
+              }
             } else if (eventType === 'message_stop') {
               // 流结束
               return buildResult()
@@ -767,6 +1044,16 @@ export async function streamChat(
 
           try {
             const parsed = JSON.parse(data)
+
+            // Layer 1 Token 采集 (OpenAI): usage 在最后一个 chunk 中
+            // 必须在 choice 检查之前提取，因为最后一个 chunk 的 choices 为空数组
+            if (parsed.usage) {
+              usageData = {
+                prompt_tokens: parsed.usage.prompt_tokens ?? 0,
+                completion_tokens: parsed.usage.completion_tokens ?? 0,
+              }
+            }
+
             const choice = parsed.choices?.[0]
 
             if (choice?.finish_reason) {
@@ -783,6 +1070,7 @@ export async function streamChat(
 
             if (delta.reasoning_content) {
               fullReasoningContent += delta.reasoning_content
+              onReasoningChunk?.(delta.reasoning_content)
             }
 
             if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
@@ -812,20 +1100,224 @@ export async function streamChat(
 }
 
 /**
- * 测试连接
+ * 测试连接 — 支持所有模型类型（chat / image / video / embed）
+ *
+ * 策略（按优先级）：
+ * 1. GET /v1/models — 标准 OpenAI 兼容接口
+ * 2. chat completions — 适用于对话模型
+ * 3. HEAD 请求 Base URL — 最低限度验证服务可达性和 API Key 有效性
  */
 export async function testConnection(config?: Partial<LLMConfig>): Promise<boolean> {
   const cfg = { ...getLLMConfig(), ...config }
-  const testMessages: SimpleChatMessage[] = [
-    { role: 'user', content: '请回复 OK' },
-  ]
-  
+  const cleanBase = cfg.baseUrl.replace(/\/+$/, '').replace(/\/chat\/completions$/, '')
+
+  // 策略 1: GET /v1/models — 标准 OpenAI 兼容
   try {
+    const modelsUrl = cleanBase.replace(/\/v1$/, '') + '/v1/models'
+    const response = await fetch(modelsUrl, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${cfg.apiKey}` },
+      signal: AbortSignal.timeout(10000),
+    })
+    if (response.ok) return true
+    if (response.status === 401 || response.status === 403) return false
+  } catch {
+    // 不支持 /v1/models，继续
+  }
+
+  // 策略 2: chat completions — 适用于对话模型
+  try {
+    const testMessages: SimpleChatMessage[] = [
+      { role: 'user', content: '请回复 OK' },
+    ]
     const reply = await chat(testMessages, cfg)
-    return reply.length > 0
+    if (reply.length > 0) return true
+  } catch {
+    // chat 也失败，继续
+  }
+
+  // 策略 3: no-cors ping — 绕过 CORS 限制验证服务可达性
+  // 某些 API（如 MiniMax 图片）不支持 /models 也不支持 chat，且没有 CORS 头
+  // no-cors 模式下浏览器不会因 CORS 报错，opaque 响应说明服务器可达
+  try {
+    const response = await fetch(cleanBase, {
+      method: 'HEAD',
+      mode: 'no-cors',
+      signal: AbortSignal.timeout(10000),
+    })
+    // no-cors 模式下 response.type === 'opaque'，status 为 0
+    // 只要 fetch 没抛异常就说明服务器可达
+    if (response.type === 'opaque' || response.ok) return true
+    return response.status !== 401 && response.status !== 403
   } catch {
     return false
   }
+}
+
+// ============================================
+// 文生图（imageGen 通道）
+// ============================================
+
+/** generateImage 返回结果 */
+export interface ImageGenerationResult {
+  /** 生成的图片 URL 列表 */
+  urls: string[]
+  /** 原始 API 响应（供调试） */
+  rawResponse?: unknown
+}
+
+/** 像素尺寸 → 宽高比 (sizeMode='ratio' 时使用) */
+const PIXEL_TO_RATIO: Record<string, string> = {
+  '1024x1024': '1:1', '1:1': '1:1',
+  '1024x1792': '9:16', '9:16': '9:16',
+  '1792x1024': '16:9', '16:9': '16:9',
+  '1280x720': '16:9', '720x1280': '9:16',
+}
+
+/**
+ * 构建图片生成端点 URL
+ *
+ * 读取 profile.endpoint；未声明时使用 OpenAI 默认 'v1/images/generations'。
+ */
+function buildImageGenUrl(baseUrl: string, endpoint?: string): string {
+  let url = baseUrl.replace(/\/+$/, '')
+  // 清理 baseUrl 中可能携带的具体接口路径
+  url = url.replace(/\/chat\/completions$/, '').replace(/\/image_generation$/, '').replace(/\/images\/generations$/, '').replace(/\/v1$/, '')
+  const path = (endpoint ?? 'v1/images/generations').replace(/^\/+/, '')
+  return url + '/' + path
+}
+
+/**
+ * 使用 imageGen 通道绑定的模型生成图片
+ *
+ * 完全由 ImageGenProfile 驱动：
+ * - endpoint   → 端点路径
+ * - sizeMode   → 尺寸参数格式 (pixel / ratio)
+ * - responseFormat → 发给 API 的 response_format 值
+ * - responseLayout → 响应解析策略 (openai / wrapped)
+ *
+ * 新增 Provider 只需在预设中声明 imageGenProfile，无需修改此函数。
+ */
+export async function generateImage(
+  prompt: string,
+  options?: { size?: string; quality?: string; n?: number },
+): Promise<ImageGenerationResult> {
+  const imageConfig = getChannelConfig('imageGen')
+  if (!imageConfig || !imageConfig.apiKey || !imageConfig.baseUrl || !imageConfig.model) {
+    throw new Error('文生图通道未配置，请在联络屋绑定 imageGen 通道')
+  }
+
+  const profile = imageConfig.imageGenProfile ?? {}
+  const localServer = getLocalServerUrl()
+  const proxyUrl = `${localServer}/api/llm/proxy`
+  const targetUrl = buildImageGenUrl(imageConfig.baseUrl, profile.endpoint)
+  const headers = buildHeaders(imageConfig.apiKey)
+
+  // ── 构建请求体 (数据驱动，无 provider 分支) ──
+  const requestBody: Record<string, unknown> = {
+    model: imageConfig.model,
+    prompt,
+    n: options?.n || 1,
+  }
+
+  if (profile.sizeMode === 'ratio') {
+    requestBody.aspect_ratio = PIXEL_TO_RATIO[options?.size || ''] || '1:1'
+  } else {
+    // 默认 pixel 模式 (OpenAI 兼容)
+    requestBody.size = options?.size || '1024x1024'
+    if (options?.quality) requestBody.quality = options.quality
+  }
+
+  if (profile.responseFormat) {
+    requestBody.response_format = profile.responseFormat
+  }
+
+  const res = await fetch(proxyUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url: targetUrl,
+      headers,
+      apiKey: imageConfig.apiKey,
+      body: requestBody,
+      stream: false,
+    }),
+  })
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText)
+    throw new Error(`图片生成 API 错误 (${res.status}): ${errText}`)
+  }
+
+  const data = await res.json()
+
+  // ── 解析响应 (由 responseLayout 决定取值路径) ──
+  const urls: string[] = []
+  const layout = profile.responseLayout ?? 'openai'
+
+  if (layout === 'wrapped' && data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+    // Wrapped 布局: data: { image_urls: [...], image_base64: [...] }
+    if (Array.isArray(data.data.image_urls)) {
+      urls.push(...data.data.image_urls)
+    }
+    if (Array.isArray(data.data.image_base64)) {
+      for (const b64 of data.data.image_base64) {
+        urls.push(`data:image/png;base64,${b64}`)
+      }
+    }
+  } else if (Array.isArray(data.data)) {
+    // OpenAI 布局 (默认): data: [{ url, b64_json }]
+    for (const item of data.data) {
+      if (item.url) {
+        urls.push(item.url)
+      } else if (item.b64_json) {
+        urls.push(`data:image/png;base64,${item.b64_json}`)
+      }
+    }
+  }
+
+  if (urls.length === 0) {
+    throw new Error(`图片生成 API 返回了空结果。原始响应: ${JSON.stringify(data).slice(0, 500)}`)
+  }
+
+  return { urls, rawResponse: data }
+}
+
+// ============================================
+// 搜索增强对话（search 通道）
+// ============================================
+
+/**
+ * 搜索增强对话
+ *
+ * 使用 search 通道绑定的模型进行对话（如 Perplexity、带联网的 DeepSeek 等）。
+ * 如果 search 通道未配置，回退到主 chat 通道。
+ */
+export async function searchChat(
+  messages: SimpleChatMessage[],
+  configOverride?: Partial<LLMConfig>,
+): Promise<string> {
+  const searchConfig = getChannelConfig('search')
+  const baseConfig = searchConfig || getLLMConfig()
+  const mergedConfig = { ...baseConfig, ...configOverride }
+  return chat(messages, mergedConfig)
+}
+
+/**
+ * 搜索增强流式对话
+ *
+ * 参数顺序与 streamChat 保持一致：messages, onChunk, signal, config
+ */
+export async function streamSearchChat(
+  messages: SimpleChatMessage[],
+  onChunk: (chunk: string) => void,
+  signal?: AbortSignal,
+  configOverride?: Partial<LLMConfig>,
+): Promise<LLMStreamResult> {
+  const searchConfig = getChannelConfig('search')
+  const baseConfig = searchConfig || getLLMConfig()
+  const mergedConfig = { ...baseConfig, ...configOverride }
+  return streamChat(messages, onChunk, signal, mergedConfig)
 }
 
 // ============================================
@@ -1090,7 +1582,8 @@ function toolInfoToFunctionDef(tool: ToolInfo): FunctionDefinition {
     for (const [key, schema] of Object.entries(tool.inputs)) {
       if (typeof schema === 'object' && schema !== null) {
         // 已经是 JSON Schema 格式 (如 { type: 'string', description: '...', required: true })
-        const { required: isRequired, ...rest } = schema
+        const schemaObj = schema as Record<string, unknown>
+        const { required: isRequired, ...rest } = schemaObj
         properties[key] = rest
         // 确保有 type 字段
         if (!properties[key].type) {

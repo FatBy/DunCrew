@@ -18,18 +18,21 @@ export function WorldView() {
 
 function CanvasWorldView() {
   const currentView = useStore((s) => s.currentView)
-  const nexuses = useStore((s) => s.nexuses)
+  // M6: duns 通过 ref + subscribe 同步，避免 dun 内部属性变化触发 React re-render
+  // 组件只在 duns.size 变化时 re-render（用于加载占位判断）
+  const dunCount = useStore((s) => s.duns.size)
+  const dunsRef = useRef(useStore.getState().duns)
   const camera = useStore((s) => s.camera)
-  const selectedNexusId = useStore((s) => s.selectedNexusId)
+  const selectedDunId = useStore((s) => s.selectedDunId)
   const renderSettings = useStore((s) => s.renderSettings)
   const panCamera = useStore((s) => s.panCamera)
   const setZoom = useStore((s) => s.setZoom)
-  const selectNexus = useStore((s) => s.selectNexus)
-  const openNexusPanel = useStore((s) => s.openNexusPanel)
+  const selectDun = useStore((s) => s.selectDun)
+  const openDunPanel = useStore((s) => s.openDunPanel)
   const tickConstructionAnimations = useStore((s) => s.tickConstructionAnimations)
 
   // 执行状态追踪
-  const executingNexusId = useStore((s) => s.executingNexusId)
+  const executingDunId = useStore((s) => s.executingDunId)
   const executionStartTime = useStore((s) => s.executionStartTime)
 
   // 主题调色板
@@ -45,6 +48,7 @@ function CanvasWorldView() {
   // 通过 subscribe 同步 ref，不触发重渲染
   useEffect(() => {
     const unsub = useStore.subscribe((state) => {
+      dunsRef.current = state.duns
       soulIdentityRef.current = state.soulIdentity
       soulCoreTruthsRef.current = state.soulCoreTruths
       soulDimensionsRef.current = state.soulDimensions
@@ -118,12 +122,12 @@ function CanvasWorldView() {
   // 同步 store 状态到渲染引擎
   useEffect(() => {
     engineRef.current?.updateState({
-      nexuses, camera, selectedNexusId, renderSettings,
+      duns: dunsRef.current, camera, selectedDunId, renderSettings,
       energyCore: energyCoreState,
-      executingNexusId,
+      executingDunId,
       executionStartTime,
     })
-  }, [nexuses, camera, selectedNexusId, renderSettings, energyCoreState, executingNexusId, executionStartTime])
+  }, [dunCount, camera, selectedDunId, renderSettings, energyCoreState, executingDunId, executionStartTime])
 
   // 同步主题调色板到渲染引擎
   useEffect(() => {
@@ -200,13 +204,13 @@ function CanvasWorldView() {
     const screenY = e.clientY - rect.top
     const world = engine.screenToWorld(screenX, screenY, camera)
 
-    // 找距离最近的 nexus
+    // 找距离最近的 dun
     let nearest: string | null = null
     let minDist = 1.5 // grid 距离阈值
 
-    for (const [id, nexus] of nexuses) {
-      const dx = nexus.position.gridX - world.gridX
-      const dy = nexus.position.gridY - world.gridY
+    for (const [id, dun] of dunsRef.current) {
+      const dx = dun.position.gridX - world.gridX
+      const dy = dun.position.gridY - world.gridY
       const dist = Math.sqrt(dx * dx + dy * dy)
       if (dist < minDist) {
         minDist = dist
@@ -214,15 +218,15 @@ function CanvasWorldView() {
       }
     }
 
-    selectNexus(nearest)
+    selectDun(nearest)
     
     if (nearest) {
-      openNexusPanel(nearest)
+      openDunPanel(nearest)
     } else {
       // 没有点中，触发能量波纹
       engineRef.current?.triggerRipple(screenX, screenY)
     }
-  }, [camera, nexuses, selectNexus, openNexusPanel])
+  }, [camera, selectDun, openDunPanel])
 
   return (
     <div className="absolute inset-0 overflow-hidden bg-skin-bg-primary">
@@ -270,7 +274,7 @@ function CanvasWorldView() {
       />
 
       {/* Layer 3: 加载占位 */}
-      {nexuses.size === 0 && (
+      {dunCount === 0 && (
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none">
           <div className="relative w-8 h-8 mb-3">
             <div className="absolute inset-0 rounded-full border-2 border-stone-300/20 animate-ping" />

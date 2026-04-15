@@ -2,27 +2,30 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { X, Sparkles, Building2 } from 'lucide-react'
 import { useStore } from '@/store'
 import { createInitialScoring } from '@/types'
+import { useT } from '@/i18n'
+import { getServerUrl } from '@/utils/env'
 
 export function BuildProposalModal() {
   const currentProposal = useStore((s) => s.currentProposal)
   const acceptProposal = useStore((s) => s.acceptProposal)
   const rejectProposal = useStore((s) => s.rejectProposal)
-  const addNexus = useStore((s) => s.addNexus)
+  const addDun = useStore((s) => s.addDun)
   
+  const t = useT()
   const isOpen = currentProposal?.status === 'pending'
   
-  const handleAccept = () => {
+  const handleAccept = async () => {
     const accepted = acceptProposal()
     if (accepted) {
-      // 创建新的 Nexus
-      const nexusId = `nexus-${Date.now()}`
+      // 创建新的 Dun
+      const dunId = `dun-${Date.now()}`
       
       // 找一个空闲位置（简单实现：随机偏移）
       const gridX = Math.floor(Math.random() * 6) - 3
       const gridY = Math.floor(Math.random() * 6) - 3
       
-      addNexus({
-        id: nexusId,
+      addDun({
+        id: dunId,
         position: { gridX, gridY },
         scoring: createInitialScoring(),
         visualDNA: accepted.previewVisualDNA,
@@ -33,7 +36,43 @@ export function BuildProposalModal() {
         boundSkillIds: accepted.boundSkillIds || [],
         sopContent: accepted.sopContent || '',
         flavorText: `由 Observer 在 ${new Date().toLocaleDateString()} 创建`,
+        // intent-cluster 元数据
+        objective: accepted.suggestedObjective || '',
+        triggers: accepted.suggestedTriggers || [],
+        metrics: accepted.suggestedMetrics || [],
       })
+
+      // 后端同步：创建 DUN.md，确保目录名与前端 dunId 一致
+      const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
+      try {
+        await fetch(`${serverUrl}/duns/${encodeURIComponent(dunId)}/meta`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: accepted.suggestedName }),
+        })
+        if (accepted.sopContent) {
+          const skillDeps = accepted.boundSkillIds?.length
+            ? '\nskill_dependencies:\n' + accepted.boundSkillIds.map((s: string) => `  - ${s}`).join('\n')
+            : '\nskill_dependencies: []'
+          const fullContent = [
+            '---',
+            `name: ${accepted.suggestedName}`,
+            `description: ${accepted.purposeSummary || ''}`,
+            'version: 1.0.0',
+            skillDeps,
+            '---',
+            '',
+            accepted.sopContent,
+          ].join('\n')
+          await fetch(`${serverUrl}/duns/${encodeURIComponent(dunId)}/sop-content`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: fullContent }),
+          })
+        }
+      } catch (e) {
+        console.warn('[BuildProposal] Backend sync failed (non-critical):', e)
+      }
     }
   }
   
@@ -87,7 +126,7 @@ export function BuildProposalModal() {
             {/* 内容 */}
             <div className="p-6">
               <p className="text-sm text-stone-700 mb-6 leading-relaxed">
-                指挥官，我检测到您的行为模式。是否将此固化为 Nexus？
+                {t('build.proposal_message')}
               </p>
               
               {/* 预览 - 使用动态颜色 */}
@@ -104,10 +143,10 @@ export function BuildProposalModal() {
                     {currentProposal.suggestedName}
                   </h3>
                   <p className="text-xs font-mono" style={dynamicText}>
-                    Nexus
+                    Dun
                   </p>
                   <p className="text-xs text-stone-400 mt-1">
-                    基于行为模式创建
+                    {t('build.proposal_based_on')}
                   </p>
                 </div>
               </div>
@@ -124,7 +163,7 @@ export function BuildProposalModal() {
               
               {/* 触发证据 */}
               <div className="mb-6 p-3 bg-stone-100/80 rounded-lg border border-stone-100">
-                <p className="text-[13px] font-mono text-stone-400 mb-2">检测依据：</p>
+                <p className="text-[13px] font-mono text-stone-400 mb-2">{t('build.proposal_evidence')}</p>
                 <div className="space-y-1">
                   {currentProposal.triggerPattern.evidence.slice(0, 3).map((ev, i) => (
                     <p key={i} className="text-xs font-mono text-stone-500 truncate">
@@ -133,7 +172,7 @@ export function BuildProposalModal() {
                   ))}
                 </div>
                 <p className="text-[13px] font-mono text-stone-300 mt-2">
-                  置信度: {Math.round(currentProposal.triggerPattern.confidence * 100)}%
+                  {t('build.proposal_confidence')} {Math.round(currentProposal.triggerPattern.confidence * 100)}%
                 </p>
               </div>
               
@@ -144,7 +183,7 @@ export function BuildProposalModal() {
                   className="flex-1 py-2.5 px-4 rounded-lg border border-stone-200 
                            text-sm font-mono text-stone-500 hover:bg-stone-100/80 transition-colors"
                 >
-                  稍后再说
+                  {t('build.proposal_later')}
                 </button>
                 <button
                   onClick={handleAccept}
@@ -155,7 +194,7 @@ export function BuildProposalModal() {
                   onMouseOut={(e) => Object.assign(e.currentTarget.style, dynamicBg)}
                 >
                   <Building2 className="w-4 h-4" />
-                  建造
+                  {t('build.proposal_build')}
                 </button>
               </div>
             </div>

@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { Upload, FileText, Check, AlertCircle } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { useT } from '@/i18n'
 
 interface FileDropZoneProps {
   onFileDrop: (content: string, fileName: string, fileType: string) => void
@@ -15,6 +16,7 @@ export function FileDropZone({
   acceptedTypes = ['.md', '.json', '.txt'],
   className 
 }: FileDropZoneProps) {
+  const t = useT()
   const [status, setStatus] = useState<DropStatus>('idle')
   const [message, setMessage] = useState('')
 
@@ -37,7 +39,7 @@ export function FileDropZone({
     const files = Array.from(e.dataTransfer.files)
     if (files.length === 0) {
       setStatus('error')
-      setMessage('未检测到文件')
+      setMessage(t('common.no_file_detected'))
       return
     }
 
@@ -47,7 +49,7 @@ export function FileDropZone({
       
       if (!acceptedTypes.some(t => ext === t || file.type.includes(t.replace('.', '')))) {
         setStatus('error')
-        setMessage(`不支持的文件类型: ${ext}`)
+        setMessage(t('common.unsupported_file_type', { ext }))
         setTimeout(() => setStatus('idle'), 2000)
         return
       }
@@ -89,7 +91,7 @@ export function FileDropZone({
           
           onFileDrop(content, file.name, fileType)
           setStatus('success')
-          setMessage(`已导入: ${file.name}`)
+          setMessage(t('common.imported', { name: file.name }))
           setTimeout(() => {
             setStatus('idle')
             setMessage('')
@@ -99,7 +101,7 @@ export function FileDropZone({
       
       reader.onerror = () => {
         setStatus('error')
-        setMessage('读取文件失败')
+        setMessage(t('common.read_failed'))
         setTimeout(() => setStatus('idle'), 2000)
       }
       
@@ -149,10 +151,10 @@ export function FileDropZone({
         <>
           <Upload className="w-8 h-8 text-stone-400" />
           <p className="text-sm font-mono text-stone-500">
-            拖拽文件到此处，或点击上传
+            {t('common.drag_or_click')}
           </p>
           <p className="text-[13px] font-mono text-stone-300">
-            支持: SOUL.md, IDENTITY.md, MEMORY.md, skills.json, duncrew-config.json
+            {t('common.supported_files')}
           </p>
         </>
       )}
@@ -161,7 +163,7 @@ export function FileDropZone({
         <>
           <FileText className="w-8 h-8 text-cyan-400 animate-bounce" />
           <p className="text-sm font-mono text-cyan-400">
-            释放以导入文件
+            {t('common.release_to_import')}
           </p>
         </>
       )}

@@ -1,13 +1,13 @@
 /**
- * SkillGridCard V3 - Emoji-forward 卡片
+ * SkillGridCard V4 - 评分突出版
  *
- * 改造: 去掉"大脑袋"圆圈头像, emoji 直接做视觉主角
- * - 左上角大 emoji (无圆圈框)
- * - 右上角机制角标
- * - 紧凑型标题+描述
- * - 底部标签+热度
+ * 布局:
+ * - 右上角: rankScore 评分徽标 (最显眼位置)
+ * - 左上角: emoji + 名称
+ * - 中间: 描述
+ * - 右下角: 来源 + 机制标签
+ * - 左下角: 标签 + 热度
  * - 休眠态: 灰度低透明
- * - Glow Sync: 共享高亮
  */
 
 import { motion } from 'framer-motion'
@@ -18,11 +18,8 @@ import type { SkillSource } from '@/types'
 
 interface SkillGridCardProps {
   skill: UISkillModel
-  isGlowing?: 'shared-tool' | 'shared-env' | null
-  isDimmed?: boolean
   onClick: () => void
-  onHoverStart: () => void
-  onHoverEnd: () => void
+  onToggleEnabled?: (skillName: string, enabled: boolean) => void
 }
 
 // 机制角标颜色
@@ -59,45 +56,46 @@ function getEmojiBg(skill: UISkillModel): string {
   return 'bg-emerald-50'
 }
 
+// 评分颜色
+function getScoreStyle(score: number, isDormant: boolean) {
+  if (isDormant) return { bg: 'bg-stone-100', text: 'text-stone-400', border: 'border-stone-200' }
+  if (score >= 70) return { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-200' }
+  if (score >= 45) return { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-200' }
+  return { bg: 'bg-stone-50', text: 'text-stone-400', border: 'border-stone-200' }
+}
+
 const ddosEase = [0.23, 1, 0.32, 1]
 
 export function SkillGridCard({
   skill,
-  isGlowing,
-  isDimmed,
   onClick,
-  onHoverStart,
-  onHoverEnd,
+  onToggleEnabled,
 }: SkillGridCardProps) {
   const badgeStyle = getBadgeStyle(skill)
   const dormantReason = skill.isDormant ? getDormantReason(skill) : null
   const MechIcon = skill.type === 'instruction' ? Brain : Zap
+  const scoreStyle = getScoreStyle(skill.rankScore, skill.isDormant)
+  const isDisabled = skill.status === 'inactive'
 
   return (
     <motion.div
       layout
       onClick={onClick}
-      onHoverStart={onHoverStart}
-      onHoverEnd={onHoverEnd}
       className={cn(
         'group relative p-3.5 rounded-2xl cursor-pointer',
         'border transition-all duration-300',
         // 休眠态
         skill.isDormant && 'opacity-70 grayscale-[0.5]',
-        // Glow Sync
-        isDimmed && 'opacity-20 scale-[0.97]',
-        isGlowing === 'shared-tool' && 'ring-2 ring-sky-400/60 shadow-[0_0_20px_rgba(126,200,227,0.3)]',
-        isGlowing === 'shared-env' && 'ring-2 ring-purple-400/60 shadow-[0_0_20px_rgba(167,139,250,0.3)]',
         // 正常态
-        !isDimmed && !isGlowing && !skill.isDormant && 'bg-white border-stone-200/60 hover:shadow-lg hover:border-stone-300',
-        !isDimmed && !isGlowing && skill.isDormant && 'bg-stone-50/80 border-stone-200/40',
+        !skill.isDormant && 'bg-white border-stone-200/60 hover:shadow-lg hover:border-stone-300',
+        skill.isDormant && 'bg-stone-50/80 border-stone-200/40',
       )}
-      whileHover={!isDimmed && !skill.isDormant ? { y: -2 } : undefined}
+      whileHover={!skill.isDormant ? { y: -2 } : undefined}
       transition={{ duration: 0.3, ease: ddosEase }}
     >
-      {/* 第一行: emoji + 名称 + 机制图标 */}
-      <div className="flex items-center gap-2.5">
-        {/* Emoji 方块 (无圆圈, 用圆角方块底色) */}
+      {/* 第一行: emoji + 名称 + 评分(右上角) */}
+      <div className="flex items-start gap-2.5">
+        {/* Emoji 方块 */}
         <div className={cn(
           'w-9 h-9 rounded-xl flex items-center justify-center shrink-0',
           'transition-transform duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]',
@@ -107,8 +105,8 @@ export function SkillGridCard({
           <span className="text-xl leading-none">{skill.emoji}</span>
         </div>
 
-        {/* 名称 + 机制 */}
-        <div className="min-w-0 flex-1">
+        {/* 名称 + 机制图标 */}
+        <div className="min-w-0 flex-1 pt-0.5">
           <div className="flex items-center gap-1.5">
             <h4 className={cn(
               'text-sm font-bold truncate',
@@ -130,8 +128,79 @@ export function SkillGridCard({
           )}
         </div>
 
-        {/* 右上角: 来源 + 机制角标 */}
-        <div className="flex items-center gap-1 shrink-0 self-start">
+        {/* 右上角: 评分徽标 (最显眼位置) */}
+        <div className={cn(
+          'shrink-0 px-2 py-1 rounded-xl text-xs font-black font-mono border min-w-[36px] text-center',
+          scoreStyle.bg, scoreStyle.text, scoreStyle.border,
+        )}>
+          {skill.rankScore}
+        </div>
+      </div>
+
+      {/* 描述 */}
+      <p className={cn(
+        'text-[11px] mt-2 line-clamp-2 leading-relaxed',
+        skill.isDormant ? 'text-stone-300' : 'text-stone-400',
+      )}>
+        {skill.desc || '暂无描述'}
+      </p>
+
+      {/* 底部: 左=开关+标签  右=来源+机制 */}
+      <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-stone-100/80">
+        {/* 左下角: 开关 + 标签 + 热度 */}
+        <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+          {/* 滑动开关 */}
+          {onToggleEnabled && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleEnabled(skill.name, isDisabled)
+              }}
+              className={cn(
+                'relative shrink-0 w-7 h-4 rounded-full transition-colors duration-200',
+                isDisabled ? 'bg-stone-300' : 'bg-emerald-400',
+              )}
+              title={isDisabled ? '点击启用' : '点击停用'}
+            >
+              <span
+                className={cn(
+                  'absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-200',
+                  isDisabled ? 'left-0.5' : 'translate-x-3.5 left-0',
+                )}
+              />
+            </button>
+          )}
+          {skill.requiresAPI && (
+            <span className={cn(
+              'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-mono shrink-0 border',
+              skill.isDormant
+                ? 'bg-stone-50 text-stone-400 border-stone-200'
+                : 'bg-amber-50 text-amber-500 border-amber-200',
+            )}>
+              <Key className="w-2.5 h-2.5" />
+              {skill.apiName}
+            </span>
+          )}
+          {skill._raw.primaryEnv && (
+            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-mono bg-stone-50 text-stone-400 border border-stone-200 shrink-0">
+              {skill._raw.primaryEnv}
+            </span>
+          )}
+          {skill.tags.slice(0, 1).map((tag) => (
+            <span
+              key={tag}
+              className="px-1.5 py-0.5 rounded-md text-[10px] font-mono bg-stone-50 text-stone-400 border border-stone-100 truncate max-w-[80px]"
+            >
+              {tag}
+            </span>
+          ))}
+          <span className="text-[10px] font-mono text-stone-300 shrink-0">
+            {skill.usageCount > 0 ? `x${skill.usageCount}` : '--'}
+          </span>
+        </div>
+
+        {/* 右下角: 来源 + 机制 */}
+        <div className="flex items-center gap-1 shrink-0">
           {(() => {
             const sourceCfg = SOURCE_BADGE_CONFIG[skill.source]
             const SourceIcon = sourceCfg.icon
@@ -152,51 +221,6 @@ export function SkillGridCard({
             {skill.type === 'instruction' ? '指令' : '执行'}
           </div>
         </div>
-      </div>
-
-      {/* 描述 */}
-      <p className={cn(
-        'text-[11px] mt-2 line-clamp-2 leading-relaxed',
-        skill.isDormant ? 'text-stone-300' : 'text-stone-400',
-      )}>
-        {skill.desc || '暂无描述'}
-      </p>
-
-      {/* 底部: 标签 + 热度 */}
-      <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-stone-100/80">
-        <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
-          {/* API 角标 */}
-          {skill.requiresAPI && (
-            <span className={cn(
-              'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-mono shrink-0 border',
-              skill.isDormant
-                ? 'bg-stone-50 text-stone-400 border-stone-200'
-                : 'bg-amber-50 text-amber-500 border-amber-200',
-            )}>
-              <Key className="w-2.5 h-2.5" />
-              {skill.apiName}
-            </span>
-          )}
-          {/* Env 标签 */}
-          {skill._raw.primaryEnv && (
-            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-mono bg-stone-50 text-stone-400 border border-stone-200 shrink-0">
-              {skill._raw.primaryEnv}
-            </span>
-          )}
-          {skill.tags.slice(0, 1).map((tag) => (
-            <span
-              key={tag}
-              className="px-1.5 py-0.5 rounded-md text-[10px] font-mono bg-stone-50 text-stone-400 border border-stone-100 truncate max-w-[80px]"
-            >
-              {tag}
-            </span>
-          ))}
-        </div>
-
-        {/* 热度值 */}
-        <span className="text-[10px] font-mono text-stone-300 shrink-0">
-          {skill.usageCount > 0 ? `x${skill.usageCount}` : '--'}
-        </span>
       </div>
     </motion.div>
   )

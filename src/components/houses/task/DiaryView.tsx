@@ -74,10 +74,10 @@ export function DiaryView() {
     }
   }, [expandedId])
 
-  // 初始加载 + 自动生成昨天日记
+  // 初始加载 + 自动补全缺失日记
   useEffect(() => {
     const initialize = async () => {
-      await diaryService.autoGenerateYesterdayDiary()
+      await diaryService.autoGenerateMissingDiaries()
       await loadDiaries()
     }
     initialize()

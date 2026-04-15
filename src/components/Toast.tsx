@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, forwardRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CheckCircle2, XCircle, AlertTriangle, Info, X } from 'lucide-react'
 import { useStore } from '@/store'
@@ -46,7 +46,10 @@ interface ToastItemProps {
   persistent?: boolean
 }
 
-function ToastItem({ id, type, title, message, duration = 4000, onClose, onClick, persistent }: ToastItemProps) {
+const ToastItem = forwardRef<HTMLDivElement, ToastItemProps>(function ToastItem(
+  { id, type, title, message, duration = 4000, onClose, onClick, persistent },
+  ref,
+) {
   const config = toastConfig[type]
   const Icon = config.icon
   const isClickable = !!onClick
@@ -70,6 +73,7 @@ function ToastItem({ id, type, title, message, duration = 4000, onClose, onClick
 
   return (
     <motion.div
+      ref={ref}
       layout
       initial={{ opacity: 0, x: 50, scale: 0.9 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
@@ -123,14 +127,14 @@ function ToastItem({ id, type, title, message, duration = 4000, onClose, onClick
       )}
     </motion.div>
   )
-}
+})
 
 export function ToastContainer() {
   const toasts = useStore((s) => s.toasts)
   const removeToast = useStore((s) => s.removeToast)
 
   return (
-    <div className="fixed top-4 right-4 z-50 flex flex-col gap-3">
+    <div className="fixed top-14 right-4 z-50 flex flex-col gap-3">
       <AnimatePresence mode="popLayout">
         {toasts.map((toast) => (
           <ToastItem

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Plus, MessageSquare, Globe2, Trash2, Edit2, Check, X,
@@ -20,40 +20,49 @@ export function ConversationSidebar({ className }: ConversationSidebarProps) {
   const switchConversation = useStore((s) => s.switchConversation)
   const deleteConversation = useStore((s) => s.deleteConversation)
   const renameConversation = useStore((s) => s.renameConversation)
-  const getOrCreateNexusConversation = useStore((s) => s.getOrCreateNexusConversation)
-  const nexuses = useStore((s) => s.nexuses)
+  const getOrCreateDunConversation = useStore((s) => s.getOrCreateDunConversation)
+  // M6: 通过 dunCount 触发 re-render，duns 数据通过 ref 按需读取
+  const dunCount = useStore((s) => s.duns.size)
+  const dunsRef = useRef(useStore.getState().duns)
+  // 保持 ref 同步（不触发 re-render）
+  dunsRef.current = useStore.getState().duns
+  const getDunById = useCallback((dunId: string) => useStore.getState().duns.get(dunId), [])
   
   const [showNewMenu, setShowNewMenu] = useState(false)
-  const [showNexusPicker, setShowNexusPicker] = useState(false)
+  const [showDunPicker, setShowDunPicker] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   
-  const nexusList = useMemo(() => 
-    [...nexuses.values()].filter(n => n.constructionProgress >= 1 || (Date.now() - n.createdAt >= 3000)),
-    [nexuses]
+  const dunList = useMemo(() => 
+    [...dunsRef.current.values()].filter(n => n.constructionProgress >= 1 || (Date.now() - n.createdAt >= 3000)),
+    [dunCount]
   )
   
-  const conversationList = [...conversations.values()]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .filter(conv => 
-      !searchQuery || 
-      conv.title.toLowerCase().includes(searchQuery.toLowerCase())
-    )
+  // M7: useMemo 缓存排序过滤结果，避免每次 render 都重新计算
+  const conversationList = useMemo(() => 
+    [...conversations.values()]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .filter(conv => 
+        !searchQuery || 
+        conv.title.toLowerCase().includes(searchQuery.toLowerCase())
+      ),
+    [conversations, searchQuery]
+  )
   
   const handleCreate = (type: ConversationType) => {
-    if (type === 'nexus') {
-      setShowNexusPicker(true)
+    if (type === 'dun') {
+      setShowDunPicker(true)
       return
     }
     createConversation(type)
     setShowNewMenu(false)
   }
   
-  const handleSelectNexus = (nexusId: string) => {
-    getOrCreateNexusConversation(nexusId)
+  const handleSelectDun = (dunId: string) => {
+    getOrCreateDunConversation(dunId)
     setShowNewMenu(false)
-    setShowNexusPicker(false)
+    setShowDunPicker(false)
   }
   
   const handleStartRename = (conv: Conversation) => {
@@ -81,9 +90,9 @@ export function ConversationSidebar({ className }: ConversationSidebarProps) {
     }
   }
   
-  const getNexusInfo = (nexusId?: string) => {
-    if (!nexusId) return null
-    return nexuses.get(nexusId)
+  const getDunInfo = (dunId?: string) => {
+    if (!dunId) return null
+    return getDunById(dunId)
   }
   
   return (
@@ -95,7 +104,7 @@ export function ConversationSidebar({ className }: ConversationSidebarProps) {
       <div className="p-4 border-b border-stone-100">
         <div className="relative">
           <button
-            onClick={() => { setShowNewMenu(!showNewMenu); if (showNewMenu) setShowNexusPicker(false) }}
+            onClick={() => { setShowNewMenu(!showNewMenu); if (showNewMenu) setShowDunPicker(false) }}
             className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-white rounded-xl text-sm font-bold shadow-sm transition-colors flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4" />
@@ -127,21 +136,21 @@ export function ConversationSidebar({ className }: ConversationSidebarProps) {
                 </button>
                 
                 <button
-                  onClick={() => handleCreate('nexus')}
+                  onClick={() => handleCreate('dun')}
                   className="w-full flex items-center gap-2 px-3 py-2.5 
                              hover:bg-stone-50 text-sm font-bold text-stone-600 
                              hover:text-stone-800 transition-colors border-t border-stone-100"
                 >
                   <Globe2 className="w-4 h-4 text-stone-400" />
-                  Nexus 会话
+                  Dun 会话
                   <ChevronRight className={cn(
                     'w-3 h-3 ml-auto transition-transform text-stone-300',
-                    showNexusPicker && 'rotate-90'
+                    showDunPicker && 'rotate-90'
                   )} />
                 </button>
                 
                 <AnimatePresence>
-                  {showNexusPicker && (
+                  {showDunPicker && (
                     <motion.div
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: 'auto', opacity: 1 }}
@@ -149,16 +158,16 @@ export function ConversationSidebar({ className }: ConversationSidebarProps) {
                       transition={{ duration: 0.15 }}
                       className="overflow-hidden border-t border-stone-100"
                     >
-                      {nexusList.length === 0 ? (
+                      {dunList.length === 0 ? (
                         <div className="px-3 py-3 text-[11px] font-mono text-stone-400 text-center">
-                          还没有可用的 Nexus
+                          还没有可用的 Dun
                         </div>
                       ) : (
                         <div className="max-h-[200px] overflow-y-auto py-1">
-                          {nexusList.map(n => (
+                          {dunList.map(n => (
                             <button
                               key={n.id}
-                              onClick={() => handleSelectNexus(n.id)}
+                              onClick={() => handleSelectDun(n.id)}
                               className="w-full flex items-center gap-2 px-4 py-2 
                                          hover:bg-stone-50 text-xs font-mono text-stone-500 
                                          hover:text-stone-700 transition-colors"
@@ -167,7 +176,7 @@ export function ConversationSidebar({ className }: ConversationSidebarProps) {
                                 className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                                 style={{ backgroundColor: `hsl(${n.visualDNA?.primaryHue ?? 270}, 60%, 55%)` }}
                               />
-                              <span className="truncate">{n.label || `Nexus-${n.id.slice(-6)}`}</span>
+                              <span className="truncate">{n.label || `Dun-${n.id.slice(-6)}`}</span>
                               <span className="ml-auto text-[10px] text-stone-300 flex-shrink-0">{n.scoring?.score ?? 0}pt</span>
                             </button>
                           ))}
@@ -208,7 +217,7 @@ export function ConversationSidebar({ className }: ConversationSidebarProps) {
           conversationList.map((conv) => {
             const isActive = conv.id === activeConversationId
             const isEditing = editingId === conv.id
-            const nexus = getNexusInfo(conv.nexusId)
+            const dun = getDunInfo(conv.dunId)
             const lastMsg = conv.messagesLoaded !== false && conv.messages.length > 0 
               ? conv.messages[conv.messages.length - 1] : null
             const preview = lastMsg?.content.slice(0, 40) || (conv.messagesLoaded === false ? '...' : '(空会话)')
@@ -267,12 +276,12 @@ export function ConversationSidebar({ className }: ConversationSidebarProps) {
                         )}>
                           {conv.title}
                         </h4>
-                        {nexus && (
+                        {dun && (
                           <span 
                             className="text-xs font-mono truncate block mt-0.5"
-                            style={{ color: `hsl(${nexus.visualDNA?.primaryHue || 270}, 50%, 45%)` }}
+                            style={{ color: `hsl(${dun.visualDNA?.primaryHue || 270}, 50%, 45%)` }}
                           >
-                            {nexus.label}
+                            {dun.label}
                           </span>
                         )}
                         <p className="text-xs text-stone-400 truncate mt-1">

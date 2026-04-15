@@ -275,7 +275,7 @@ class LocalServerService {
       id: conv.id,
       type: conv.type,
       title: conv.title,
-      nexusId: conv.nexusId,
+      dunId: conv.dunId,
       messageCount: conv.messages.length,
       createdAt: conv.createdAt,
       updatedAt: conv.updatedAt,

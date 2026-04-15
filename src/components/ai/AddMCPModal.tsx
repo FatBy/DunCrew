@@ -7,6 +7,7 @@ import { searchOnlineMCP, getAllOnlineMCP, type RegistryMCPResult } from '@/serv
 import { installMCP } from '@/services/installService'
 import { MatchResultCard } from './MatchResultCard'
 import { getServerUrl } from '@/utils/env'
+import { useT } from '@/i18n'
 
 type TabType = 'local' | 'online'
 
@@ -23,6 +24,7 @@ interface AddMCPModalProps {
 }
 
 export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
+  const t = useT()
   const [activeTab, setActiveTab] = useState<TabType>('local')
   const [input, setInput] = useState('')
   const [servers, setServers] = useState<MCPServer[]>([])
@@ -212,7 +214,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                 <Server className="w-4 h-4 text-purple-400" />
               </div>
               <h2 className="text-sm font-mono font-semibold text-stone-800">
-                添加 MCP 服务
+                {t('mcp.title')}
               </h2>
             </div>
             <button onClick={resetAndClose} className="p-1 text-stone-300 hover:text-stone-500 transition-colors">
@@ -244,7 +246,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
               )}
             >
               <Globe className="w-3.5 h-3.5" />
-              在线搜索
+              {t('mcp.tab_online')}
             </button>
           </div>
 
@@ -265,7 +267,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                 {/* 搜索输入框 */}
                 <div>
                   <label className="block text-xs font-mono text-stone-400 mb-2">
-                    描述你需要的工具
+                    {t('mcp.search_label')}
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -298,7 +300,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                 {isSearching && (
                   <div className="flex items-center justify-center gap-2 py-4 text-stone-300">
                     <Loader2 className="w-4 h-4 animate-spin text-purple-400/60" />
-                    <span className="text-xs font-mono">AI 正在匹配...</span>
+                    <span className="text-xs font-mono">{t('mcp.matching')}</span>
                   </div>
                 )}
 
@@ -322,7 +324,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                 {!isSearching && hasSearched && searchResults.length === 0 && (
                   <div className="text-center py-3">
                     <p className="text-xs font-mono text-stone-300">
-                      未找到匹配服务，可从下方列表选择
+                      {t('mcp.no_match')}
                     </p>
                   </div>
                 )}
@@ -336,7 +338,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                 ) : servers.length > 0 && (
                   <div>
                     <p className="text-[11px] font-mono text-stone-300 mb-2">
-                      {hasSearched ? '全部已配置服务器' : '已配置的服务器 (点击选择)'}
+                      {hasSearched ? t('mcp.all_servers') : t('mcp.servers_hint')}
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {servers.map((s) => (
@@ -378,7 +380,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                 {/* 在线搜索输入框 */}
                 <div>
                   <label className="block text-xs font-mono text-stone-400 mb-2">
-                    搜索在线 MCP 服务
+                    {t('mcp.online_search_label')}
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -411,7 +413,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                 {isOnlineSearching && (
                   <div className="flex items-center justify-center gap-2 py-4 text-stone-300">
                     <Loader2 className="w-4 h-4 animate-spin text-cyan-400/60" />
-                    <span className="text-xs font-mono">搜索中...</span>
+                    <span className="text-xs font-mono">{t('mcp.searching')}</span>
                   </div>
                 )}
 
@@ -444,7 +446,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                             {mcp.envRequired && mcp.envRequired.length > 0 && (
                               <div className="flex items-center gap-1 mt-1.5 text-[10px] text-amber-300/70">
                                 <Key className="w-3 h-3" />
-                                需要: {mcp.envRequired.join(', ')}
+                                {t('mcp.env_needs')} {mcp.envRequired.join(', ')}
                               </div>
                             )}
                           </div>
@@ -472,19 +474,19 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
                               <Download className="w-3.5 h-3.5" />
                             )}
                             {installingId === mcp.id
-                              ? '安装中'
+                              ? t('mcp.installing')
                               : installStatus?.id === mcp.id
-                              ? (installStatus.success ? '已安装' : '失败')
+                              ? (installStatus.success ? t('mcp.installed') : t('mcp.install_fail'))
                               : showEnvInput === mcp.id
-                              ? '确认安装'
-                              : '安装'}
+                              ? t('mcp.confirm_install')
+                              : t('mcp.install')}
                           </button>
                         </div>
                         
                         {/* 环境变量输入 */}
                         {showEnvInput === mcp.id && mcp.envRequired && (
                           <div className="mt-3 pt-3 border-t border-stone-200 space-y-2">
-                            <p className="text-[10px] text-stone-400">请填写所需的环境变量:</p>
+                            <p className="text-[10px] text-stone-400">{t('mcp.env_required')}</p>
                             {mcp.envRequired.map((envKey) => (
                               <div key={envKey} className="flex items-center gap-2">
                                 <label className="text-[10px] text-stone-400 w-28 font-mono">{envKey}</label>
@@ -511,8 +513,8 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
 
                 {!isOnlineSearching && hasOnlineSearched && onlineResults.length === 0 && (
                   <div className="text-center py-6">
-                    <p className="text-xs font-mono text-stone-300">未找到匹配的在线 MCP 服务</p>
-                    <p className="text-[10px] text-stone-300 mt-1">尝试换个关键词搜索</p>
+                    <p className="text-xs font-mono text-stone-300">{t('mcp.no_online_match')}</p>
+                    <p className="text-[10px] text-stone-300 mt-1">{t('mcp.try_different')}</p>
                   </div>
                 )}
 
@@ -531,7 +533,7 @@ export function AddMCPModal({ isOpen, onClose, onConfirm }: AddMCPModalProps) {
               onClick={resetAndClose}
               className="px-4 py-2 text-xs font-mono text-stone-400 hover:text-stone-600 transition-colors"
             >
-              取消
+              {t('common.cancel')}
             </button>
           </div>
         </motion.div>

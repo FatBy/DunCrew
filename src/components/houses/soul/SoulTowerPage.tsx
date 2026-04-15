@@ -1,11 +1,13 @@
 import { useEffect } from 'react'
-import { Loader2, Sparkles, Activity } from 'lucide-react'
+import { Loader2, Sparkles, Activity, RefreshCw, AlertCircle } from 'lucide-react'
 import { useStore } from '@/store'
 import { IdentityCard } from './IdentityCard'
 import { CoreTruthsAccordion } from './CoreTruthsAccordion'
 import { SoulCoreAvatar } from './SoulCoreAvatar'
 import { MBTIDriftSlider } from './MBTIDriftSlider'
 import { AmendmentTimeline } from './AmendmentTimeline'
+import { SoulBootstrapModal } from './SoulBootstrapModal'
+import { isDefaultEnglishSoul } from '@/services/soulGenerator'
 
 export function SoulTowerPage() {
   // — devicesSlice —
@@ -21,12 +23,22 @@ export function SoulTowerPage() {
   const generateSoulSummary = useStore((s) => s.generateSoulSummary)
   const loading = useStore((s) => s.devicesLoading)
 
+  // — Soul 生成 —
+  const soulRawContent = useStore((s) => s.soulRawContent)
+  const soulBootstrapNeeded = useStore((s) => s.soulBootstrapNeeded)
+  const setSoulBootstrapNeeded = useStore((s) => s.setSoulBootstrapNeeded)
+  const applySoulFromGenerated = useStore((s) => s.applySoulFromGenerated)
+  const soulResynthesisNeeded = useStore((s) => s.soulResynthesisNeeded)
+  const soulResynthesizing = useStore((s) => s.soulResynthesizing)
+  const triggerSoulResynthesis = useStore((s) => s.triggerSoulResynthesis)
+
   // — soulAmendmentSlice —
   const amendments = useStore((s) => s.amendments)
   const draftAmendments = useStore((s) => s.draftAmendments)
   const approveDraft = useStore((s) => s.approveDraft)
   const rejectDraft = useStore((s) => s.rejectDraft)
   const archiveAmendment = useStore((s) => s.archiveAmendment)
+  const unarchiveAmendment = useStore((s) => s.unarchiveAmendment)
 
   // 首次加载时触发核心协议总结生成（有缓存则直接读取）
   useEffect(() => {
@@ -35,12 +47,21 @@ export function SoulTowerPage() {
     }
   }, [soulCoreTruths.length, soulTruthsSummary, generateSoulSummary])
 
+  // 检测是否需要引导生成（英文默认 Soul，且用户未曾生成过）
+  useEffect(() => {
+    // 如果用户已经生成过或跳过过，不再弹出
+    const generated = localStorage.getItem('duncrew_soul_generated_at')
+    const skipped = localStorage.getItem('duncrew_soul_bootstrap_skipped')
+    if (generated || skipped) return
+
+    if (soulRawContent && isDefaultEnglishSoul(soulRawContent)) {
+      setSoulBootstrapNeeded(true)
+    }
+  }, [soulRawContent, setSoulBootstrapNeeded])
+
   // — 构造 base / expressed 轴分数 —
-  // 如果 base 和 expressed 类型不同，通过类型字母推算基础轴
-  // 否则直接使用 soulMBTIAxes 作为两者
-  const baseAxes = soulMBTIAxes
-    ? computeBaseAxesFromType(soulMBTIBase, soulMBTIAxes)
-    : null
+  // 优先使用实际计算的轴强度，fallback 到类型字母推算
+  const baseAxes = computeBaseAxesFromType(soulMBTIBase, soulMBTIAxes)
   const expressedAxes = soulMBTIAxes
 
   // Loading state
@@ -64,6 +85,40 @@ export function SoulTowerPage() {
         backgroundSize: '24px 24px',
       }}
     >
+      {/* Soul Bootstrap Modal */}
+      {soulBootstrapNeeded && (
+        <SoulBootstrapModal
+          onComplete={(content) => {
+            applySoulFromGenerated(content)
+          }}
+          onSkip={() => {
+            localStorage.setItem('duncrew_soul_bootstrap_skipped', '1')
+            setSoulBootstrapNeeded(false)
+          }}
+        />
+      )}
+
+      {/* 重合成提示横幅 */}
+      {soulResynthesisNeeded && !soulResynthesizing && (
+        <div className="bg-indigo-50/60 border border-indigo-100/50 rounded-xl p-3 flex items-center gap-3 text-sm text-indigo-800/80 mb-4">
+          <AlertCircle className="w-4 h-4 text-indigo-500 flex-shrink-0" />
+          <span className="flex-1">已积累 5 条行为修正，建议重合成灵魂以融入这些变化。</span>
+          <button
+            onClick={triggerSoulResynthesis}
+            className="flex items-center gap-1 px-3 py-1 bg-indigo-500 text-white text-xs font-semibold rounded-lg hover:bg-indigo-600 transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" />
+            立即重合成
+          </button>
+        </div>
+      )}
+      {soulResynthesizing && (
+        <div className="bg-indigo-50/60 border border-indigo-100/50 rounded-xl p-3 flex items-center gap-3 text-sm text-indigo-800/80 mb-4">
+          <Loader2 className="w-4 h-4 text-indigo-500 animate-spin flex-shrink-0" />
+          <span>正在重合成灵魂，融入已批准的行为修正...</span>
+        </div>
+      )}
+
       {/* AI Insight Banner */}
       {insightText && (
         <div className="bg-yellow-50/60 border border-yellow-100/50 rounded-xl p-3 flex items-start gap-3 text-sm text-yellow-800/80 mb-6">
@@ -80,7 +135,10 @@ export function SoulTowerPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
         {/* Left Column: Layer 1 Nature (Immutable) */}
         <div className="lg:col-span-3 flex flex-col gap-4">
-          <IdentityCard identity={soulIdentity} />
+          <IdentityCard
+            identity={soulIdentity}
+            onRegenerate={() => setSoulBootstrapNeeded(true)}
+          />
           {soulCoreTruths.length > 0 && (
             <CoreTruthsAccordion truths={soulCoreTruths} summary={soulTruthsSummary} />
           )}
@@ -110,6 +168,7 @@ export function SoulTowerPage() {
           onApprove={approveDraft}
           onReject={rejectDraft}
           onArchive={archiveAmendment}
+          onUnarchive={unarchiveAmendment}
         />
       </div>
     </div>
@@ -124,15 +183,18 @@ import type { MBTIResult, MBTIAxisScores } from '@/types'
 
 /**
  * 从 base MBTIResult 类型字母推算基础轴分数。
- * 如果 base 和当前 axes 指向同一类型，直接使用 axes；
- * 否则根据 base 的 4 字母构造固定轴分（±0.5）。
+ * 优先使用实际计算的轴强度（currentAxes），仅在无值时 fallback 到从类型字母推算。
  */
 function computeBaseAxesFromType(
   base: MBTIResult | null,
-  currentAxes: MBTIAxisScores,
+  currentAxes: MBTIAxisScores | null,
 ): MBTIAxisScores {
-  if (!base) return currentAxes
-
+  // 优先使用实际计算的轴强度
+  if (currentAxes && (currentAxes.ei !== 0 || currentAxes.sn !== 0 || currentAxes.tf !== 0 || currentAxes.jp !== 0)) {
+    return currentAxes
+  }
+  // Fallback: 从类型字母推算
+  if (!base) return currentAxes || { ei: 0, sn: 0, tf: 0, jp: 0 }
   const type = base.type
   return {
     ei: type[0] === 'e' ? 0.5 : -0.5,

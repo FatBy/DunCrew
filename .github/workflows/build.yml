@@ -1,0 +1,193 @@
+name: Build & Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Target platforms'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+          - linux
+
+env:
+  PYTHON_VERSION: '3.10'
+  NODE_VERSION: '20'
+  # Hugging Face 模型 ID（INT8 量化版 bge-large-zh-v1.5）
+  # 如果使用私有模型，需要在 repo Settings > Secrets 添加 HF_TOKEN
+  EMBEDDING_MODEL_ID: BAAI/bge-large-zh-v1.5
+
+jobs:
+  # ═══════════════ Windows ═══════════════
+  build-windows:
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'windows' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Python deps
+        run: |
+          pip install pyinstaller pyyaml
+          pip install pdfplumber python-docx python-pptx pytesseract Pillow
+          pip install openpyxl beautifulsoup4 ebooklib striprtf trafilatura
+          pip install httpx onnxruntime tokenizers numpy
+          pip install mss pygetwindow
+          pip install huggingface_hub optimum[onnxruntime]
+
+      - name: Download & quantize embedding model
+        run: |
+          python scripts/setup/download_model.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run electron:compile
+
+      - name: Build Python backend (PyInstaller)
+        run: python -m PyInstaller duncrew-server.spec --clean --noconfirm
+
+      - name: Build Electron app (Windows)
+        run: npx electron-builder --win --publish never
+
+      - name: Upload NSIS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: DunCrew-Windows-Setup
+          path: release/*.exe
+          if-no-files-found: error
+
+      - name: Upload portable version
+        uses: actions/upload-artifact@v4
+        with:
+          name: DunCrew-Windows-Portable
+          path: release/win-unpacked/
+          if-no-files-found: error
+
+  # ═══════════════ macOS (x64) ═══════════════
+  build-macos:
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'macos' }}
+    # 必须使用 macos-13 (Intel x64)，因为 macos-latest 是 ARM64，
+    # 而 PyInstaller 只能构建当前平台架构的二进制
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Python deps
+        run: |
+          pip install pyinstaller pyyaml
+          pip install pdfplumber python-docx python-pptx pytesseract Pillow
+          pip install openpyxl beautifulsoup4 ebooklib striprtf trafilatura
+          pip install httpx onnxruntime tokenizers numpy
+          pip install mss pyobjc-framework-Quartz
+          pip install huggingface_hub optimum[onnxruntime]
+
+      - name: Download & quantize embedding model
+        run: |
+          python scripts/setup/download_model.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run electron:compile
+
+      - name: Build Python backend (PyInstaller)
+        run: python -m PyInstaller duncrew-server.spec --clean --noconfirm
+
+      - name: Build Electron app (macOS x64)
+        run: npx electron-builder --mac --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: DunCrew-macOS-DMG
+          path: release/*.dmg
+          if-no-files-found: error
+
+  # ═══════════════ Linux ═══════════════
+  build-linux:
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'linux' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Python deps
+        run: |
+          pip install pyinstaller pyyaml
+          pip install pdfplumber python-docx python-pptx pytesseract Pillow
+          pip install openpyxl beautifulsoup4 ebooklib striprtf trafilatura
+          pip install httpx onnxruntime tokenizers numpy
+          pip install mss
+          pip install huggingface_hub optimum[onnxruntime]
+
+      - name: Download & quantize embedding model
+        run: |
+          python scripts/setup/download_model.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run electron:compile
+
+      - name: Build Python backend (PyInstaller)
+        run: python -m PyInstaller duncrew-server.spec --clean --noconfirm
+
+      - name: Build Electron app (Linux)
+        run: npx electron-builder --linux --publish never
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: DunCrew-Linux-AppImage
+          path: release/*.AppImage
+          if-no-files-found: error

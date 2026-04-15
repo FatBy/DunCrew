@@ -324,15 +324,52 @@ If you used `--examples`, delete any placeholder files that are not needed for t
 
 ##### Frontmatter
 
-Write the YAML frontmatter with `name` and `description`:
+Write the YAML frontmatter with the following fields:
 
-- `name`: The skill name
-- `description`: This is the primary triggering mechanism for your skill, and helps Codex understand when to use the skill.
+**Required fields:**
+
+- `name`: The skill name (lowercase, hyphen-case)
+- `description`: This is the primary triggering mechanism for your skill, and helps the Agent understand when to use the skill.
   - Include both what the Skill does and specific triggers/contexts for when to use it.
-  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Codex.
-  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Codex needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
+  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful.
+  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when working with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
 
-Do not include any other fields in YAML frontmatter.
+**Recommended fields (strongly encouraged for quality scoring):**
+
+- `version`: Semantic version string (e.g., "1.0.0")
+- `tags`: Array of classification tags for categorization and discovery (e.g., `[search, web, api]`)
+- `keywords`: Array of semantic trigger keywords for intelligent matching
+- `dangerLevel`: Safety level declaration - `safe` | `high` | `critical`. Default `safe`. Use `high` for skills that modify files or run commands, `critical` for skills with destructive potential.
+- `requires`: Dependency declarations. **Critical for skills that use external APIs or tools:**
+  - `env`: Array of required environment variable names. **If the skill uses ANY external API (e.g., Tavily, OpenAI, Serper, etc.), you MUST declare the required API key/token environment variables here.** Example: `env: [TAVILY_API_KEY]`
+  - `bins`: Array of required CLI binaries (e.g., `bins: [ffmpeg, python3]`)
+- `inputs`: Input parameter schema object defining what parameters the skill accepts
+
+**OpenClaw metadata (optional, under `metadata.openclaw`):**
+
+- `emoji`: Display emoji for the skill card
+- `primaryEnv`: Runtime environment - `shell` | `python` | `node` | `browser`
+
+**Example frontmatter for an API-dependent skill:**
+
+```yaml
+---
+name: tavily-search
+description: "Web search powered by Tavily API. Use when the agent needs to search the web for real-time information, news, or research."
+version: "1.0.0"
+tags: [search, web, api]
+keywords: [search, web search, tavily, research, lookup]
+dangerLevel: safe
+requires:
+  env: [TAVILY_API_KEY]
+metadata:
+  openclaw:
+    emoji: "🔍"
+    primaryEnv: python
+---
+```
+
+**Important:** When creating a skill that calls any external API or service, always check if it requires authentication credentials and declare them in `requires.env`. Failure to do so will cause the skill to appear as "dormant" in the UI with no clear reason, and will negatively impact its quality score.
 
 ##### Body
 

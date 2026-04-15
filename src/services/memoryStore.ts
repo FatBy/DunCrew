@@ -4,7 +4,7 @@
  * 前端 API 客户端，对接后端 SQLite + FTS5 + BGE 向量存储。
  * 提供：
  * - 搜索（信任后端混合排序 + 时间衰减 + MMR 去冗余）
- * - 记忆写入（exec_trace, gene, nexus_xp, session, memory）
+ * - 记忆写入（exec_trace, gene, dun_xp, session, memory）
  * - 批量导入/导出
  *
  * 后端实现在 duncrew-server.py，前端仅做 API 调用和结果后处理。
@@ -14,18 +14,18 @@ import type { MemorySearchResult } from '@/types'
 import { SEARCH_CONFIG } from '@/types'
 import { getServerUrl } from '@/utils/env'
 import { PROMOTION_PROMPT, parsePromotionResult } from '@/utils/memoryPromotion'
-import { chat, isLLMConfigured } from './llmService'
+import { chatBackground, isLLMConfigured } from './llmService'
 
 // ============================================
 // 类型定义
 // ============================================
 
-export type MemorySource = 'memory' | 'exec_trace' | 'gene' | 'nexus_xp' | 'session' | 'l1_memory' | 'diary'
+export type MemorySource = 'memory' | 'exec_trace' | 'gene' | 'dun_xp' | 'session' | 'l1_memory' | 'diary'
 
 export interface MemoryWriteParams {
   source: MemorySource
   content: string
-  nexusId?: string
+  dunId?: string
   tags?: string[]
   metadata?: Record<string, unknown>
 }
@@ -33,7 +33,7 @@ export interface MemoryWriteParams {
 export interface MemorySearchParams {
   query: string
   sources?: MemorySource[]
-  nexusId?: string
+  dunId?: string
   maxResults?: number
   minScore?: number
   /** 是否启用 MMR 去冗余 */
@@ -53,8 +53,12 @@ export interface MemoryStats {
 // 时间衰减计算
 // ============================================
 
-/** 计算时间衰减因子 (半衰期指数衰减) */
-function temporalDecay(entryTimestamp: number, halfLifeDays: number = SEARCH_CONFIG.TEMPORAL_DECAY_HALF_LIFE_DAYS): number {
+/** 计算时间衰减因子 (半衰期指数衰减，preference/discovery 使用更长半衰期) */
+function temporalDecay(entryTimestamp: number, category?: string): number {
+  // preference/discovery 记忆衰减更慢 (90天)，其余用默认 (30天)
+  const halfLifeDays = (category === 'preference' || category === 'discovery')
+    ? 90
+    : SEARCH_CONFIG.TEMPORAL_DECAY_HALF_LIFE_DAYS
   const ageMs = Date.now() - entryTimestamp
   const ageDays = ageMs / (24 * 60 * 60 * 1000)
   return Math.pow(0.5, ageDays / halfLifeDays)
@@ -80,8 +84,13 @@ function mmrRerank(
   const selected: MemorySearchResult[] = []
   const remaining = [...results]
 
-  const tokenize = (text: string): Set<string> =>
-    new Set(text.toLowerCase().split(/\s+/).filter(w => w.length > 1))
+  // 使用字符 bigram 分词，解决中文无空格导致 Jaccard 失效的问题
+  const tokenize = (text: string): Set<string> => {
+    const bigrams = new Set<string>()
+    const t = text.toLowerCase().slice(0, 300)
+    for (let i = 0; i < t.length - 1; i++) bigrams.add(t.slice(i, i + 2))
+    return bigrams
+  }
 
   const jaccardSim = (a: Set<string>, b: Set<string>): number => {
     let intersection = 0
@@ -138,6 +147,83 @@ class MemoryStoreService {
   private serverUrl: string = getServerUrl()
   private writeCallbacks: Array<(entries: MemorySearchResult[]) => void> = []
 
+  // ═══ 写入失败队列 ═══
+  // 后端不可用时暂存待写入记忆，恢复连接后通过 writeBatch 补写
+  private static readonly PENDING_WRITES_KEY = 'duncrew_pending_writes'
+  private static readonly MAX_PENDING = 50
+  private pendingWrites: MemoryWriteParams[] = []
+  private _flushing = false
+
+  constructor() {
+    this.restorePendingWrites()
+  }
+
+  private restorePendingWrites(): void {
+    try {
+      const raw = localStorage.getItem(MemoryStoreService.PENDING_WRITES_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed)) {
+          this.pendingWrites = parsed.slice(-MemoryStoreService.MAX_PENDING)
+        }
+      }
+    } catch { /* 静默 */ }
+  }
+
+  private savePendingWrites(): void {
+    try {
+      if (this.pendingWrites.length === 0) {
+        localStorage.removeItem(MemoryStoreService.PENDING_WRITES_KEY)
+      } else {
+        const toSave = this.pendingWrites.slice(-MemoryStoreService.MAX_PENDING)
+        localStorage.setItem(MemoryStoreService.PENDING_WRITES_KEY, JSON.stringify(toSave))
+      }
+    } catch { /* quota exceeded */ }
+  }
+
+  /** 入队待写入，基于 bigramJaccard 去重避免重复积累 */
+  private addToPendingWrites(params: MemoryWriteParams): void {
+    const isDuplicate = this.pendingWrites.some(
+      pending => this.bigramJaccardSimilarity(pending.content, params.content) > 0.7
+    )
+    if (!isDuplicate) {
+      this.pendingWrites.push(params)
+      if (this.pendingWrites.length > MemoryStoreService.MAX_PENDING) {
+        this.pendingWrites = this.pendingWrites.slice(-MemoryStoreService.MAX_PENDING)
+      }
+      this.savePendingWrites()
+    }
+  }
+
+  /** 后端恢复后批量补写队列中的记忆 */
+  async flushPendingWrites(): Promise<void> {
+    if (this._flushing || this.pendingWrites.length === 0) return
+    this._flushing = true
+
+    const toFlush = [...this.pendingWrites]
+    this.pendingWrites = []
+
+    try {
+      const written = await this.writeBatch(toFlush)
+      if (written === 0) {
+        // 全部失败，放回队列
+        this.pendingWrites = toFlush
+      }
+      // 部分成功：writeBatch 不告知哪条失败，保守认为全部成功
+    } catch {
+      // 网络错误，全部放回
+      this.pendingWrites = toFlush
+    } finally {
+      this.savePendingWrites()
+      this._flushing = false
+    }
+  }
+
+  /** 获取队列中待补写条目数量 */
+  get pendingWriteCount(): number {
+    return this.pendingWrites.length
+  }
+
   /** 更新后端地址 */
   setServerUrl(url: string): void {
     this.serverUrl = url
@@ -152,11 +238,11 @@ class MemoryStoreService {
   private synthesizeResult(params: MemoryWriteParams): MemorySearchResult {
     const now = Date.now()
     return {
-      id: `mem-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `mem-${crypto.randomUUID()}`,
       source: params.source,
       content: params.content,
       snippet: params.content.slice(0, 200),
-      nexusId: params.nexusId || '',
+      dunId: params.dunId || '',
       tags: params.tags || [],
       score: 1.0,
       createdAt: now,
@@ -187,7 +273,7 @@ class MemoryStoreService {
     const {
       query,
       sources,
-      nexusId,
+      dunId,
       maxResults = SEARCH_CONFIG.DEFAULT_MAX_RESULTS,
       minScore = SEARCH_CONFIG.DEFAULT_MIN_SCORE,
       useMmr = true,
@@ -206,7 +292,7 @@ class MemoryStoreService {
       })
       if (effectiveQuery === '') searchParams.set('hybrid', '0')
       if (sources?.length) searchParams.set('source', sources[0])
-      if (nexusId) searchParams.set('nexusId', nexusId)
+      if (dunId) searchParams.set('dunId', dunId)
       if (since) searchParams.set('since', String(since))
 
       const res = await fetch(`${this.serverUrl}/api/memory/search?${searchParams}`)
@@ -220,10 +306,9 @@ class MemoryStoreService {
       // 2. 信任后端 score，仅应用时间衰减
       if (results.length > 0) {
         for (const r of results) {
-          const tsMatch = r.id.match(/(\d{13})/)
-          if (tsMatch) {
-            const ts = parseInt(tsMatch[1])
-            r.score *= temporalDecay(ts)
+          // 使用 createdAt 字段计算时间衰减（后端返回毫秒时间戳）
+          if (r.createdAt) {
+            r.score *= temporalDecay(r.createdAt, r.metadata?.category as string)
           }
         }
 
@@ -249,7 +334,7 @@ class MemoryStoreService {
 
   // ═══ 写入 ═══
 
-  /** 写入一条记忆 */
+  /** 写入一条记忆（失败时自动入队，后端恢复后补写） */
   async write(params: MemoryWriteParams): Promise<boolean> {
     try {
       const res = await fetch(`${this.serverUrl}/api/memory/write`, {
@@ -258,7 +343,7 @@ class MemoryStoreService {
         body: JSON.stringify({
           source: params.source,
           content: params.content,
-          nexusId: params.nexusId,
+          dunId: params.dunId,
           tags: params.tags,
           metadata: params.metadata,
           timestamp: Date.now(),
@@ -266,11 +351,17 @@ class MemoryStoreService {
       })
       if (res.ok) {
         this.notifyWrite([this.synthesizeResult(params)])
+        // 写入成功，顺带尝试 flush 之前积压的队列
+        if (this.pendingWrites.length > 0) {
+          void this.flushPendingWrites()
+        }
         return true
       }
+      this.addToPendingWrites(params)
       return false
     } catch (error: any) {
       console.warn('[MemoryStore] Write error:', error.message)
+      this.addToPendingWrites(params)
       return false
     }
   }
@@ -336,10 +427,10 @@ class MemoryStoreService {
     }
   }
 
-  /** 按 Nexus ID 获取记忆 */
-  async getByNexus(nexusId: string, limit: number = 20): Promise<MemorySearchResult[]> {
+  /** 按 Dun ID 获取记忆 */
+  async getByDun(dunId: string, limit: number = 20): Promise<MemorySearchResult[]> {
     try {
-      const res = await fetch(`${this.serverUrl}/api/memory/nexus/${encodeURIComponent(nexusId)}?limit=${limit}`)
+      const res = await fetch(`${this.serverUrl}/api/memory/dun/${encodeURIComponent(dunId)}?limit=${limit}`)
       if (res.ok) {
         return await res.json()
       }
@@ -355,14 +446,14 @@ class MemoryStoreService {
   async searchGrouped(params: {
     query: string
     sourceLimits: Record<string, number>
-    nexusId?: string
+    dunId?: string
     minScore?: number
     useMmr?: boolean
   }): Promise<MemorySearchResult[]> {
     const {
       query,
       sourceLimits,
-      nexusId,
+      dunId,
       minScore = SEARCH_CONFIG.DEFAULT_MIN_SCORE,
       useMmr = true,
     } = params
@@ -374,25 +465,27 @@ class MemoryStoreService {
         body: JSON.stringify({
           q: query,
           sourceLimits,
-          nexusId,
+          dunId,
           minScore,
           useMmr,
         }),
       })
 
       if (!res.ok) {
-        console.warn(`[MemoryStore] searchGrouped failed: ${res.status}`)
-        return []
+        throw new Error(`searchGrouped HTTP ${res.status}`)
       }
 
-      const results: MemorySearchResult[] = await res.json()
+      const grouped = await res.json()
 
-      // 应用时间衰减
+      // 后端返回分组对象 { source: MemorySearchResult[] }，展平为数组
+      const results: MemorySearchResult[] = Array.isArray(grouped)
+        ? grouped
+        : Object.values(grouped).flat() as MemorySearchResult[]
+
+      // 应用时间衰减（使用 createdAt 字段）
       for (const result of results) {
-        const timestampMatch = result.id.match(/(\d{13})/)
-        if (timestampMatch) {
-          const entryTimestamp = parseInt(timestampMatch[1])
-          result.score *= temporalDecay(entryTimestamp)
+        if (result.createdAt) {
+          result.score *= temporalDecay(result.createdAt, result.metadata?.category as string)
         }
       }
 
@@ -411,7 +504,7 @@ class MemoryStoreService {
         maxResults: Object.values(sourceLimits).reduce((sum, limit) => sum + limit, 0),
         minScore,
         useMmr,
-        nexusId,
+        dunId,
       })
     }
   }
@@ -438,7 +531,7 @@ class MemoryStoreService {
     for (const recent of this.recentWrites) {
       if (this.bigramJaccardSimilarity(params.content, recent.content) > 0.7) {
         console.log(`[MemoryStore] Dedup (cache hit): skipped "${params.content.slice(0, 50)}..."`)
-        return true
+        return false  // 去重命中，实际未写入
       }
     }
 
@@ -454,7 +547,7 @@ class MemoryStoreService {
       if (similar.length > 0) {
         console.log(`[MemoryStore] Dedup (backend hit): skipped "${params.content.slice(0, 50)}..."`)
         this.recentWrites.push({ content: params.content, timestamp: now })
-        return true
+        return false  // 去重命中，实际未写入
       }
     } catch {
       // 去重查询失败不阻塞写入
@@ -504,11 +597,13 @@ class MemoryStoreService {
   // ═══ 旧数据清理 (F2) ═══
 
   /**
-   * 一次性清理旧低质量 L0 记忆
+   * 清理旧低质量 L0 记忆
    * 正则快速过滤工具日志 + LLM 兜底判断
    * 由设置页"整理记忆"按钮触发
+   *
+   * @param dryRun 为 true 时仅返回待删除列表，不执行实际删除（用于用户确认）
    */
-  async cleanupLowQualityMemories(): Promise<number> {
+  async cleanupLowQualityMemories(dryRun = false): Promise<{ cleaned: number; candidates: MemorySearchResult[] }> {
     const allL0 = await this.search({
       query: '*',
       sources: ['memory'],
@@ -518,6 +613,8 @@ class MemoryStoreService {
     })
 
     let cleaned = 0
+    const candidates: MemorySearchResult[] = []
+
     for (const mem of allL0) {
       const content = mem.content || mem.snippet || ''
 
@@ -527,22 +624,28 @@ class MemoryStoreService {
         || /操作了\s*.+\.(json|ts|py|md)/.test(content)
 
       if (isToolLog) {
-        await this.delete(mem.id)
-        cleaned++
+        candidates.push(mem)
+        if (!dryRun) {
+          await this.delete(mem.id)
+          cleaned++
+        }
         continue
       }
 
       // 对不确定的短内容，用 LLM 判断（复用 PROMOTION_PROMPT）
       if (content.length < 100 && isLLMConfigured()) {
         try {
-          const result = await chat([
+          const result = await chatBackground([
             { role: 'system', content: PROMOTION_PROMPT },
             { role: 'user', content },
-          ])
+          ], { priority: 9 })
           const parsed = parsePromotionResult(result?.trim() || '')
           if (!parsed) {
-            await this.delete(mem.id)
-            cleaned++
+            candidates.push(mem)
+            if (!dryRun) {
+              await this.delete(mem.id)
+              cleaned++
+            }
           }
         } catch {
           // LLM 调用失败，保守保留
@@ -550,8 +653,8 @@ class MemoryStoreService {
       }
     }
 
-    console.log(`[MemoryStore] Cleanup completed: ${cleaned} low-quality memories removed`)
-    return cleaned
+    console.log(`[MemoryStore] Cleanup ${dryRun ? 'dry-run' : 'completed'}: ${dryRun ? candidates.length + ' candidates' : cleaned + ' removed'}`)
+    return { cleaned: dryRun ? candidates.length : cleaned, candidates }
   }
 }
 

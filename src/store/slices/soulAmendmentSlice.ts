@@ -2,6 +2,7 @@ import type { StateCreator } from 'zustand'
 import type { SoulAmendment } from '@/types'
 import { SOUL_EVOLUTION_CONFIG } from '@/types'
 import { getServerUrl } from '@/utils/env'
+import type { DevicesSlice } from './devicesSlice'
 
 const STORAGE_KEY = 'duncrew_soul_amendments'
 const SERVER_URL = getServerUrl()
@@ -12,6 +13,8 @@ export interface SoulAmendmentSlice {
   amendments: SoulAmendment[]
   draftAmendments: SoulAmendment[]
   amendmentsLoading: boolean
+  soulResynthesisNeeded: boolean
+  soulResynthesizing: boolean
 
   // Actions
   loadAmendments: () => Promise<void>
@@ -19,9 +22,11 @@ export interface SoulAmendmentSlice {
   approveDraft: (id: string) => void
   rejectDraft: (id: string) => void
   archiveAmendment: (id: string) => void
+  unarchiveAmendment: (id: string) => void
   incrementHitCount: (id: string) => void
   applyAmendmentDecay: () => void
   saveAmendmentsToBackend: () => void
+  triggerSoulResynthesis: () => Promise<void>
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -31,10 +36,12 @@ function scheduleSave(saveToBackend: () => void) {
   saveTimer = setTimeout(saveToBackend, SAVE_DEBOUNCE_MS)
 }
 
-export const createSoulAmendmentSlice: StateCreator<SoulAmendmentSlice> = (set, get) => ({
+export const createSoulAmendmentSlice: StateCreator<SoulAmendmentSlice & DevicesSlice, [], [], SoulAmendmentSlice> = (set, get) => ({
   amendments: [],
   draftAmendments: [],
   amendmentsLoading: false,
+  soulResynthesisNeeded: false,
+  soulResynthesizing: false,
 
   loadAmendments: async () => {
     set({ amendmentsLoading: true })
@@ -77,9 +84,12 @@ export const createSoulAmendmentSlice: StateCreator<SoulAmendmentSlice> = (set, 
         status: 'approved',
         confirmedAt: Date.now(),
       }
+      const newAmendments = [...state.amendments, approved]
+      const approvedCount = newAmendments.filter((a) => a.status === 'approved').length
       return {
         draftAmendments: state.draftAmendments.filter((d) => d.id !== id),
-        amendments: [...state.amendments, approved],
+        amendments: newAmendments,
+        soulResynthesisNeeded: approvedCount > 0 && approvedCount % 5 === 0,
       }
     })
     scheduleSave(get().saveAmendmentsToBackend)
@@ -96,6 +106,15 @@ export const createSoulAmendmentSlice: StateCreator<SoulAmendmentSlice> = (set, 
     set((state) => ({
       amendments: state.amendments.map((a) =>
         a.id === id ? { ...a, status: 'archived' as const } : a,
+      ),
+    }))
+    scheduleSave(get().saveAmendmentsToBackend)
+  },
+
+  unarchiveAmendment: (id) => {
+    set((state) => ({
+      amendments: state.amendments.map((a) =>
+        a.id === id ? { ...a, status: 'approved' as const, weight: 0.5, confirmedAt: Date.now() } : a,
       ),
     }))
     scheduleSave(get().saveAmendmentsToBackend)
@@ -155,5 +174,28 @@ export const createSoulAmendmentSlice: StateCreator<SoulAmendmentSlice> = (set, 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(all),
     }).catch(() => {})
+  },
+
+  triggerSoulResynthesis: async () => {
+    const state = get()
+    const approvedAmendments = state.amendments
+      .filter((a) => a.status === 'approved')
+      .map((a) => ({ content: a.content, createdAt: a.createdAt }))
+
+    if (approvedAmendments.length === 0) return
+
+    set({ soulResynthesizing: true })
+    try {
+      const { resynthesizeSoul, saveSoulContent } = await import('@/services/soulGenerator')
+      const currentSoulContent = get().soulRawContent || ''
+      const newContent = await resynthesizeSoul(currentSoulContent, approvedAmendments)
+      await saveSoulContent(newContent)
+      get().applySoulFromGenerated?.(newContent)
+      set({ soulResynthesisNeeded: false })
+    } catch (error) {
+      console.error('[Soul] 重合成失败:', error)
+    } finally {
+      set({ soulResynthesizing: false })
+    }
   },
 })

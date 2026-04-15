@@ -59,7 +59,7 @@ class FileRegistryService {
    * - readFile: 不更新 mtime (只是读取)
    * - listDir: 不注册 (目录本身不需要跟踪)
    */
-  register(path: string, toolName: string, nexusId: string | null): void {
+  register(path: string, toolName: string, dunId: string | null): void {
     if (!path || toolName === 'listDir') return
 
     const key = normalizePath(path)
@@ -73,9 +73,9 @@ class FileRegistryService {
       if (toolName === 'writeFile' || toolName === 'appendFile') {
         existing.mtime = now
       }
-      // 如果之前没有关联 Nexus，补上
-      if (!existing.nexusId && nexusId) {
-        existing.nexusId = nexusId
+      // 如果之前没有关联 Dun，补上
+      if (!existing.dunId && dunId) {
+        existing.dunId = dunId
       }
     } else {
       const entry: FileRegistryEntry = {
@@ -83,7 +83,7 @@ class FileRegistryService {
         mtime: (toolName === 'writeFile' || toolName === 'appendFile') ? now : now,
         lastAccessed: now,
         accessCount: 1,
-        nexusId: nexusId,
+        dunId: dunId,
         registeredAt: now,
       }
       this.registry.set(key, entry)
@@ -100,12 +100,12 @@ class FileRegistryService {
 
   /**
    * 获取已知文件列表
-   * @param nexusId 可选过滤，只返回该 Nexus 关联的文件
+   * @param dunId 可选过滤，只返回该 Dun 关联的文件
    */
-  getKnownFiles(nexusId?: string): FileRegistryEntry[] {
+  getKnownFiles(dunId?: string): FileRegistryEntry[] {
     const entries = Array.from(this.registry.values())
-    const filtered = nexusId
-      ? entries.filter(e => e.nexusId === nexusId)
+    const filtered = dunId
+      ? entries.filter(e => e.dunId === dunId)
       : entries
     return filtered.sort((a, b) => b.lastAccessed - a.lastAccessed)
   }
@@ -121,8 +121,8 @@ class FileRegistryService {
    * 构建上下文注入段落
    * 格式化为 Markdown，供 buildDynamicContext() 注入系统提示词
    */
-  buildContextSection(nexusId?: string, maxEntries = 15): string {
-    const files = this.getKnownFiles(nexusId).slice(0, maxEntries)
+  buildContextSection(dunId?: string, maxEntries = 15): string {
+    const files = this.getKnownFiles(dunId).slice(0, maxEntries)
     if (files.length === 0) return ''
 
     const now = Date.now()

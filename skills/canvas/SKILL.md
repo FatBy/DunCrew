@@ -1,8 +1,41 @@
 ---
 name: canvas
-description: "Display HTML content on connected OpenClaw nodes (Mac app, iOS, Android)."
+description: "Display interactive HTML content, visualizations, dashboards, or games on connected OpenClaw nodes (Mac, iOS, Android). Supports live reloading, remote navigation, JS execution, and canvas snapshots for development, testing, and presentation scenarios."
 version: "1.0.0"
 author: "DunCrew"
+tags:
+  - ui
+  - display
+  - html
+  - visualization
+  - openclaw
+keywords:
+  - canvas
+  - display html
+  - present content
+  - webview
+  - screenshot
+  - navigate
+  - hide canvas
+  - openclaw nodes
+dangerLevel: safe
+inputs:
+  - name: action
+    type: string
+    description: "Action to perform: present, hide, navigate, eval, snapshot"
+    required: true
+  - name: node
+    type: string
+    description: "Target OpenClaw node ID (e.g., mac-63599bc4...)"
+    required: true
+  - name: target
+    type: string
+    description: "Full HTTP URL or relative file path to display or navigate to"
+    required: false
+  - name: script
+    type: string
+    description: "JavaScript code to execute within the canvas context (used with eval action)"
+    required: false
 metadata:
   openclaw:
     emoji: "🎨"

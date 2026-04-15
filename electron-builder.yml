@@ -1,10 +1,14 @@
 appId: com.duncrew.app
 productName: DunCrew
-copyright: Copyright © 2024 DunCrew Team
+copyright: Copyright 2024-2025 DunCrew
+
+# 自动更新: 从阿里云 OSS 加速下载
+publish:
+  provider: generic
+  url: https://duncrew.oss-accelerate.aliyuncs.com/updates
 
 directories:
   output: release
-  buildResources: build
 
 files:
   - dist/**/*
@@ -12,14 +16,36 @@ files:
   - "!node_modules"
 
 extraResources:
-  - from: build/duncrew-server.exe
-    to: duncrew-server.exe
+  # Python 后端 (PyInstaller onedir 产物)
+  - from: dist/duncrew-server/
+    to: duncrew-server/
     filter:
       - "**/*"
+  # Embedding 模型 (ONNX INT8 量化, ~313MB)
+  - from: models/bge-large-zh-v1.5-onnx-int8/
+    to: models/bge-large-zh-v1.5-onnx-int8/
+    filter:
+      - "**/*"
+  # 内置技能定义
+  - from: skills/
+    to: skills/
+  # 灵魂文件
+  - from: SOUL.md
+    to: SOUL.md
+  # 预装 Dun 角色
+  - from: duns/
+    to: duns/
+    filter:
+      - "**/*.md"
 
 win:
   target:
+    # 安装版 (NSIS)
     - target: nsis
+      arch:
+        - x64
+    # 绿色版 (免安装文件夹)
+    - target: dir
       arch:
         - x64
   icon: src-tauri/icons/icon.ico
@@ -33,45 +59,24 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: DunCrew
-  installerLanguages:
-    - zh_CN
-    - en_US
-appId: com.duncrew.app
-productName: DunCrew
-copyright: Copyright 2024-2025 DunCrew
-
-directories:
-  output: release
-
-files:
-  - dist/**/*
-  - dist-electron/**/*
-  - "!node_modules"
-
-extraResources:
-  - from: build/duncrew-server.exe
-    to: duncrew-server.exe
-  - from: skills/
-    to: skills/
-  - from: SOUL.md
-    to: SOUL.md
-
-win:
-  target: nsis
-  icon: src-tauri/icons/icon.ico
-
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  installerLanguages:
-    - 2052
-    - 1033
-  language: 2052
 
 mac:
-  target: dmg
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip             # electron-updater 在 macOS 上需要 zip 格式
+      arch:
+        - x64
+        - arm64
   icon: src-tauri/icons/icon.icns
+  identity: null                # 跳过代码签名（无 Apple Developer 账号）
+  notarize: false               # 跳过公证
 
 linux:
-  target: AppImage
+  target:
+    - target: AppImage
+      arch:
+        - x64
   icon: src-tauri/icons/icon.png

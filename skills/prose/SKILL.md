@@ -1,8 +1,47 @@
 ---
 name: prose
-description: "OpenProse VM skill pack. Activate on any `prose` command, .prose files, or OpenProse mentions; orchestrates multi-agent workflows."
+description: "OpenProse VM skill pack for orchestrating multi-agent workflows and executing .prose scripts. Activates on prose commands, .prose files, or OpenProse mentions. Used for AI-driven simulation, automated task routing, remote program fetching, and state-managed execution pipelines."
 version: "1.0.0"
 author: "DunCrew"
+tags:
+  - ai-orchestration
+  - workflow-automation
+  - multi-agent
+  - vm-simulation
+  - scripting
+keywords:
+  - prose
+  - openprose
+  - .prose
+  - boot
+  - run
+  - compile
+  - update
+  - examples
+  - multi-agent workflow
+  - script execution
+dangerLevel: high
+inputs:
+  - name: command
+    type: string
+    description: "Prose CLI command (e.g., run, compile, boot, update, help, examples)"
+    required: false
+  - name: file_path
+    type: string
+    description: "Path to a local .prose file or examples/ directory"
+    required: false
+  - name: registry_slug
+    type: string
+    description: "Registry reference in handle/slug format (e.g., alice/code-review)"
+    required: false
+  - name: url
+    type: string
+    description: "Direct HTTP/HTTPS URL to a remote .prose program"
+    required: false
+  - name: options
+    type: string
+    description: "Additional execution flags (e.g., --in-context, --state=sqlite, --state=postgres)"
+    required: false
 metadata:
   openclaw:
     emoji: "🪶"

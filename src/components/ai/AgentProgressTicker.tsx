@@ -17,6 +17,7 @@ import {
 import { cn } from '@/utils/cn'
 import { agentEventBus } from '@/services/agentEventBus'
 import type { AgentEventEnvelope, AgentPhase } from '@/types'
+import { useT } from '@/i18n'
 
 // ============================================
 // 进度条目类型
@@ -37,16 +38,16 @@ interface ProgressEntry {
 // ============================================
 
 const PHASE_DISPLAY: Record<AgentPhase, { icon: typeof Brain; color: string; label: string }> = {
-  idle:             { icon: Loader2,     color: 'stone',   label: '待命中' },
-  planning:         { icon: Brain,       color: 'purple',  label: '深度思考中' },
-  executing:        { icon: Wrench,      color: 'cyan',    label: '执行中' },
-  reflecting:       { icon: RefreshCw,   color: 'amber',   label: '反思中' },
-  compacting:       { icon: GitBranch,   color: 'blue',    label: '压缩上下文' },
-  waiting_approval: { icon: ShieldAlert, color: 'yellow',  label: '等待确认' },
-  recovering:       { icon: RefreshCw,   color: 'orange',  label: '恢复中' },
-  done:             { icon: CheckCircle2, color: 'emerald', label: '完成' },
-  error:            { icon: XCircle,     color: 'red',     label: '出错' },
-  aborted:          { icon: XCircle,     color: 'gray',    label: '已终止' },
+  idle:             { icon: Loader2,     color: 'stone',   label: 'progress.phase_idle' },
+  planning:         { icon: Brain,       color: 'purple',  label: 'progress.phase_planning' },
+  executing:        { icon: Wrench,      color: 'cyan',    label: 'progress.phase_executing' },
+  reflecting:       { icon: RefreshCw,   color: 'amber',   label: 'progress.phase_reflecting' },
+  compacting:       { icon: GitBranch,   color: 'blue',    label: 'progress.phase_compacting' },
+  waiting_approval: { icon: ShieldAlert, color: 'yellow',  label: 'progress.phase_waiting_approval' },
+  recovering:       { icon: RefreshCw,   color: 'orange',  label: 'progress.phase_recovering' },
+  done:             { icon: CheckCircle2, color: 'emerald', label: 'progress.phase_done' },
+  error:            { icon: XCircle,     color: 'red',     label: 'progress.phase_error' },
+  aborted:          { icon: XCircle,     color: 'gray',    label: 'progress.phase_aborted' },
 }
 
 // ============================================
@@ -55,17 +56,17 @@ const PHASE_DISPLAY: Record<AgentPhase, { icon: typeof Brain; color: string; lab
 
 function getToolDisplay(toolName: string): { icon: typeof Wrench; label: string } {
   const toolMap: Record<string, { icon: typeof Wrench; label: string }> = {
-    readFile:      { icon: FileText, label: '读取文件' },
-    writeFile:     { icon: FileText, label: '写入文件' },
-    appendFile:    { icon: FileText, label: '追加文件' },
-    listDir:       { icon: Eye,      label: '浏览目录' },
-    searchFiles:   { icon: Search,   label: '搜索文件' },
-    runCmd:        { icon: Terminal,  label: '执行命令' },
-    webSearch:     { icon: Search,   label: '网络搜索' },
-    webFetch:      { icon: Search,   label: '抓取网页' },
-    saveMemory:    { icon: Brain,     label: '保存记忆' },
-    searchMemory:  { icon: Search,   label: '搜索记忆' },
-    generateSkill: { icon: Sparkles, label: '生成技能' },
+    readFile:      { icon: FileText, label: 'progress.tool_read_file' },
+    writeFile:     { icon: FileText, label: 'progress.tool_write_file' },
+    appendFile:    { icon: FileText, label: 'progress.tool_append_file' },
+    listDir:       { icon: Eye,      label: 'progress.tool_list_dir' },
+    searchFiles:   { icon: Search,   label: 'progress.tool_search_files' },
+    runCmd:        { icon: Terminal,  label: 'progress.tool_run_cmd' },
+    webSearch:     { icon: Search,   label: 'progress.tool_web_search' },
+    webFetch:      { icon: Search,   label: 'progress.tool_web_fetch' },
+    saveMemory:    { icon: Brain,     label: 'progress.tool_save_memory' },
+    searchMemory:  { icon: Search,   label: 'progress.tool_search_memory' },
+    generateSkill: { icon: Sparkles, label: 'progress.tool_generate_skill' },
   }
   return toolMap[toolName] || { icon: Wrench, label: toolName }
 }
@@ -75,6 +76,7 @@ function getToolDisplay(toolName: string): { icon: typeof Wrench; label: string 
 // ============================================
 
 export function AgentProgressTicker() {
+  const t = useT()
   const [entries, setEntries] = useState<ProgressEntry[]>([])
   const [currentPhase, setCurrentPhase] = useState<AgentPhase>(() => {
     // 挂载时立即读取 eventBus 当前状态，避免错过 run_start 事件
@@ -114,7 +116,7 @@ export function AgentProgressTicker() {
           id: `init-tool-${tool.callId}`,
           icon: toolDisplay.icon,
           iconColor: tool.status === 'success' ? 'emerald' : 'red',
-          label: `${toolDisplay.label} · ${(tool.durationMs / 1000).toFixed(1)}s`,
+          label: `${t(toolDisplay.label as any)} · ${(tool.durationMs / 1000).toFixed(1)}s`,
           detail: tool.toolName,
           status: tool.status === 'success' ? 'done' : 'error',
           timestamp: tool.timestamp,
@@ -226,7 +228,7 @@ export function AgentProgressTicker() {
                   ? {
                       ...entry,
                       status: success ? 'done' as const : 'error' as const,
-                      label: `${toolDisplay.label} · ${(durationMs / 1000).toFixed(1)}s`,
+                      label: `${t(toolDisplay.label as any)} · ${(durationMs / 1000).toFixed(1)}s`,
                     }
                   : entry
               )
@@ -241,7 +243,7 @@ export function AgentProgressTicker() {
               const realIdx = prev.length - 1 - lastIdx
               return prev.map((entry, idx) =>
                 idx === realIdx
-                  ? { ...entry, status: 'error' as const, label: `${entry.label} 失败` }
+                  ? { ...entry, status: 'error' as const, label: `${t(entry.label as any)} ${t('progress.failed_suffix')}` }
                   : entry
               )
             })
@@ -258,7 +260,7 @@ export function AgentProgressTicker() {
                 id: entryId,
                 icon: Zap,
                 iconColor: 'amber',
-                label: `步骤 ${stepIndex + 1}/${totalSteps}`,
+                label: `${t('progress.step_label')} ${stepIndex + 1}/${totalSteps}`,
                 detail: event.data.description as string,
                 status: 'active',
                 timestamp: Date.now(),
@@ -269,7 +271,7 @@ export function AgentProgressTicker() {
             const success = event.data.success as boolean
             setEntries(prev =>
               prev.map(entry =>
-                entry.label.startsWith(`步骤 ${stepIndex + 1}/`) && entry.status === 'active'
+                entry.label.startsWith(`${t('progress.step_label')} ${stepIndex + 1}/`) && entry.status === 'active'
                   ? { ...entry, status: success ? 'done' as const : 'error' as const }
                   : entry
               )
@@ -285,8 +287,8 @@ export function AgentProgressTicker() {
                 id: entryId,
                 icon: RefreshCw,
                 iconColor: 'amber',
-                label: '反思中',
-                detail: `工具 ${event.data.failedTool} 失败，重新规划...`,
+                label: 'progress.reflecting',
+                detail: `工具 ${event.data.failedTool} ${t('progress.failed_suffix')}，重新规划...`,
                 status: 'active',
                 timestamp: Date.now(),
               },
@@ -294,8 +296,8 @@ export function AgentProgressTicker() {
           } else if (event.type === 'reflexion_end') {
             setEntries(prev =>
               prev.map(entry =>
-                entry.label === '反思中' && entry.status === 'active'
-                  ? { ...entry, status: 'done' as const, label: '反思完成' }
+                entry.label === 'progress.reflecting' && entry.status === 'active'
+                  ? { ...entry, status: 'done' as const, label: 'progress.reflect_done' }
                   : entry
               )
             )
@@ -310,7 +312,7 @@ export function AgentProgressTicker() {
                 id: entryId,
                 icon: GitBranch,
                 iconColor: 'blue',
-                label: '压缩上下文',
+                label: 'progress.compacting_context',
                 status: 'active',
                 timestamp: Date.now(),
               },
@@ -318,7 +320,7 @@ export function AgentProgressTicker() {
           } else if (event.type === 'compaction_end') {
             setEntries(prev =>
               prev.map(entry =>
-                entry.label === '压缩上下文' && entry.status === 'active'
+                entry.label === 'progress.compacting_context' && entry.status === 'active'
                   ? { ...entry, status: 'done' as const }
                   : entry
               )
@@ -334,7 +336,7 @@ export function AgentProgressTicker() {
                 id: entryId,
                 icon: ShieldAlert,
                 iconColor: 'yellow',
-                label: '等待确认',
+                label: 'progress.waiting_confirm',
                 detail: event.data.reason as string,
                 status: 'active',
                 timestamp: Date.now(),
@@ -344,8 +346,8 @@ export function AgentProgressTicker() {
             const approved = event.data.approved as boolean
             setEntries(prev =>
               prev.map(entry =>
-                entry.label === '等待确认' && entry.status === 'active'
-                  ? { ...entry, status: 'done' as const, label: approved ? '已批准' : '已拒绝' }
+                entry.label === 'progress.waiting_confirm' && entry.status === 'active'
+                  ? { ...entry, status: 'done' as const, label: approved ? 'progress.approved' : 'progress.rejected' }
                   : entry
               )
             )
@@ -399,7 +401,7 @@ export function AgentProgressTicker() {
             phaseDisplay.color === 'yellow' && 'text-yellow-500',
             phaseDisplay.color === 'orange' && 'text-orange-500',
           )}>
-            {phaseDisplay.label}
+            {t(phaseDisplay.label as any)}
           </span>
           {phaseElapsed > 0 && (
             <span className="text-xs font-mono text-stone-400">
@@ -457,7 +459,7 @@ export function AgentProgressTicker() {
                   entry.status === 'done' && 'text-stone-400',
                   entry.status === 'error' && 'text-red-400',
                 )}>
-                  {entry.label}
+                  {t(entry.label as any)}
                 </span>
 
                 {/* 详情 */}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, memo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Play, Loader2, Brain, Wrench, Terminal,
@@ -10,6 +10,8 @@ import { cn } from '@/utils/cn'
 import { useStore } from '@/store'
 import type { TaskItem, ExecutionStep, SubTask, TaskPlan, AgentPhase, AgentEventEnvelope } from '@/types'
 import { agentEventBus } from '@/services/agentEventBus'
+import { RunStateSummaryBar } from './RunStateSummaryBar'
+
 import { useState } from 'react'
 
 // --- 执行步骤图标 ---
@@ -209,8 +211,86 @@ function SubTaskTreeView({ plan }: { plan: TaskPlan }) {
   )
 }
 
+// --- 工具结果摘要生成 ---
+function generateToolResultSummary(toolName: string | undefined, content: string): string {
+  const contentLength = content.length
+
+  if (!toolName) {
+    return `结果 (${contentLength} 字符)`
+  }
+
+  const sizeLabel = contentLength > 1024
+    ? `${(contentLength / 1024).toFixed(1)} K字符`
+    : `${contentLength} 字符`
+
+  switch (toolName) {
+    case 'readFile': {
+      const pathMatch = content.match(/^(?:文件内容|Content of)\s*[`"]?([^\n`"]+)/i)
+      const fileName = pathMatch?.[1] || '文件'
+      const lineCount = content.split('\n').length
+      return `📄 读取 ${fileName} (${lineCount} 行, ${sizeLabel})`
+    }
+    case 'writeFile':
+    case 'appendFile':
+      return `✏️ ${toolName === 'writeFile' ? '写入' : '追加'}完成 (${sizeLabel})`
+    case 'runCmd': {
+      const exitMatch = content.match(/exit code[:\s]*(\d+)/i)
+      const exitCode = exitMatch?.[1] || '0'
+      return `⚡ 命令执行完成 (exit: ${exitCode}, ${sizeLabel})`
+    }
+    case 'webSearch':
+      return `🔍 搜索完成 (${sizeLabel})`
+    case 'webFetch':
+      return `🌐 网页抓取完成 (${sizeLabel})`
+    case 'listDir': {
+      const itemCount = content.split('\n').filter(l => l.trim()).length
+      return `📁 目录列表 (${itemCount} 项)`
+    }
+    case 'searchFiles':
+      return `🔎 文件搜索完成 (${sizeLabel})`
+    case 'searchMemory':
+      return `🧠 记忆搜索完成 (${sizeLabel})`
+    default:
+      return `${toolName} 完成 (${sizeLabel})`
+  }
+}
+
+// --- 工具结果展示块 (摘要 + 折叠) ---
+const ToolResultBlock = memo(function ToolResultBlock({ toolName, content }: { toolName?: string; content: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const summary = generateToolResultSummary(toolName, content)
+  const isLongContent = content.length > 200
+
+  if (!isLongContent) {
+    return (
+      <p className="text-[13px] text-stone-500 font-mono mt-0.5 whitespace-pre-wrap break-all leading-relaxed line-clamp-6">
+        {content}
+      </p>
+    )
+  }
+
+  return (
+    <div className="mt-0.5">
+      <div className="flex items-center gap-2">
+        <span className="text-[13px] text-stone-400 font-mono">{summary}</span>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="text-xs font-mono text-cyan-400/60 hover:text-cyan-400 transition-colors"
+        >
+          {expanded ? '收起' : '展开'}
+        </button>
+      </div>
+      {expanded && (
+        <pre className="mt-1.5 p-2 bg-stone-50 rounded border border-stone-100 text-[12px] text-stone-500 font-mono whitespace-pre-wrap break-all max-h-[40vh] overflow-y-auto leading-relaxed">
+          {content}
+        </pre>
+      )}
+    </div>
+  )
+})
+
 // --- 工具参数展示块 ---
-function ToolArgsBlock({ args }: { args: Record<string, unknown> }) {
+const ToolArgsBlock = memo(function ToolArgsBlock({ args }: { args: Record<string, unknown> }) {
   const [expanded, setExpanded] = useState(false)
   const entries = Object.entries(args)
   if (entries.length === 0) return null
@@ -243,7 +323,7 @@ function ToolArgsBlock({ args }: { args: Record<string, unknown> }) {
       )}
     </div>
   )
-}
+})
 
 // ============================================
 // 实时事件流 - 打字机式展示 Agent 正在做什么
@@ -430,10 +510,7 @@ function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
     if (thinkingBufferRef.current) {
       const buffer = thinkingBufferRef.current
       thinkingBufferRef.current = ''
-      setThinkingPreview(prev => {
-        const updated = prev + buffer
-        return updated.length > 200 ? updated.slice(-200) : updated
-      })
+      setThinkingPreview(prev => (prev + buffer).slice(-10000))  // 保留最后 10000 字符，防止无界增长
     }
 
     // 合并事件：新增 + 更新，一次 setEvents
@@ -521,18 +598,19 @@ function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
           break
 
         case 'assistant':
-          if (event.type === 'text_delta' || event.type === 'thinking_delta') {
-            thinkingBufferRef.current += event.data.delta as string
-          } else if (event.type === 'message_end') {
+          if (event.type === 'message_start') {
+            // 新一轮 LLM 调用开始时清除上一轮的思考内容
             phaseEventsRef.current.push({ clearThinking: true })
+          } else if (event.type === 'text_delta' || event.type === 'thinking_delta') {
+            thinkingBufferRef.current += event.data.delta as string
           }
+          // message_end: 不再清除思考内容，让思考在工具执行期间保持可见
           break
 
         case 'tool':
           if (event.type === 'tool_start') {
             const toolName = event.data.toolName as string
             const toolDisplay = getToolIcon(toolName)
-            phaseEventsRef.current.push({ clearThinking: true })
             newEntriesRef.current.push({
               id: entryId,
               icon: toolDisplay.icon,
@@ -777,7 +855,7 @@ function LiveEventStream({ isExecuting }: { isExecuting: boolean }) {
 }
 
 // --- 执行步骤查看器 ---
-function ExecutionStepsViewer({ steps, output, error, duration, isExecuting }: {
+const ExecutionStepsViewer = memo(function ExecutionStepsViewer({ steps, output, error, duration, isExecuting }: {
   steps?: ExecutionStep[]
   output?: string
   error?: string
@@ -788,12 +866,12 @@ function ExecutionStepsViewer({ steps, output, error, duration, isExecuting }: {
   const scrollRef = useRef<HTMLDivElement>(null)
   
   // 一键修复功能
-  const openNexusPanelWithInput = useStore((s) => s.openNexusPanelWithInput)
+  const openDunPanelWithInput = useStore((s) => s.openDunPanelWithInput)
   const addToast = useStore((s) => s.addToast)
   
   const handleOneClickFix = () => {
     const prompt = `我在执行任务时遇到了错误，请帮我分析并修复：\n\n\`\`\`\n${error}\n\`\`\`\n\n请分析错误原因并给出解决方案。`
-    openNexusPanelWithInput('skill-scout', prompt)
+    openDunPanelWithInput('skill-scout', prompt)
     addToast({ type: 'info', title: '已填入修复需求，请按回车执行' })
   }
 
@@ -882,9 +960,16 @@ function ExecutionStepsViewer({ steps, output, error, duration, isExecuting }: {
                               <span className="text-[13px] font-mono text-stone-300 ml-auto">{step.duration}ms</span>
                             )}
                           </div>
-                          <p className="text-[13px] text-stone-500 font-mono mt-0.5 whitespace-pre-wrap break-all leading-relaxed line-clamp-6">
-                            {step.content}
-                          </p>
+                          {step.type === 'tool_result' ? (
+                            <ToolResultBlock toolName={step.toolName} content={step.content} />
+                          ) : (
+                            <p className={cn(
+                              'text-[13px] text-stone-500 font-mono mt-0.5 whitespace-pre-wrap break-all leading-relaxed',
+                              step.type !== 'thinking' && 'line-clamp-6',
+                            )}>
+                              {step.content}
+                            </p>
+                          )}
                           {hasToolArgs && (
                             <ToolArgsBlock args={step.toolArgs!} />
                           )}
@@ -907,7 +992,7 @@ function ExecutionStepsViewer({ steps, output, error, duration, isExecuting }: {
       )}
     </div>
   )
-}
+})
 
 // ============================================
 // ExecutionFocusView 主组件
@@ -918,7 +1003,7 @@ interface ExecutionFocusViewProps {
   onTerminate: (taskId: string) => void
 }
 
-export function ExecutionFocusView({ task, onTerminate }: ExecutionFocusViewProps) {
+export const ExecutionFocusView = memo(function ExecutionFocusView({ task, onTerminate }: ExecutionFocusViewProps) {
   // 获取最新步骤摘要
   const latestStep = task.executionSteps?.length
     ? task.executionSteps[task.executionSteps.length - 1]
@@ -955,6 +1040,9 @@ export function ExecutionFocusView({ task, onTerminate }: ExecutionFocusViewProp
         </button>
       </div>
 
+      {/* 运行状态摘要条 */}
+      {task.status === 'executing' && <RunStateSummaryBar />}
+
       {/* 执行详情区域 */}
       <div className="flex-1 overflow-y-auto min-h-0">
         {task.taskPlan ? (
@@ -974,4 +1062,4 @@ export function ExecutionFocusView({ task, onTerminate }: ExecutionFocusViewProp
       </div>
     </div>
   )
-}
+})

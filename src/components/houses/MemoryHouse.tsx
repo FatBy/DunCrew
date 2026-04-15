@@ -3,8 +3,8 @@ import { useMemoryData } from './memory/useMemoryData'
 import { MemoryToolbar, type MemoryTab } from './memory/MemoryToolbar'
 import { MemorySidebar } from './memory/MemorySidebar'
 import { L0MemoryWall } from './memory/L0MemoryWall'
-import { ExecTraceTimeline } from './memory/ExecTraceTimeline'
-import { NexusGraph } from './memory/NexusGraph'
+import { BaseAnalysisPanel } from './memory/BaseAnalysisPanel'
+import { NexusGraph } from './memory/DunGraph'
 import { TemporalLens } from './memory/TemporalLens'
 import { MemoryStatusBar } from './memory/MemoryStatusBar'
 
@@ -58,7 +58,7 @@ export function MemoryHouse() {
             />
           )}
           {activeTab === 'traces' && (
-            <ExecTraceTimeline traces={data.traces} />
+            <BaseAnalysisPanel />
           )}
           {activeTab === 'graph' && (
             <NexusGraph nodes={data.graphNodes} edges={data.graphEdges} />

@@ -85,9 +85,9 @@ export function ExecTraceTimeline({ traces }: ExecTraceTimelineProps) {
                     )}>
                       {trace.operationType}
                     </span>
-                    {trace.nexusLabel && (
+                    {trace.dunLabel && (
                       <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100/80 text-emerald-700">
-                        {trace.nexusLabel}
+                        {trace.dunLabel}
                       </span>
                     )}
                     <span className="ml-auto text-[10px] font-mono text-stone-400 shrink-0">

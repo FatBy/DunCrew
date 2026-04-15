@@ -1,0 +1,198 @@
+name: Release & Publish
+
+# 当推送 v* 标签时触发（如 v0.2.0, v1.0.0-beta.1）
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  PYTHON_VERSION: '3.10'
+  NODE_VERSION: '20'
+  EMBEDDING_MODEL_ID: BAAI/bge-large-zh-v1.5
+  # 阿里云 OSS 配置
+  OSS_BUCKET: duncrew
+  OSS_ENDPOINT: oss-accelerate.aliyuncs.com
+
+jobs:
+  # ═══════════════ Windows ═══════════════
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Python deps
+        run: |
+          pip install pyinstaller pyyaml
+          pip install pdfplumber python-docx python-pptx pytesseract Pillow
+          pip install openpyxl beautifulsoup4 ebooklib striprtf trafilatura
+          pip install httpx onnxruntime tokenizers numpy
+          pip install mss pygetwindow
+          pip install huggingface_hub optimum[onnxruntime]
+
+      - name: Download & quantize embedding model
+        run: python scripts/setup/download_model.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run electron:compile
+
+      - name: Build Python backend (PyInstaller)
+        run: python -m PyInstaller duncrew-server.spec --clean --noconfirm
+
+      - name: Build Electron app (Windows)
+        run: npx electron-builder --win --publish never
+
+      # 上传到阿里云 OSS
+      - name: Install ossutil
+        run: |
+          Invoke-WebRequest -Uri "https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-windows-amd64.zip" -OutFile ossutil.zip
+          Expand-Archive -Path ossutil.zip -DestinationPath ossutil
+          echo "${{ github.workspace }}\ossutil\ossutil-v1.7.19-windows-amd64" >> $env:GITHUB_PATH
+
+      - name: Upload to OSS
+        run: |
+          ossutil64.exe config -e ${{ env.OSS_ENDPOINT }} -i ${{ secrets.OSS_ACCESS_KEY_ID }} -k ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          # 上传 NSIS 安装包
+          ossutil64.exe cp -rf release/*.exe oss://${{ env.OSS_BUCKET }}/
+          # 上传 latest.yml（electron-updater 检查更新的元数据文件）
+          ossutil64.exe cp -rf release/latest.yml oss://${{ env.OSS_BUCKET }}/
+
+  # ═══════════════ macOS (x64) ═══════════════
+  release-macos:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Python deps
+        run: |
+          pip install pyinstaller pyyaml
+          pip install pdfplumber python-docx python-pptx pytesseract Pillow
+          pip install openpyxl beautifulsoup4 ebooklib striprtf trafilatura
+          pip install httpx onnxruntime tokenizers numpy
+          pip install mss pyobjc-framework-Quartz
+          pip install huggingface_hub optimum[onnxruntime]
+
+      - name: Download & quantize embedding model
+        run: python scripts/setup/download_model.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run electron:compile
+
+      - name: Build Python backend (PyInstaller)
+        run: python -m PyInstaller duncrew-server.spec --clean --noconfirm
+
+      - name: Build Electron app (macOS x64)
+        run: npx electron-builder --mac --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # 上传到阿里云 OSS
+      - name: Install ossutil
+        run: |
+          curl -o ossutil.zip https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-mac-amd64.zip
+          unzip ossutil.zip
+          chmod +x ossutil-v1.7.19-mac-amd64/ossutil64
+          sudo mv ossutil-v1.7.19-mac-amd64/ossutil64 /usr/local/bin/
+
+      - name: Upload to OSS
+        run: |
+          ossutil64 config -e ${{ env.OSS_ENDPOINT }} -i ${{ secrets.OSS_ACCESS_KEY_ID }} -k ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          # 上传 DMG 和 zip
+          ossutil64 cp -rf release/*.dmg oss://${{ env.OSS_BUCKET }}/
+          ossutil64 cp -rf release/*.zip oss://${{ env.OSS_BUCKET }}/
+          # 上传 latest-mac.yml
+          ossutil64 cp -rf release/latest-mac.yml oss://${{ env.OSS_BUCKET }}/
+
+  # ═══════════════ Linux ═══════════════
+  release-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Python deps
+        run: |
+          pip install pyinstaller pyyaml
+          pip install pdfplumber python-docx python-pptx pytesseract Pillow
+          pip install openpyxl beautifulsoup4 ebooklib striprtf trafilatura
+          pip install httpx onnxruntime tokenizers numpy
+          pip install mss
+          pip install huggingface_hub optimum[onnxruntime]
+
+      - name: Download & quantize embedding model
+        run: python scripts/setup/download_model.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run electron:compile
+
+      - name: Build Python backend (PyInstaller)
+        run: python -m PyInstaller duncrew-server.spec --clean --noconfirm
+
+      - name: Build Electron app (Linux)
+        run: npx electron-builder --linux --publish never
+
+      # 上传到阿里云 OSS
+      - name: Install ossutil
+        run: |
+          curl -o ossutil.zip https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip
+          unzip ossutil.zip
+          chmod +x ossutil-v1.7.19-linux-amd64/ossutil64
+          sudo mv ossutil-v1.7.19-linux-amd64/ossutil64 /usr/local/bin/
+
+      - name: Upload to OSS
+        run: |
+          ossutil64 config -e ${{ env.OSS_ENDPOINT }} -i ${{ secrets.OSS_ACCESS_KEY_ID }} -k ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          # 上传 AppImage
+          ossutil64 cp -rf release/*.AppImage oss://${{ env.OSS_BUCKET }}/
+          # 上传 latest-linux.yml
+          ossutil64 cp -rf release/latest-linux.yml oss://${{ env.OSS_BUCKET }}/

@@ -16,7 +16,7 @@ interface MemoryToolbarProps {
 
 const tabs: { key: MemoryTab; label: string; icon: typeof Brain }[] = [
   { key: 'wall', label: '核心记忆', icon: Brain },
-  { key: 'traces', label: '执行轨迹', icon: Route },
+  { key: 'traces', label: '执行分析', icon: Route },
   { key: 'graph', label: '概念图谱', icon: Share2 },
 ]
 

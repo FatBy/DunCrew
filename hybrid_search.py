@@ -13,6 +13,7 @@ DunCrew 混合搜索引擎 (Hybrid Search Engine)
 
 import json
 import math
+import os
 import re
 import sqlite3
 import threading
@@ -21,11 +22,12 @@ from typing import Any, Callable
 
 import numpy as np
 
-# Embedding 延迟导入 (模型可能不存在)
-_st_available = False
+# Embedding 延迟导入 — ONNX Runtime 版本 (模型可能不存在)
+_ort_available = False
 try:
-    from sentence_transformers import SentenceTransformer
-    _st_available = True
+    import onnxruntime as ort
+    from tokenizers import Tokenizer as HFTokenizer
+    _ort_available = True
 except ImportError:
     pass
 
@@ -64,22 +66,25 @@ BGE_QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章�
 
 
 # ============================================
-# EmbeddingEngine - 本地 BGE-large-zh-v1.5
+# EmbeddingEngine - 本地 BGE-large-zh-v1.5 (ONNX Runtime)
 # ============================================
 
 class EmbeddingEngine:
-    """懒加载本地 BGE Embedding 模型，线程安全"""
+    """懒加载本地 BGE Embedding 模型 (ONNX Runtime)，线程安全"""
+
+    ONNX_FILE = 'model_quantized.onnx'
 
     def __init__(self, model_path: str):
         self._model_path = model_path
-        self._model: Any = None
+        self._session: Any = None
+        self._tokenizer: Any = None
         self._lock = threading.Lock()
         self._available = False
         self._dimension = 1024  # BGE-large-zh default
 
     @property
     def available(self) -> bool:
-        if self._model is not None:
+        if self._session is not None:
             return self._available
         self._ensure_loaded()
         return self._available
@@ -89,25 +94,80 @@ class EmbeddingEngine:
         return self._dimension
 
     def _ensure_loaded(self):
-        if self._model is not None:
+        if self._session is not None:
             return
         with self._lock:
-            if self._model is not None:
+            if self._session is not None:
                 return
-            if not _st_available:
-                print("[EmbeddingEngine] sentence-transformers not installed, disabled")
+            if not _ort_available:
+                print("[EmbeddingEngine] onnxruntime/tokenizers not installed, disabled")
                 self._available = False
                 return
             try:
-                self._model = SentenceTransformer(self._model_path)
-                dim = self._model.get_sentence_embedding_dimension()
-                if dim:
-                    self._dimension = dim
+                from pathlib import Path
+                model_dir = Path(self._model_path)
+                onnx_path = model_dir / self.ONNX_FILE
+                tokenizer_path = model_dir / 'tokenizer.json'
+
+                if not onnx_path.exists():
+                    print(f"[EmbeddingEngine] ONNX model not found: {onnx_path}")
+                    self._available = False
+                    return
+
+                if not tokenizer_path.exists():
+                    print(f"[EmbeddingEngine] tokenizer.json not found: {tokenizer_path}")
+                    self._available = False
+                    return
+
+                # 加载 ONNX session
+                sess_options = ort.SessionOptions()
+                sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                sess_options.intra_op_num_threads = max(1, (os.cpu_count() or 4) // 2)
+
+                self._session = ort.InferenceSession(
+                    str(onnx_path), sess_options,
+                    providers=['CPUExecutionProvider'],
+                )
+
+                # 加载 tokenizer
+                self._tokenizer = HFTokenizer.from_file(str(tokenizer_path))
+                self._tokenizer.enable_padding(
+                    direction="right",
+                    pad_id=0,
+                    pad_token='[PAD]',
+                )
+                self._tokenizer.enable_truncation(max_length=512)
+
                 self._available = True
-                print(f"[EmbeddingEngine] Loaded BGE model ({self._dimension}d) from {self._model_path}")
+                print(f"[EmbeddingEngine] Loaded ONNX BGE model ({self._dimension}d) from {self._model_path}")
             except Exception as e:
                 print(f"[EmbeddingEngine] Failed to load model: {e}")
                 self._available = False
+
+    def _run_inference(self, texts: list[str]) -> np.ndarray:
+        """内部推理: tokenize → ONNX → CLS pooling → L2 normalize"""
+        encodings = self._tokenizer.encode_batch(texts)
+        input_ids = np.array([e.ids for e in encodings], dtype=np.int64)
+        attention_mask = np.array([e.attention_mask for e in encodings], dtype=np.int64)
+        token_type_ids = np.array([e.type_ids for e in encodings], dtype=np.int64)
+
+        feeds = {
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'token_type_ids': token_type_ids,
+        }
+        valid_input_names = {inp.name for inp in self._session.get_inputs()}
+        feeds = {k: v for k, v in feeds.items() if k in valid_input_names}
+
+        outputs = self._session.run(None, feeds)
+
+        # CLS pooling: 取 [CLS] token (index 0) 的向量
+        cls_embeddings = outputs[0][:, 0, :]
+
+        # L2 normalize
+        norms = np.linalg.norm(cls_embeddings, axis=1, keepdims=True)
+        norms = np.clip(norms, a_min=1e-12, a_max=None)
+        return cls_embeddings / norms
 
     def encode(self, texts: list[str], batch_size: int = 32) -> np.ndarray:
         """批量编码文本 → 归一化向量"""
@@ -115,7 +175,11 @@ class EmbeddingEngine:
         if not self._available or not texts:
             return np.array([])
         with self._lock:
-            return self._model.encode(texts, batch_size=batch_size, normalize_embeddings=True)
+            all_embeddings = []
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i:i + batch_size]
+                all_embeddings.append(self._run_inference(batch))
+            return np.vstack(all_embeddings) if all_embeddings else np.array([])
 
     def encode_query(self, query: str) -> np.ndarray:
         """编码查询 (加 BGE instruction 前缀)"""
@@ -123,10 +187,7 @@ class EmbeddingEngine:
         if not self._available:
             return np.array([])
         with self._lock:
-            return self._model.encode(
-                [BGE_QUERY_INSTRUCTION + query],
-                normalize_embeddings=True,
-            )[0]
+            return self._run_inference([BGE_QUERY_INSTRUCTION + query])[0]
 
 
 # ============================================
@@ -392,7 +453,7 @@ class HybridSearchEngine:
         self,
         conn: sqlite3.Connection,
         query: str,
-        nexus_id: str | None = None,
+        dun_id: str | None = None,
         limit: int = 10,
         use_expansion: bool = True,
         use_reranker: bool = False,  # 默认关闭，不再使用精排
@@ -414,11 +475,11 @@ class HybridSearchEngine:
         all_vec: list[list[dict]] = []
 
         for q in queries:
-            bm25_results = self._search_bm25(conn, q, nexus_id, cfg['BM25_CANDIDATES'])
+            bm25_results = self._search_bm25(conn, q, dun_id, cfg['BM25_CANDIDATES'])
             all_bm25.append(bm25_results)
 
             if self.embedding.available:
-                vec_results = self._search_vector(conn, q, nexus_id, cfg['VECTOR_CANDIDATES'])
+                vec_results = self._search_vector(conn, q, dun_id, cfg['VECTOR_CANDIDATES'])
                 all_vec.append(vec_results)
             else:
                 all_vec.append([])
@@ -448,7 +509,7 @@ class HybridSearchEngine:
             'content': r.get('content', ''),
             'snippet': r.get('snippet', r.get('content', '')[:200]),
             'source': r.get('source', ''),
-            'nexusId': r.get('nexusId', ''),
+            'dunId': r.get('dunId', ''),
             'tags': r.get('tags', '[]'),
             'createdAt': r.get('createdAt', 0),
             'score': r['final_score'],
@@ -464,7 +525,7 @@ class HybridSearchEngine:
 
     def _search_bm25(
         self, conn: sqlite3.Connection, query: str,
-        nexus_id: str | None, limit: int,
+        dun_id: str | None, limit: int,
     ) -> list[dict]:
         """FTS5 关键词检索"""
         fts_sql = """
@@ -474,9 +535,9 @@ class HybridSearchEngine:
             WHERE memory_fts MATCH ?
         """
         params: list = [query]
-        if nexus_id:
-            fts_sql += " AND m.nexus_id = ?"
-            params.append(nexus_id)
+        if dun_id:
+            fts_sql += " AND m.dun_id = ?"
+            params.append(dun_id)
         fts_sql += " ORDER BY rank LIMIT ?"
         params.append(limit)
 
@@ -486,9 +547,9 @@ class HybridSearchEngine:
             # FTS 语法错误降级 LIKE
             like_sql = "SELECT * FROM memory WHERE content LIKE ?"
             like_params: list = [f"%{query}%"]
-            if nexus_id:
-                like_sql += " AND nexus_id = ?"
-                like_params.append(nexus_id)
+            if dun_id:
+                like_sql += " AND dun_id = ?"
+                like_params.append(dun_id)
             like_sql += " ORDER BY created_at DESC LIMIT ?"
             like_params.append(limit)
             rows = conn.execute(like_sql, like_params).fetchall()
@@ -499,7 +560,7 @@ class HybridSearchEngine:
                 'id': r['id'],
                 'content': r['content'],
                 'source': r['source'],
-                'nexusId': r['nexus_id'],
+                'dunId': r['dun_id'],
                 'tags': r['tags'] or '[]',
                 'createdAt': r['created_at'],
                 'bm25_rank': abs(r['rank']) if 'rank' in r.keys() else 0,
@@ -510,7 +571,7 @@ class HybridSearchEngine:
 
     def _search_vector(
         self, conn: sqlite3.Connection, query: str,
-        nexus_id: str | None, limit: int,
+        dun_id: str | None, limit: int,
     ) -> list[dict]:
         """向量相似度检索"""
         query_vec = self.embedding.encode_query(query)
@@ -518,11 +579,11 @@ class HybridSearchEngine:
             return []
 
         # 读取向量表
-        vec_sql = "SELECT mv.memory_id, mv.embedding, mv.chunk_content, m.content, m.source, m.nexus_id, m.tags, m.created_at FROM memory_vectors mv JOIN memory m ON m.id = mv.memory_id"
+        vec_sql = "SELECT mv.memory_id, mv.embedding, mv.chunk_content, m.content, m.source, m.dun_id, m.tags, m.created_at FROM memory_vectors mv JOIN memory m ON m.id = mv.memory_id"
         params: list = []
-        if nexus_id:
-            vec_sql += " WHERE m.nexus_id = ?"
-            params.append(nexus_id)
+        if dun_id:
+            vec_sql += " WHERE m.dun_id = ?"
+            params.append(dun_id)
 
         try:
             rows = conn.execute(vec_sql, params).fetchall()
@@ -551,7 +612,7 @@ class HybridSearchEngine:
                     'content': r['content'],
                     'snippet': r['chunk_content'] or r['content'][:200],
                     'source': r['source'],
-                    'nexusId': r['nexus_id'],
+                    'dunId': r['dun_id'],
                     'tags': r['tags'] or '[]',
                     'createdAt': r['created_at'],
                     'vec_similarity': sim,

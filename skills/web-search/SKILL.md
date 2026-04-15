@@ -1,8 +1,26 @@
 ---
 name: web-search
-description: "Use the webSearch tool to find information online."
+description: "Use the webSearch tool to find information online. Ideal for real-time data lookup, technical research, comparing tools, and finding tutorials or documentation."
 version: "1.0.0"
 author: "DunCrew"
+tags:
+  - research
+  - information-retrieval
+  - web
+  - search
+keywords:
+  - search
+  - find information
+  - web search
+  - lookup
+  - research
+  - query
+dangerLevel: safe
+inputs:
+  - name: query
+    type: string
+    description: "The search query string to find information online."
+    required: true
 metadata:
   openclaw:
     emoji: "🌐"

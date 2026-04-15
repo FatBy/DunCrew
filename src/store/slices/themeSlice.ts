@@ -4,7 +4,7 @@
 
 import type { StateCreator } from 'zustand'
 import type { ThemeName } from '@/types/theme'
-import type { Locale } from '@/i18n'
+import type { Locale } from '@/i18n/core'
 import { themes, getTheme } from '@/themes'
 import { applyThemeToDOM, getCanvasPalette } from '@/utils/themeUtils'
 import type { CanvasPalette } from '@/types/theme'

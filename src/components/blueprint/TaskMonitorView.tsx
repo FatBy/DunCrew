@@ -8,7 +8,7 @@
  * - 推流 reasoningBuffer
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Activity, CheckCircle2, AlertCircle, Clock, XCircle,
 } from 'lucide-react'
@@ -17,45 +17,60 @@ import { agentEventBus } from '@/services/agentEventBus'
 import type { AgentRunState, AgentPhase, TaskItem } from '@/types'
 import { SectionHeader } from './SectionHeader'
 import { TaskDetailModal } from './TaskDetailModal'
+import { useT, type TranslationKey } from '@/i18n'
 
 // ── Phase 状态显示映射 ──
 const STATUS_MAP: Record<string, {
-  label: string
+  label: TranslationKey
   icon: typeof Activity
   className: string
 }> = {
   running: {
-    label: '运行中',
+    label: 'monitor.status_running',
     icon: Activity,
     className: 'bg-amber-50 text-amber-600 border-amber-200',
   },
   success: {
-    label: '完成',
+    label: 'monitor.status_success',
     icon: CheckCircle2,
     className: 'bg-emerald-50 text-emerald-600 border-emerald-200',
   },
   error: {
-    label: '失败',
+    label: 'monitor.status_error',
     icon: AlertCircle,
     className: 'bg-red-50 text-red-500 border-red-200',
   },
   pending: {
-    label: '等待',
+    label: 'monitor.status_pending',
     icon: Clock,
     className: 'bg-stone-50 text-stone-400 border-stone-200',
   },
 }
 
 export function TaskMonitorView() {
+  const t = useT()
   const activeExecutions = useStore((s) => s.activeExecutions)
   const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null)
 
-  // ── 订阅 agentEventBus 实时状态 ──
+  // ── 订阅 agentEventBus 实时状态 (M9: 浅比较避免无效 re-render) ──
   const [runState, setRunState] = useState<AgentRunState>(agentEventBus.getState())
 
   useEffect(() => {
     const unsub = agentEventBus.subscribe(() => {
-      setRunState({ ...agentEventBus.getState() })
+      const nextState = agentEventBus.getState()
+      setRunState(prev => {
+        if (
+          prev.phase === nextState.phase &&
+          prev.currentTool?.callId === nextState.currentTool?.callId &&
+          prev.toolHistory.length === nextState.toolHistory.length &&
+          prev.tokenUsed === nextState.tokenUsed &&
+          prev.reasoningBuffer === nextState.reasoningBuffer &&
+          prev.deltaBuffer === nextState.deltaBuffer
+        ) {
+          return prev
+        }
+        return { ...nextState }
+      })
     })
     return unsub
   }, [])
@@ -77,14 +92,14 @@ export function TaskMonitorView() {
     return () => clearInterval(id)
   }, [runState.currentTool?.callId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── 映射 activeExecutions → 表格行 (倒序，最新在前) ──
-  const reversed = [...activeExecutions].reverse()
+  // ── 映射 activeExecutions → 表格行 (倒序，最新在前) (M10: useMemo 缓存) ──
+  const reversed = useMemo(() => [...activeExecutions].reverse(), [activeExecutions])
   const rows = reversed.map((exec, idx) => {
     const isExec = exec.status === 'executing'
     const isDone = exec.status === 'done'
     const isErr = exec.status === 'terminated' || exec.status === 'interrupted'
 
-    let action = exec.description || '处理中...'
+    let action = exec.description || t('monitor.processing')
     if (isExec && runState.currentTool) {
       action = `${runState.currentTool.name}(${Object.keys(runState.currentTool.args).join(', ')})`
     }
@@ -115,12 +130,12 @@ export function TaskMonitorView() {
   return (
     <div className="p-6">
       <SectionHeader
-        title="任务监控矩阵"
-        subtitle="实时追踪全域 Agent 的心跳与任务流"
+        title={t('monitor.title')}
+        subtitle={t('monitor.subtitle')}
       />
 
-      {/* ── 推流 reasoningBuffer ── */}
-      {runState.reasoningBuffer &&
+      {/* ── 推流 reasoningBuffer / deltaBuffer ── */}
+      {(runState.reasoningBuffer || runState.deltaBuffer) &&
         runState.phase !== ('idle' as AgentPhase) &&
         runState.phase !== ('done' as AgentPhase) && (
           <div className="mb-4 p-4 bg-stone-50 border border-stone-200 rounded-2xl">
@@ -131,7 +146,7 @@ export function TaskMonitorView() {
               </span>
             </div>
             <p className="text-sm text-stone-600 font-mono leading-relaxed whitespace-pre-wrap">
-              {runState.reasoningBuffer.slice(-500)}
+              {(runState.reasoningBuffer || runState.deltaBuffer).slice(-500)}
             </p>
           </div>
         )}
@@ -141,10 +156,10 @@ export function TaskMonitorView() {
         {/* 表头 */}
         <div className="grid grid-cols-12 gap-4 p-4 border-b border-stone-100 bg-stone-50/50 text-[10px] font-black text-stone-400 uppercase tracking-widest">
           <div className="col-span-2">Task ID</div>
-          <div className="col-span-3">执行体 (Agent)</div>
-          <div className="col-span-4">当前动作</div>
-          <div className="col-span-1 text-center">状态</div>
-          <div className="col-span-1 text-right">耗时</div>
+          <div className="col-span-3">{t('monitor.col_agent')}</div>
+          <div className="col-span-4">{t('monitor.col_action')}</div>
+          <div className="col-span-1 text-center">{t('monitor.col_status')}</div>
+          <div className="col-span-1 text-right">{t('monitor.col_time')}</div>
           <div className="col-span-1 text-right">Tokens</div>
         </div>
 
@@ -152,7 +167,7 @@ export function TaskMonitorView() {
         <div className="divide-y divide-stone-100">
           {rows.length === 0 ? (
             <div className="p-8 text-center text-stone-400 text-sm">
-              暂无任务记录
+              {t('monitor.no_tasks')}
             </div>
           ) : (
             rows.map((task, rowIdx) => {
@@ -181,7 +196,7 @@ export function TaskMonitorView() {
                       <StatusIcon
                         className={`w-3 h-3 ${task.status === 'running' ? 'animate-pulse' : ''}`}
                       />
-                      {cfg.label}
+                      {t(cfg.label)}
                     </span>
                   </div>
                   <div className="col-span-1 text-right text-xs font-mono text-stone-500">
@@ -200,7 +215,7 @@ export function TaskMonitorView() {
       {/* ── 工具执行时间线 ── */}
       {runState.toolHistory.length > 0 && (
         <div className="mt-6">
-          <h3 className="text-sm font-bold text-stone-800 mb-3">工具执行时间线</h3>
+          <h3 className="text-sm font-bold text-stone-800 mb-3">{t('monitor.tool_timeline')}</h3>
           <div className="space-y-2">
             {runState.toolHistory
               .slice(-10)

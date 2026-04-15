@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react'
 import { crashMonitor } from '@/services/crashMonitor'
+import { useT } from '@/i18n'
 
 interface Props {
   children: ReactNode
@@ -37,6 +38,8 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render(): ReactNode {
     if (this.state.hasError) {
+      const t = useT()
+      
       return this.props.fallback ?? (
         <div style={{ 
           padding: 20, 
@@ -47,7 +50,7 @@ export class ErrorBoundary extends Component<Props, State> {
           borderRadius: 8,
           margin: 20,
         }}>
-          <h2 style={{ margin: '0 0 10px', color: '#ff8888' }}>渲染错误</h2>
+          <h2 style={{ margin: '0 0 10px', color: '#ff8888' }}>{t('common.render_error')}</h2>
           <pre style={{ 
             whiteSpace: 'pre-wrap', 
             wordBreak: 'break-all',
@@ -71,7 +74,7 @@ export class ErrorBoundary extends Component<Props, State> {
               fontSize: 13,
             }}
           >
-            重试
+            {t('common.retry')}
           </button>
         </div>
       )

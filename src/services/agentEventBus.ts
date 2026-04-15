@@ -18,12 +18,16 @@ import { createInitialRunState } from '@/types'
 
 type Listener = (event: AgentEventEnvelope) => void
 
+const MAX_EVENTS_PER_RUN = 10000
+
 class AgentEventBusImpl implements IAgentEventBus {
   private state: AgentRunState | null = null
   private listeners = new Set<Listener>()
   private streamListeners = new Map<AgentEventStream, Set<Listener>>()
   private eventLog = new Map<string, AgentEventEnvelope[]>() // runId → events
   private seq = 0
+  private _pendingNotify = false
+  private _lastEvent: AgentEventEnvelope | null = null
 
   // ═══ 核心 API ═══
 
@@ -41,21 +45,43 @@ class AgentEventBusImpl implements IAgentEventBus {
     }
     this.eventLog.get(runId)!.push(event)
 
-    // 更新内部状态
+    // 单个 run 事件上限控制，防止无界增长
+    const events = this.eventLog.get(runId)!
+    if (events.length > MAX_EVENTS_PER_RUN) {
+      this.eventLog.set(runId, events.slice(-Math.floor(MAX_EVENTS_PER_RUN / 2)))
+      console.warn(`[EventBus] Event log trimmed for run ${runId}: exceeded ${MAX_EVENTS_PER_RUN}, kept last ${Math.floor(MAX_EVENTS_PER_RUN / 2)}`)
+    }
+
+    // 更新内部状态 (同步)
     this.applyEventToState(event)
 
-    // 广播到所有监听者
-    for (const listener of this.listeners) {
-      try { listener(event) } catch (e) { console.error('[EventBus] listener error:', e) }
-    }
+    // 记录最后事件，延迟通知订阅者 (microtask 批处理)
+    this._lastEvent = event
+    this.scheduleNotify()
+  }
 
-    // 广播到 stream 特定监听者
-    const streamSet = this.streamListeners.get(event.stream as AgentEventStream)
-    if (streamSet) {
-      for (const listener of streamSet) {
-        try { listener(event) } catch (e) { console.error('[EventBus] stream listener error:', e) }
+  // microtask 批处理：同一 tick 内的多个事件合并后一次性通知
+  private scheduleNotify() {
+    if (this._pendingNotify) return
+    this._pendingNotify = true
+    queueMicrotask(() => {
+      this._pendingNotify = false
+      const event = this._lastEvent
+      if (!event) return
+
+      // 广播到所有监听者
+      for (const listener of this.listeners) {
+        try { listener(event) } catch (e) { console.error('[EventBus] listener error:', e) }
       }
-    }
+
+      // 广播到 stream 特定监听者
+      const streamSet = this.streamListeners.get(event.stream as AgentEventStream)
+      if (streamSet) {
+        for (const listener of streamSet) {
+          try { listener(event) } catch (e) { console.error('[EventBus] stream listener error:', e) }
+        }
+      }
+    })
   }
 
   subscribe(listener: Listener): () => void {
@@ -75,7 +101,8 @@ class AgentEventBusImpl implements IAgentEventBus {
     if (!this.state) {
       return createInitialRunState('none', 'none')
     }
-    return this.state
+    // 返回浅拷贝，避免订阅者共享可变引用
+    return { ...this.state }
   }
 
   getEvents(runId: string): AgentEventEnvelope[] {
@@ -90,9 +117,12 @@ class AgentEventBusImpl implements IAgentEventBus {
 
   // ═══ Run 生命周期便捷方法 ═══
 
-  startRun(runId: string, model: string, nexusId?: string, nexusScore?: number, tokenBudget?: number): void {
-    this.state = createInitialRunState(runId, model, nexusId)
-    if (nexusScore !== undefined) this.state.nexusScore = nexusScore
+  startRun(runId: string, model: string, dunId?: string, dunScore?: number, tokenBudget?: number): void {
+    // P1-16: 每次新 run 开始时自动清理旧事件日志
+    this.pruneEventLog(10)
+
+    this.state = createInitialRunState(runId, model, dunId)
+    if (dunScore !== undefined) this.state.dunScore = dunScore
     if (tokenBudget !== undefined) this.state.tokenBudget = tokenBudget
     this.seq = 0
 
@@ -102,9 +132,9 @@ class AgentEventBusImpl implements IAgentEventBus {
       type: 'run_start',
       data: {
         runId,
-        nexusId: nexusId ?? null,
+        dunId: dunId ?? null,
         model,
-        nexusScore: nexusScore ?? 50,
+        dunScore: dunScore ?? 50,
         tokenBudget: tokenBudget ?? 0,
       },
     })
@@ -221,7 +251,7 @@ class AgentEventBusImpl implements IAgentEventBus {
         failedTool,
         error,
         reflexionIndex: this.state.reflexionCount,
-        nexusScore: this.state.nexusScore,
+        dunScore: this.state.dunScore,
       },
     })
   }
@@ -308,7 +338,7 @@ class AgentEventBusImpl implements IAgentEventBus {
 
   // ═══ Child 事件便捷方法 ═══
 
-  childSpawned(data: { childRunId: string; childSessionId: string; nexusId: string; task: string; depth: number; model: string }): void {
+  childSpawned(data: { childRunId: string; childSessionId: string; dunId: string; task: string; depth: number; model: string }): void {
     if (!this.state) return
     this.emit({
       runId: this.state.runId,
@@ -328,12 +358,36 @@ class AgentEventBusImpl implements IAgentEventBus {
     })
   }
 
-  childCompleted(data: { childRunId: string; nexusId: string; success: boolean; result?: string; error?: string; durationMs: number; scoreChange: number; genesHarvested: number }): void {
+  childCompleted(data: { childRunId: string; dunId: string; success: boolean; result?: string; error?: string; durationMs: number; scoreChange: number; genesHarvested: number }): void {
     if (!this.state) return
     this.emit({
       runId: this.state.runId,
       stream: 'child',
       type: 'child_completed',
+      data,
+    })
+  }
+
+  // ═══ V8: Transcriptase 事件便捷方法 ═══
+
+  /** Transcriptase 做出编排决策 */
+  transcriptaseDecision(data: { decisionType: string; confidence: number; reasoning: string; patternId?: string; childTask?: string }): void {
+    if (!this.state) return
+    this.emit({
+      runId: this.state.runId,
+      stream: 'transcriptase',
+      type: 'transcriptase_decision',
+      data,
+    })
+  }
+
+  /** 子 Agent Ledger 合并到父 Ledger */
+  ledgerMerge(data: { childRunId: string; childEntriesCount: number; parentEntriesAfterMerge: number }): void {
+    if (!this.state) return
+    this.emit({
+      runId: this.state.runId,
+      stream: 'transcriptase',
+      type: 'ledger_merge',
       data,
     })
   }

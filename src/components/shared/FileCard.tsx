@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { FileText, MoreHorizontal, FolderOpen, Copy, ExternalLink, Check } from 'lucide-react'
 import { getServerUrl } from '@/utils/env'
+import { useT } from '@/i18n'
 
 interface FileCardProps {
   filePath: string
@@ -19,6 +20,7 @@ async function callTool(name: string, args: Record<string, string>) {
 }
 
 export function FileCard({ filePath, fileName, fileSize }: FileCardProps) {
+  const t = useT()
   const [menuOpen, setMenuOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -111,21 +113,21 @@ export function FileCard({ filePath, fileName, fileSize }: FileCardProps) {
             className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-700 transition-colors text-stone-700 dark:text-stone-200"
           >
             <ExternalLink className="w-3.5 h-3.5" />
-            <span>打开</span>
+            <span>{t('file.open')}</span>
           </button>
           <button
             onClick={handleReveal}
             className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-700 transition-colors text-stone-700 dark:text-stone-200"
           >
             <FolderOpen className="w-3.5 h-3.5" />
-            <span>在文件系统中打开</span>
+            <span>{t('file.open_in_explorer')}</span>
           </button>
           <button
             onClick={handleCopy}
             className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-700 transition-colors text-stone-700 dark:text-stone-200"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{copied ? '已复制' : '复制路径'}</span>
+            <span>{copied ? t('file.copied') : t('file.copy_path')}</span>
           </button>
         </div>
       )}

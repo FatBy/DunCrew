@@ -3,6 +3,24 @@ name: code-runner
 description: "Execute shell commands and scripts on the user's local machine."
 version: "1.0.0"
 author: "DunCrew"
+tags:
+  - shell
+  - execution
+  - system-ops
+  - windows
+keywords:
+  - run command
+  - execute script
+  - terminal
+  - cmd
+  - system diagnostics
+  - package management
+dangerLevel: "high"
+inputs:
+  - name: command
+    type: string
+    description: "The shell command or script path to execute on the local machine."
+    required: true
 metadata:
   openclaw:
     emoji: "⚡"

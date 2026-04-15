@@ -59,6 +59,17 @@ export interface DevicesSlice {
   
   // 核心协议总结
   generateSoulSummary: () => Promise<void>
+
+  // Soul 生成状态
+  soulBootstrapNeeded: boolean
+  soulGenerating: boolean
+  soulGenerationPrefs: { name: string; style: string; expectations: string } | null
+
+  // Soul 生成 Actions
+  setSoulBootstrapNeeded: (needed: boolean) => void
+  setSoulGenerating: (generating: boolean) => void
+  setSoulGenerationPrefs: (prefs: { name: string; style: string; expectations: string }) => void
+  applySoulFromGenerated: (content: string) => void
 }
 
 export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
@@ -82,6 +93,10 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
   soulMBTIExpressed: null,
   soulMBTIAxes: null,
   soulTruthsSummary: '',
+
+  soulBootstrapNeeded: false,
+  soulGenerating: false,
+  soulGenerationPrefs: null,
 
   setPresenceSnapshot: (snapshot) => set((state) => {
     // 只更新 presence 相关数据和维度，不覆盖已解析的 soul 内容
@@ -135,8 +150,8 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
   setSoulFromParsed: (parsed, agentIdentity) => {
     set((state) => {
       const identity: SoulIdentity = {
-        name: agentIdentity?.name || 'DunCrew Agent',
-        essence: parsed.subtitle || parsed.title || 'AI Assistant',
+        name: agentIdentity?.name || 'DunCrew 智能体',
+        essence: parsed.subtitle || parsed.title || 'AI 助手',
         vibe: parsed.vibeStatement ? parsed.vibeStatement.slice(0, 100) : '',
         symbol: agentIdentity?.emoji || '🤖',
       }
@@ -190,8 +205,8 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
       return {
         soulDimensions: dimensions,
         soulIdentity: {
-          name: identity.name || 'DunCrew Agent',
-          essence: 'AI Assistant',
+          name: identity.name || 'DunCrew 智能体',
+          essence: 'AI 助手',
           vibe: '',
           symbol: identity.emoji || '🤖',
         },
@@ -221,18 +236,24 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
     set({ soulMBTILoading: true })
     try {
       const { detectMBTI, rulesAxisScores } = await import('@/services/mbtiAnalyzer')
+      // 预先计算 axes，供 LLM 回调使用
+      const axes = rulesAxisScores(state.soulCoreTruths, state.soulBoundaries, state.soulVibeStatement)
       const result = await detectMBTI(
         state.soulCoreTruths,
         state.soulBoundaries,
         state.soulVibeStatement,
         state.soulRawContent,
-        // LLM 后台分析完成后回调更新 store
+        // LLM 后台分析完成后回调更新 store（同步 expressed 和 axes）
         (llmResult) => {
-          set({ soulMBTI: llmResult, soulMBTIBase: llmResult })
+          set({
+            soulMBTI: llmResult,
+            soulMBTIBase: llmResult,
+            soulMBTIExpressed: llmResult,
+            soulMBTIAxes: axes,
+          })
         },
       )
       // 规则引擎的轴分数作为初始 axes
-      const axes = rulesAxisScores(state.soulCoreTruths, state.soulBoundaries, state.soulVibeStatement)
       set({
         soulMBTI: result,
         soulMBTIBase: result,
@@ -310,5 +331,27 @@ export const createDevicesSlice: StateCreator<DevicesSlice> = (set, get) => ({
     } catch {
       // LLM 失败，保持降级总结
     }
+  },
+
+  setSoulBootstrapNeeded: (needed) => set({ soulBootstrapNeeded: needed }),
+
+  setSoulGenerating: (generating) => set({ soulGenerating: generating }),
+
+  setSoulGenerationPrefs: (prefs) => {
+    set({ soulGenerationPrefs: prefs })
+    try {
+      localStorage.setItem('duncrew_soul_prefs', JSON.stringify(prefs))
+    } catch {}
+  },
+
+  applySoulFromGenerated: async (content) => {
+    const { parseSoulMd } = await import('@/utils/soulParser')
+    const parsed = parseSoulMd(content)
+    const { soulGenerationPrefs } = get()
+    const agentIdentity = soulGenerationPrefs?.name
+      ? { name: soulGenerationPrefs.name, emoji: '🤖', agentId: 'local' } as AgentIdentity
+      : null
+    get().setSoulFromParsed(parsed, agentIdentity)
+    set({ soulBootstrapNeeded: false, soulRawContent: content })
   },
 })

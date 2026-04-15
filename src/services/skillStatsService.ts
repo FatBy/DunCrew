@@ -101,6 +101,7 @@ class SkillStatsService {
   private lastWeekSnapshot: AbilitySnapshot | null = null
   private storeRefresh: (() => void) | null = null
   private notifyTimer: ReturnType<typeof setTimeout> | null = null
+  private _beforeunloadHandler: (() => void) | null = null
   private static NOTIFY_DEBOUNCE = 500 // 500ms 防抖
 
   constructor() {
@@ -159,6 +160,7 @@ class SkillStatsService {
       stat.activationCount++
       stat.lastUsedAt = Date.now()
       this.dirty = true
+      this.notifyStore()
     } catch (e) {
       console.warn('[SkillStats] recordActivation failed:', e)
     }
@@ -434,11 +436,10 @@ class SkillStatsService {
       this.saveToStorage()
     }, FLUSH_INTERVAL)
     
-    // 页面卸载时保存
-    if (typeof window !== 'undefined') {
-      window.addEventListener('beforeunload', () => {
-        this.saveToStorage()
-      })
+    // 页面卸载时保存（防止重复注册）
+    if (typeof window !== 'undefined' && !this._beforeunloadHandler) {
+      this._beforeunloadHandler = () => this.saveToStorage()
+      window.addEventListener('beforeunload', this._beforeunloadHandler)
     }
   }
 
@@ -447,6 +448,20 @@ class SkillStatsService {
    */
   flush(): void {
     this.saveToStorage()
+  }
+
+  /**
+   * 销毁服务，清理定时器和事件监听器
+   */
+  destroy(): void {
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer)
+      this.flushTimer = null
+    }
+    if (typeof window !== 'undefined' && this._beforeunloadHandler) {
+      window.removeEventListener('beforeunload', this._beforeunloadHandler)
+      this._beforeunloadHandler = null
+    }
   }
 
   /**

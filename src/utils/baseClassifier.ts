@@ -236,6 +236,95 @@ export function updateBaseClassifierCtx(
 }
 
 // ============================================
+// Phase 3: P 碱基自动检测
+// ============================================
+
+/**
+ * 推理链中的计划关键词模式（中英文混合）
+ *
+ * 检测 LLM 输出的 reasoning_content 中是否包含结构化计划信号。
+ * 设计为保守匹配（精确率优先于召回率），避免将普通推理误标为 P。
+ *
+ * 匹配逻辑：需要关键词 + 结构化标记（如编号列表）同时出现。
+ */
+const PLAN_KEYWORD_PATTERNS = [
+  // 中文计划关键词 + 步骤编号
+  /(?:计划|方案|策略|思路|步骤)[：:]\s*\n\s*[1１一①]/,
+  /(?:分步|分阶段|按顺序)[执进]行/,
+  /第[一二三四1-4]步[，,：:]/,
+  // 英文计划关键词 + 编号
+  /(?:plan|strategy|approach)[：:]\s*\n\s*(?:1[\.\):]|step\s*1)/i,
+  /(?:step-by-step|multi-step)\s+(?:plan|approach|strategy)/i,
+  // 明确的目标分解
+  /(?:子目标|子任务|sub[- ]?(?:objective|task|goal)s?)[：:]/i,
+  /(?:拆分|拆解|分解)为?\s*(?:以下|如下|多个)/,
+]
+
+/**
+ * 检测 LLM Function Calling 返回中的 _meta.planStep 标记。
+ *
+ * 部分 LLM 可在 Function Calling 中附带元数据，
+ * 格式: { _meta: { planStep: true } } 或在 tool_call.function.arguments 中。
+ *
+ * @param toolCallArgs 工具调用参数（parsed JSON）
+ * @returns 'llm_meta' 如果检测到标记，否则 null
+ */
+export function detectPlanFromMeta(
+  toolCallArgs: Record<string, unknown> | undefined,
+): 'llm_meta' | null {
+  if (!toolCallArgs) return null
+
+  // 直接检查 _meta.planStep
+  const meta = toolCallArgs._meta
+  if (meta && typeof meta === 'object' && (meta as Record<string, unknown>).planStep) {
+    return 'llm_meta'
+  }
+
+  return null
+}
+
+/**
+ * 检测 LLM 推理内容 (reasoning_content) 中是否包含结构化计划。
+ *
+ * 适用于 DeepSeek 等提供 reasoning_content 字段的模型。
+ * 使用保守匹配策略：需要关键词 + 结构化格式同时出现。
+ *
+ * @param reasoningContent LLM 输出的 reasoning_content 字符串
+ * @returns 'reasoning_content' 如果检测到计划模式，否则 null
+ */
+export function detectPlanFromReasoning(
+  reasoningContent: string | undefined | null,
+): 'reasoning_content' | null {
+  if (!reasoningContent || reasoningContent.length < 30) return null
+
+  for (const pattern of PLAN_KEYWORD_PATTERNS) {
+    if (pattern.test(reasoningContent)) {
+      return 'reasoning_content'
+    }
+  }
+
+  return null
+}
+
+/**
+ * 综合 P 碱基检测：合并 _meta 和推理链两个来源。
+ *
+ * 在 ReAct 循环每轮工具调用后调用。如果返回非 null，
+ * 则应在该工具碱基之前插入一个 P 碱基。
+ *
+ * 优先级: llm_meta > reasoning_content
+ */
+export function detectPBase(
+  toolCallArgs?: Record<string, unknown>,
+  reasoningContent?: string | null,
+): 'llm_meta' | 'reasoning_content' | null {
+  const fromMeta = detectPlanFromMeta(toolCallArgs)
+  if (fromMeta) return fromMeta
+
+  return detectPlanFromReasoning(reasoningContent)
+}
+
+// ============================================
 // Aggregation helpers
 // ============================================
 
@@ -263,6 +352,32 @@ export function buildBaseDistribution(
   for (const t of tools) {
     if (t.baseType && t.baseType in dist) {
       dist[t.baseType]++
+    }
+  }
+  return dist
+}
+
+/**
+ * Build a base sequence string from BaseSequenceEntry array.
+ * Includes P bases from the independent entries array.
+ */
+export function buildBaseSequenceFromEntries(
+  entries: Array<{ base: BaseType }>,
+): string {
+  return entries.map(e => e.base).join('-')
+}
+
+/**
+ * Compute base distribution from BaseSequenceEntry array.
+ * Includes P bases from the independent entries array.
+ */
+export function buildBaseDistributionFromEntries(
+  entries: Array<{ base: BaseType }>,
+): { E: number; P: number; V: number; X: number } {
+  const dist = { E: 0, P: 0, V: 0, X: 0 }
+  for (const entry of entries) {
+    if (entry.base in dist) {
+      dist[entry.base]++
     }
   }
   return dist

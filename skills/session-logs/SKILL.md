@@ -1,14 +1,41 @@
 ---
 name: session-logs
-description: "Search and analyze your own session logs (older/parent conversations) using jq."
+description: "Search and analyze your own session logs (older/parent conversations) using jq. Use this skill when users reference prior chats, ask for historical context, need to review past assistant responses, or want to calculate session costs and token usage across JSONL session files."
 version: "1.0.0"
 author: "DunCrew"
+tags:
+  - session-management
+  - log-analysis
+  - history-search
+  - cli
+  - jq
+keywords:
+  - session logs
+  - conversation history
+  - past chats
+  - previous messages
+  - session cost
+  - search history
+  - parent conversation
+  - JSONL
+dangerLevel: safe
+inputs:
+  - name: agentId
+    description: "The agent identifier used to locate the correct session directory (extract from system prompt Runtime line)."
+    required: true
+  - name: sessionId
+    description: "Specific session ID or filename to query. Omit to search across all sessions."
+    required: false
+  - name: searchQuery
+    description: "Keyword, phrase, or date to filter or search within session logs."
+    required: false
 metadata:
   openclaw:
     emoji: "📜"
     primaryEnv: "shell"
     requires:
       bins: ["jq", "rg"]
+      env: []
 ---
 
 # session-logs

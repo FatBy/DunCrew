@@ -3,12 +3,29 @@ name: clawhub
 description: "Use the ClawHub CLI to search, install, update, and publish agent skills from clawhub.com. Use when you need to fetch new skills on the fly, sync installed skills to latest or a specific version, or publish new/updated skill folders with the npm-installed clawhub CLI."
 version: "1.0.0"
 author: "DunCrew"
+tags: ["cli", "package-management", "skill-registry", "agent-tools"]
+keywords: ["clawhub", "install skill", "update skill", "search skills", "publish skill", "sync skills"]
+dangerLevel: "high"
+inputs:
+  - name: "action"
+    type: "string"
+    description: "CLI operation to perform (search, install, update, list, publish)"
+  - name: "skill_name"
+    type: "string"
+    description: "Target skill slug or identifier"
+  - name: "version"
+    type: "string"
+    description: "Specific version to install or update to"
+  - name: "query"
+    type: "string"
+    description: "Search keywords for discovering skills"
 metadata:
   openclaw:
     emoji: "🔧"
     primaryEnv: "shell"
     requires:
       bins: ["clawhub"]
+      env: ["CLAWHUB_REGISTRY", "CLAWHUB_WORKDIR"]
     install:
       - id: "node"
         kind: "node"
