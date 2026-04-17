@@ -177,6 +177,17 @@ def init_sqlite_db(db_path: Path) -> sqlite3.Connection:
             created_at        INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_wiki_ingest_dun ON wiki_ingest_log(dun_id);
+
+        -- Wiki 向量索引 (语义搜索用, Entity 级粒度)
+        CREATE TABLE IF NOT EXISTS wiki_vectors (
+            entity_id   TEXT NOT NULL,
+            chunk_seq   INTEGER NOT NULL DEFAULT 0,
+            embedding   BLOB NOT NULL,
+            chunk_content TEXT DEFAULT '',
+            created_at  INTEGER NOT NULL,
+            PRIMARY KEY (entity_id, chunk_seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wv_entity ON wiki_vectors(entity_id);
     """)
 
     # V6: 安全地添加 dun_id 列 (如果不存在) — memory 表
@@ -228,6 +239,42 @@ def init_sqlite_db(db_path: Path) -> sqlite3.Connection:
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE memory ADD COLUMN category TEXT DEFAULT 'uncategorized'")
         print("[SQLite] Added 'category' column to memory table")
+
+    # V9: Wiki Schema 迁移 — Entity 层新增字段
+    for col, definition in [
+        ('category', "TEXT"),
+        ('temporal_scope', "TEXT"),
+        ('consensus', "TEXT DEFAULT 'emerging'"),
+        ('last_corroborated_at', "INTEGER"),
+    ]:
+        try:
+            conn.execute(f"SELECT {col} FROM wiki_entity LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute(f"ALTER TABLE wiki_entity ADD COLUMN {col} {definition}")
+            print(f"[SQLite] Added '{col}' column to wiki_entity table")
+
+    # V9: Wiki Schema 迁移 — Claim 层新增字段
+    for col, definition in [
+        ('observed_at', "TEXT"),
+        ('source_summary', "TEXT"),
+        ('corroboration', "INTEGER DEFAULT 1"),
+        ('usage_count', "INTEGER DEFAULT 0"),
+    ]:
+        try:
+            conn.execute(f"SELECT {col} FROM wiki_claim LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute(f"ALTER TABLE wiki_claim ADD COLUMN {col} {definition}")
+            print(f"[SQLite] Added '{col}' column to wiki_claim table")
+
+    # V9: Entity Type 归并迁移 — 将非标准类型归入 concept
+    try:
+        migrated = conn.execute(
+            "UPDATE wiki_entity SET type = 'concept' WHERE type IN ('fact', 'insight', 'metric', 'technology', 'economic-indicator', 'report', 'organization', 'case')"
+        ).rowcount
+        if migrated > 0:
+            print(f"[SQLite] Migrated {migrated} wiki_entity type values to 'concept'")
+    except Exception:
+        pass
 
     conn.commit()
 

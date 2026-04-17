@@ -19,6 +19,10 @@ export interface WikiClaim {
   status: string
   conflictWith: string | null
   sourceIngestId: string | null
+  observedAt: string | null
+  sourceSummary: string | null
+  corroboration: number
+  usageCount: number
   createdAt: number
   updatedAt: number
   evidence: WikiEvidence[]
@@ -43,6 +47,9 @@ export interface WikiEntityDetail {
   type: string
   tldr: string | null
   tags: string[]
+  category: string | null
+  temporalScope: string | null
+  consensus: string
   status: string
   createdAt: number
   updatedAt: number
@@ -58,6 +65,9 @@ export interface WikiEntitySummary {
   type: string
   tldr: string | null
   tags: string[]
+  category: string | null
+  temporalScope: string | null
+  consensus: string
   status: string
   claimCount: number
   createdAt: number

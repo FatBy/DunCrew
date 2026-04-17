@@ -332,6 +332,10 @@ export async function rankSkills(
   // 2. 全局均值
   const globalRate = computeGlobalAverageSuccessRate()
 
+  // P5: 计算全局最大调用次数（用于 log 压缩归一化）
+  const allStats = skillStatsService.getAllStats()
+  const maxCalls = Math.max(1, ...allStats.map(s => s.successCount + s.failureCount))
+
   // 3. 限流并发获取技能向量（每批 3 个，避免打满本地 embedding 服务）
   const skillVectors: (number[] | null)[] = new Array(skills.length).fill(null)
   if (queryVector) {
@@ -352,7 +356,12 @@ export async function rankSkills(
         ? Math.max(0, cosineSimilarity(queryVector, skillVectors[i]!))
         : 0.5 // 无向量时给中性分，不惩罚也不奖励
 
-    const usageScore = computeBayesianSuccessRate(skill.name, globalRate)
+    // P5: usage 维度 log 压缩 — 防马太效应
+    const bayesianRate = computeBayesianSuccessRate(skill.name, globalRate)
+    const skillStats = skillStatsService.getSkillStats(skill.name)
+    const totalCalls = skillStats ? skillStats.successCount + skillStats.failureCount : 0
+    const logComp = totalCalls > 0 ? Math.log(totalCalls + 1) / Math.log(maxCalls + 1) : 1
+    const usageScore = bayesianRate * logComp
     const freshnessScore = computeFreshnessScore(skill)
     const qualityScore = computeQualityPrior(skill)
 
@@ -389,6 +398,9 @@ export function rankSkillsByKeyword(
   const queryLower = query.toLowerCase()
   const queryTokens = queryLower.split(/\s+/).filter(Boolean)
   const globalRate = computeGlobalAverageSuccessRate()
+  // P5: 最大调用次数（log 压缩归一化）
+  const allKwStats = skillStatsService.getAllStats()
+  const maxCallsKw = Math.max(1, ...allKwStats.map(s => s.successCount + s.failureCount))
 
   const ranked: RankedSkill[] = skills.map(skill => {
     // 构造技能文本
@@ -403,7 +415,12 @@ export function rankSkillsByKeyword(
     const hits = queryTokens.filter(t => skillText.includes(t)).length
     const semanticScore = queryTokens.length > 0 ? hits / queryTokens.length : 0
 
-    const usageScore = computeBayesianSuccessRate(skill.name, globalRate)
+    // P5: usage 维度 log 压缩
+    const bayesianRateKw = computeBayesianSuccessRate(skill.name, globalRate)
+    const skillStatsKw = skillStatsService.getSkillStats(skill.name)
+    const totalCallsKw = skillStatsKw ? skillStatsKw.successCount + skillStatsKw.failureCount : 0
+    const logCompKw = totalCallsKw > 0 ? Math.log(totalCallsKw + 1) / Math.log(maxCallsKw + 1) : 1
+    const usageScore = bayesianRateKw * logCompKw
     const freshnessScore = computeFreshnessScore(skill)
     const qualityScore = computeQualityPrior(skill)
 

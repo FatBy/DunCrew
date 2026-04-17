@@ -11,7 +11,9 @@
 import { chat, streamChat, isLLMConfigured, embed, cosineSimilarity, convertToolInfoToFunctions, getLLMConfig, saveLLMConfig, clearEmbedUnsupportedCache, searchChat, isChannelConfigured, generateImage, visionChat } from './llmService'
 import { backgroundQueue } from './backgroundQueue'
 import type { SimpleChatMessage, LLMStreamResult, VisionChatMessage } from './llmService'
-import type { ExecutionStatus, OpenClawSkill, MemoryEntry, ToolInfo, ExecTrace, ExecTraceToolCall, ApprovalRequest, ExecutionStep, DunEntity, DunScoring, TaskCheckpoint, GeneMatch } from '@/types'
+import type { ExecutionStatus, OpenClawSkill, MemoryEntry, ToolInfo, ExecTrace, ExecTraceToolCall, ApprovalRequest, ExecutionStep, DunEntity, DunScoring, TaskCheckpoint, GeneMatch, L1MemoryEntry } from '@/types'
+import { consolidatePostExecution } from './postExecutionConsolidator'
+import type { ConsolidationPayload } from './postExecutionConsolidator'
 import { parseSoulMd, type ParsedSoul } from '@/utils/soulParser'
 import { classifyBaseType, updateBaseClassifierCtx, createBaseClassifierCtx, buildBaseSequence, buildBaseDistribution, buildBaseSequenceFromEntries, buildBaseDistributionFromEntries, detectPBase } from '@/utils/baseClassifier'
 import { classifyTaskComplexity } from '@/utils/taskClassifier'
@@ -215,6 +217,7 @@ function truncateToolResult(toolName: string, result: string): string {
     searchFiles:   1500,
     listDir:       1500,
     searchMemory:  1500,
+    searchWiki:    2000,
   }
   const DEFAULT_LIMIT = 2500
   const limit = TOOL_RESULT_LIMITS[toolName] || DEFAULT_LIMIT
@@ -1669,27 +1672,30 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
       return text.slice(0, maxLen) + '…'
     }
 
-    // ── Path A0_wiki: 全局 Wiki 知识（跨 Dun 共享）──
+    // ── Path A0_wiki: 全局 Wiki 知识（语义搜索，按 userQuery 匹配 top-5）──
     let globalWikiInjected = false
     if (!isContinuation) {
       try {
-        const res = await fetch(`${this.serverUrl}/api/wiki/render-text`)
+        const searchQ = encodeURIComponent(userQuery.slice(0, 200))
+        const res = await fetch(`${this.serverUrl}/api/wiki/search-render?q=${searchQ}&limit=5`)
         if (res.ok) {
           const globalWikiText = await res.text()
           if (globalWikiText.trim()) {
-            pushContext(`## 全局知识\n${truncateAtSentence(globalWikiText, 800)}`, 'memory')
+            pushContext(`## 全局知识\n${truncateAtSentence(globalWikiText, 1500)}`, 'memory')
             globalWikiInjected = true
           }
         }
       } catch { /* wiki 不可用时静默降级 */ }
     }
 
-    // ── Path A1_wiki: Per-Dun Wiki 知识（高优先级）──
+    // ── Path A1_wiki: Per-Dun Wiki 知识（语义搜索，高优先级）──
     let dunWikiInjected = false
     if (effectiveDunId && !isContinuation) {
       try {
+        const searchQ = encodeURIComponent(userQuery.slice(0, 200))
+        const dunParam = encodeURIComponent(effectiveDunId)
         const res = await fetch(
-          `${this.serverUrl}/api/wiki/render-text?dun_id=${encodeURIComponent(effectiveDunId)}`
+          `${this.serverUrl}/api/wiki/search-render?q=${searchQ}&dun_id=${dunParam}&limit=5`
         )
         if (res.ok) {
           const dunWikiText = await res.text()
@@ -4111,21 +4117,16 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${d
           console.warn('[LocalClaw/FC] Failed to record Dun experience:', err)
         })
 
-        // Phase 3: DunScoring - 使用 ExecTrace 驱动评分更新
+        // Phase 3: DunScoring - 预计算（纯统计，不直接写 Store，由 Consolidator 原子写回）
+        let precomputedScoring: { scoring: DunScoring; scoreChange: number } = {
+          scoring: {} as DunScoring, scoreChange: 0,
+        }
         try {
-          const { scoring, scoreChange } = dunScoringService.updateFromTrace(activeDunId, trace, finalResponse)
-          finalScoreChange = scoreChange
-          console.log(`[LocalClaw/FC] DunScoring updated: ${activeDunId} scoreChange=${scoreChange > 0 ? '+' : ''}${scoreChange}`)
-
-          // 写回 Zustand Store，让 Dashboard / HoverCard 等组件即时反映
-          this.storeActions?.updateDunScoring?.(activeDunId, scoring)
-
-          // 持久化评分到后端
-          dunScoringService.saveToServer(activeDunId, this.serverUrl).catch(err => {
-            console.warn('[LocalClaw/FC] Failed to persist scoring:', err)
-          })
+          precomputedScoring = dunScoringService.updateFromTrace(activeDunId, trace, finalResponse)
+          finalScoreChange = precomputedScoring.scoreChange
+          console.log(`[LocalClaw/FC] DunScoring precomputed: ${activeDunId} scoreChange=${precomputedScoring.scoreChange > 0 ? '+' : ''}${precomputedScoring.scoreChange}`)
         } catch (scoringErr) {
-          console.warn('[LocalClaw/FC] DunScoring update failed:', scoringErr)
+          console.warn('[LocalClaw/FC] DunScoring precompute failed:', scoringErr)
         }
 
         // Phase 5: 将执行追踪写入 memoryStore (持久化到 SQLite)
@@ -4156,117 +4157,62 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${d
           this.lastRunL1Ids = trackedToolResults.map(tr => `l1-${dunIdForL1}-${tr.toolName}`)
           this.lastRunTimestamp = Date.now()
 
-          // 2. 评估是否有可晋升到 L0 的记忆（使用 Safe 版本，等待 readyPromise）
-          confidenceTracker.evaluatePromotionsSafe(activeDunId).then(promotable => {
-            if (promotable.length > 0) {
-              return confidenceTracker.promoteToL0Safe(promotable).then(count => {
-                if (count > 0) {
-                  console.log(`[LocalClaw/FC] Promoted ${count} L1 memories to L0 for Dun ${activeDunId}`)
-                }
-              })
-            }
-          }).catch(err => {
-            console.warn('[LocalClaw/FC] L1→L0 promotion failed:', err)
-          })
+          // L1→L0 promotion: 由 Consolidator 统一判定，此处不再独立调用
         }
 
-        // SOP Evolution: fitness 计算 + 持久化 + rewrite 检测 + Golden Path 蒸馏
-        if (activeDunId) {
-          const sopTraceTools = traceTools.map(t => ({
-            name: t.name,
-            status: t.status as 'success' | 'error',
-            result: t.result,
-            duration: t.latency,
-          }))
-          const sopSuccess = runSuccess  // V3: 使用统一的 success 定义
-
-          // 获取 sopContent 用于 LLM 蒸馏
+        // Post-Execution Consolidator: 单次 LLM 调用完成所有后处理
+        // Phase 1 (COLLECT): 异步收集 L1 候选 + SOP 上下文，然后 fire-and-forget
+        {
+          const bgSignal = this._backgroundAbortController?.signal
           const duns = this.storeActions?.duns
           const activeDun = duns?.get(activeDunId)
           const activeSopContent = activeDun?.sopContent || undefined
 
-          sopEvolutionService.afterTaskCompletion(
-            activeDunId,
-            sopTraceTools,
-            sopSuccess,
-            finalResponse,
-            userPrompt,
-            activeSopContent,
-            // 回调：同步更新 DunEntity.sopEvolutionData + sopRewriteInfo + sopContent 到 Zustand Store
-            (evolutionData, rewriteInfo, newSopContent) => {
-              this.storeActions?.updateDun(activeDunId, {
-                sopEvolutionData: evolutionData,
-                ...(rewriteInfo ? { sopRewriteInfo: rewriteInfo } : {}),
-                ...(newSopContent ? { sopContent: newSopContent } : {}),
-              })
-              // SOP 改写时发送全局 toast 通知
-              if (rewriteInfo) {
-                this.storeActions?.addToast({
-                  type: 'warning',
-                  title: 'SOP 已自动改写',
-                  message: `Dun "${activeDun?.label || activeDunId}" 的 SOP 已根据执行数据自动优化 (${rewriteInfo.triggerLevel || 'AUTO'})`,
-                })
-              }
-            },
-          ).catch(err => {
-            console.warn('[LocalClaw/FC] SOP Evolution afterTaskCompletion failed:', err)
+          Promise.all([
+            confidenceTracker.getPromotableCandidates(activeDunId).catch((): L1MemoryEntry[] => []),
+            activeSopContent
+              ? sopEvolutionService.buildGoldenPathContext(activeDunId, activeSopContent).catch(() => null)
+              : Promise.resolve(null),
+          ]).then(([promotableCandidates, sopFitnessContext]) => {
+            const payload: ConsolidationPayload = {
+              dunId: activeDunId,
+              trace,
+              traceTools: traceTools.map(t => ({
+                name: t.name,
+                status: t.status,
+                result: t.result,
+                args: t.args as Record<string, unknown> | undefined,
+                latency: t.latency,
+              })),
+              userPrompt,
+              finalResponse: finalResponse || null,
+              runSuccess,
+              turnCount,
+              precomputedScoring,
+              promotableCandidates,
+              sopContent: activeSopContent,
+              sopFitnessContext: sopFitnessContext ?? undefined,
+              bgSignal,
+              serverUrl: this.serverUrl,
+            }
+
+            consolidatePostExecution(payload, {
+              updateDun: (id, updates) => this.storeActions?.updateDun(id, updates as Partial<DunEntity>),
+              addToast: (toast) => this.storeActions?.addToast(toast),
+              duns: this.storeActions?.duns,
+            }).then(sc => {
+              console.log(`[LocalClaw/FC] Consolidator done: scoreChange=${sc > 0 ? '+' : ''}${sc}`)
+            }).catch(err => {
+              console.warn('[LocalClaw/FC] Consolidator failed:', err)
+            })
+          }).catch(err => {
+            console.warn('[LocalClaw/FC] Consolidator collect failed:', err)
           })
         }
       }
     }
 
-    // Memory Flush + Response Knowledge Flush: 通过后台队列串行执行
-    // 后台队列自动管控并发和限流，不再需要手工 2s 冷却
-    {
-      const doFlushMemory = traceTools.length > 0 && contextEngine.flushMemory
-      const doFlushResponse = finalResponse && contextEngine.flushResponseKnowledge
-      const bgSignal = this._backgroundAbortController?.signal
-
-      if (doFlushMemory || doFlushResponse) {
-        // 包装成一个串行后台链（不阻塞主流程）
-        ;(async () => {
-          // Step 1: Memory Flush（工具执行认知提炼）
-          if (doFlushMemory) {
-            const OUTPUT_TOOLS = ['writeFile', 'appendFile']
-            const PER_FILE_CONTENT_LIMIT = 2000
-
-            const flushToolSummaries: import('@/types').ToolCallSummary[] = traceTools.map((t, idx) => {
-              const isOutputTool = OUTPUT_TOOLS.includes(t.name) && t.status === 'success'
-              const preservedArgs: Record<string, unknown> = isOutputTool
-                ? { path: t.args?.path, contentPreview: String(t.args?.content || '').slice(0, PER_FILE_CONTENT_LIMIT) }
-                : {}
-
-              return {
-                callId: `flush-${idx}`,
-                toolName: t.name,
-                args: preservedArgs,
-                status: (t.status === 'success' ? 'success' : 'error') as 'success' | 'error',
-                result: t.status === 'success' ? t.result?.slice(0, 500) : undefined,
-                error: t.status === 'error' ? t.result?.slice(0, 500) : undefined,
-                durationMs: t.latency || 0,
-                isMutating: CONFIG.CRITIC_TOOLS.includes(t.name),
-                timestamp: Date.now(),
-              }
-            })
-
-            try {
-              await contextEngine.flushMemory!(flushToolSummaries, bgSignal)
-            } catch (err) {
-              console.warn('[LocalClaw/FC] Memory Flush failed:', err)
-            }
-          }
-
-          // Step 2: Response Knowledge Flush（响应知识提取）
-          if (doFlushResponse) {
-            try {
-              await contextEngine.flushResponseKnowledge!(userPrompt, finalResponse, bgSignal)
-            } catch (err) {
-              console.warn('[LocalClaw/FC] Response Knowledge Flush failed:', err)
-            }
-          }
-        })().catch(() => {/* 串行链顶层兜底 */})
-      }
-    }
+    // Memory Flush + Response Knowledge Flush: 已由 Post-Execution Consolidator 统一处理
 
     // P4: Dun 经验记录 (无工具调用时也记录 — 纯文字交互也是 Dun 使用)
     if (activeDunId && traceTools.length === 0 && finalResponse) {
@@ -4992,8 +4938,8 @@ ${dun.metrics.map((m, i) => `${i + 1}. ${m}`).join('\n')}
       signal?.addEventListener('abort', onExternalAbort, { once: true })
 
       try {
-        // Dun 上下文路由：为 writeFile/appendFile/saveMemory 注入 activeDunId
-        const DUN_ROUTED_TOOLS = ['writeFile', 'appendFile', 'saveMemory']
+        // Dun 上下文路由：为特定工具注入 activeDunId
+        const DUN_ROUTED_TOOLS = ['writeFile', 'appendFile', 'saveMemory', 'searchWiki']
         const activeDunId = DUN_ROUTED_TOOLS.includes(tool.name) ? this.getActiveDunId() : null
         const finalArgs = activeDunId 
           ? { ...tool.args, dunId: activeDunId }

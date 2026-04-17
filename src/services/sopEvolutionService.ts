@@ -1023,6 +1023,122 @@ Rules:
     }
     return undefined
   }
+
+  // ═══ Consolidator 适配层 ═══
+
+  /**
+   * 计算本次执行的 fitness 并持久化到 sop-fitness.json
+   * 包装 computeSessionFitness + updateAndPersistFitness，供 Consolidator Phase 3 调用
+   */
+  async computeAndPersistFitness(
+    dunId: string,
+    traceTools: ToolTrace[],
+    isSuccess: boolean,
+    userPrompt?: string,
+  ): Promise<{ fitness: number; ema: number; totalExecutions: number }> {
+    const { fitness, traceSummary } = this.computeSessionFitness(dunId, traceTools, isSuccess, userPrompt)
+    const updated = await this.updateAndPersistFitness(dunId, traceSummary)
+    console.log(
+      `[SOPEvolution] Fitness: ${(fitness * 100).toFixed(0)}%, EMA: ${(updated.ema * 100).toFixed(0)}% (${updated.totalExecutions} executions)`
+    )
+    return { fitness, ema: updated.ema, totalExecutions: updated.totalExecutions }
+  }
+
+  /**
+   * 检测 LLM 输出中的 SOP 改写并应用
+   * 包装 detectRewriteTriggerLevel + detectAndApplyRewrite，供 Consolidator Phase 3 调用
+   */
+  async detectRewrite(dunId: string, finalResponse: string): Promise<{
+    rewritten: boolean
+    triggerLevel?: string
+    basedOnExecutions?: number
+    historyVersion?: string
+    newSopContent?: string
+  }> {
+    const triggerLevel = await this.detectRewriteTriggerLevel(dunId)
+    const rewriteResult = await this.detectAndApplyRewrite(finalResponse, dunId)
+
+    if (rewriteResult.rewritten) {
+      const data = await this.loadSOPFitness(dunId)
+      console.log(`[SOPEvolution] SOP rewrite applied (trigger: ${triggerLevel})`)
+      return {
+        rewritten: true,
+        triggerLevel,
+        basedOnExecutions: data.totalExecutions,
+        historyVersion: rewriteResult.historyVersion,
+        newSopContent: rewriteResult.newSopContent,
+      }
+    }
+
+    return { rewritten: false }
+  }
+
+  /**
+   * 构建 SOP 执行历史上下文文本，供 Consolidator Prompt 的"SOP 执行历史"段使用
+   * 复用 distillGoldenPathSummary 中的数据收集逻辑（但不调用 LLM）
+   */
+  async buildGoldenPathContext(dunId: string, sopContent: string): Promise<string | null> {
+    const fitness = await this.loadSOPFitness(dunId)
+    const successTraces = fitness.recentTraces.filter(t => t.success)
+    if (successTraces.length < EVO.MIN_SUCCESSES_FOR_GOLDEN_PATH) return null
+
+    // 构建执行历史摘要
+    const traceSummaries = fitness.recentTraces.map(t => ({
+      success: t.success,
+      toolChain: t.toolChain.join(' -> '),
+      errorTools: t.errorTools.join(', ') || 'none',
+      phaseReached: t.phaseReached,
+      taskSummary: t.taskSummary || 'unknown',
+    }))
+
+    // 解析 SOP phases 名称
+    const phases = this.parseSOP(sopContent)
+    const phaseNames = phases.map(p => `Phase ${p.index}: ${p.name}`)
+
+    const lines = [
+      `EMA: ${(fitness.ema * 100).toFixed(0)}%, Total: ${fitness.totalExecutions} 次, Since Rewrite: ${fitness.executionsSinceRewrite}`,
+      '',
+      'Phases: ' + phaseNames.join(', '),
+      '',
+      `Recent ${traceSummaries.length} executions:`,
+      ...traceSummaries.map((t, i) =>
+        `  ${i + 1}. ${t.success ? '✓' : '✗'} [${t.toolChain || 'no tools'}] phase=${t.phaseReached} task="${t.taskSummary}"`
+      ),
+    ]
+    return lines.join('\n')
+  }
+
+  /**
+   * 将 Consolidator 的 SOP_FEEDBACK 结果写入 golden-path-summary.json
+   * 仅处理数据写入，不调用 LLM
+   */
+  async applyGoldenPathFromConsolidator(
+    dunId: string,
+    sopFeedback: { action: string; suggestion?: string; phaseInsights?: Array<{ phaseName: string; status: string; insight: string }>; confidence?: number },
+  ): Promise<void> {
+    if (sopFeedback.action === 'noop') return
+
+    const fitness = await this.loadSOPFitness(dunId)
+
+    const summary: GoldenPathSummary = {
+      taskCategories: [],  // Consolidator 不提供 taskCategories，保留空
+      phaseInsights: (sopFeedback.phaseInsights || []).map(pi => ({
+        phaseName: pi.phaseName,
+        status: pi.status as 'golden' | 'stable' | 'bottleneck',
+        insight: pi.insight,
+      })),
+      commonPitfalls: sopFeedback.suggestion ? [sopFeedback.suggestion] : [],
+      confidence: sopFeedback.confidence ?? 0.5,
+      lastSummarizedAt: Date.now(),
+      basedOnExecutions: fitness.totalExecutions,
+    }
+
+    await this.writeFile(
+      this.dunFilePath(dunId, EVO.GOLDEN_SUMMARY_FILE),
+      JSON.stringify(summary, null, 2),
+    )
+    console.log(`[SOPEvolution] GoldenPathSummary written from Consolidator for ${dunId} (action: ${sopFeedback.action})`)
+  }
 }
 
 export const sopEvolutionService = new SOPEvolutionService()

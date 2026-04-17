@@ -12,6 +12,7 @@
 import { chatBackground, isLLMConfigured } from './llmService'
 import { memoryStore } from './memoryStore'
 import { getServerUrl } from '@/utils/env'
+import { useStore } from '@/store'
 
 // ============================================
 // INGEST_PROMPT (V2: Entity-Claim-Evidence)
@@ -169,6 +170,84 @@ class KnowledgeIngestService {
     return this.globalIngestCount
   }
 
+  /**
+   * 缓冲 Consolidator 预提取的知识实体，直接写入 Wiki API（无 LLM 调用）
+   * Consolidator 已完成实体识别，这里仅负责格式转换 + API 写入
+   */
+  bufferEntities(
+    dunId: string,
+    entities: Array<{ op: string; entity_name: string; claims: string[] }>,
+  ): void {
+    if (entities.length === 0) return
+
+    // 异步批量写入，不阻塞 Consolidator
+    const doWrite = async () => {
+      // 预获取 entity 索引，用于 update op 的 id 查找
+      let entityIndex: EntityIndexEntry[] = []
+      const hasUpdate = entities.some(e => e.op === 'update')
+      if (hasUpdate) {
+        entityIndex = await this.fetchEntityIndex(dunId)
+      }
+
+      let writtenCount = 0
+      for (const ent of entities) {
+        if (ent.op === 'noop' || !ent.entity_name) continue
+
+        // update op: 通过 title 匹配查找已有 entity 的 id
+        let entityId: string | undefined
+        if (ent.op === 'update' && entityIndex.length > 0) {
+          const titleLower = ent.entity_name.toLowerCase()
+          const match = entityIndex.find(e =>
+            e.title.toLowerCase() === titleLower ||
+            e.title.toLowerCase().includes(titleLower) ||
+            titleLower.includes(e.title.toLowerCase())
+          )
+          entityId = match?.id
+        }
+
+        const action: WikiIngestAction = {
+          op: (ent.op === 'update' && entityId) ? 'update' : 'create',
+          entity: {
+            ...(entityId ? { id: entityId } : {}),
+            title: ent.entity_name,
+            type: 'concept',
+            tldr: ent.claims[0]?.slice(0, 100) || ent.entity_name,
+            slug: ent.entity_name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').slice(0, 50),
+          },
+          claims: ent.claims.map(c => ({
+            content: c,
+            type: 'insight' as const,
+            confidence: 0.7,
+          })),
+          relations: [],
+        }
+
+        const inputText = `[Consolidator] ${ent.entity_name}: ${ent.claims.join('; ')}`
+        const success = await this.postIngest(dunId, action, inputText, '[from-consolidator]')
+        if (success) writtenCount++
+      }
+
+      // 更新状态
+      const state = this.getOrCreateState(dunId)
+      state.pendingFlushCount = 0
+      state.lastIngestAt = Date.now()
+      this.persistState(dunId, state)
+      this.globalIngestCount++
+      try { localStorage.setItem('ki_global_count', String(this.globalIngestCount)) } catch { /* SSR safe */ }
+
+      console.log(`[KnowledgeIngest] Buffered ${writtenCount}/${entities.length} entities from Consolidator for Dun ${dunId}`)
+
+      // 通知 Store 刷新 UI
+      if (writtenCount > 0) {
+        useStore.getState().notifyWikiIngest(dunId)
+      }
+    }
+
+    doWrite().catch(err => {
+      console.warn(`[KnowledgeIngest] bufferEntities failed for Dun ${dunId}:`, err)
+    })
+  }
+
   /** 重置全局 ingest 计数（lint 完成后调用） */
   resetGlobalIngestCount(): void {
     this.globalIngestCount = 0
@@ -311,6 +390,9 @@ class KnowledgeIngestService {
         try { localStorage.setItem('ki_global_count', String(this.globalIngestCount)) } catch { /* SSR safe */ }
 
         console.log(`[KnowledgeIngest] ${action.op.toUpperCase()} entity "${action.entity?.title}" for Dun ${dunId}`)
+
+        // 通知 Store 刷新 UI
+        useStore.getState().notifyWikiIngest(dunId)
 
         // 通知 lint 服务检查
         if (this.globalIngestCount > 0 && this.globalIngestCount % 20 === 0) {
@@ -614,6 +696,7 @@ class KnowledgeIngestService {
       }
 
       // 3. 逐个旧文件内容送入 V2 ingest 管道
+      let migratedCount = 0
       for (const legacy of legacyContents) {
         const entityIndex = await this.fetchEntityIndex(dunId)
 
@@ -642,13 +725,19 @@ class KnowledgeIngestService {
 
         const action = this.parseWikiIngestAction(llmResult)
         if (action.op !== 'noop') {
-          await this.postIngest(dunId, action, legacy, llmResult)
+          const migSuccess = await this.postIngest(dunId, action, legacy, llmResult)
+          if (migSuccess) migratedCount++
         }
       }
 
       // 4. 标记已迁移
       try { localStorage.setItem(`ki_wiki_migrated_${dunId}`, '1') } catch { /* SSR safe */ }
       console.log(`[KnowledgeIngest] Migration complete for Dun ${dunId} (${legacyFiles.length} files)`)
+
+      // 通知 Store 刷新 UI
+      if (migratedCount > 0) {
+        useStore.getState().notifyWikiIngest(dunId)
+      }
     } catch (err) {
       console.warn(`[KnowledgeIngest] Migration error for ${dunId}:`, err)
     }

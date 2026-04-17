@@ -15,6 +15,7 @@ import { createClawHubSlice, type ClawHubSlice } from './slices/clawHubSlice'
 import { createSoulAmendmentSlice, type SoulAmendmentSlice } from './slices/soulAmendmentSlice'
 import { createLinkStationSlice, type LinkStationSlice } from './slices/linkStationSlice'
 import { createLibrarySlice, type LibrarySlice } from './slices/librarySlice'
+import { createWikiSlice, type WikiSlice } from './slices/wikiSlice'
 
 // ============================================
 // 视图状态
@@ -27,7 +28,7 @@ interface ViewSlice {
 // ============================================
 // 合并后的 Store 类型
 // ============================================
-export type AppStore = ViewSlice & ConnectionSlice & SessionsSlice & ChannelsSlice & AgentSlice & DevicesSlice & AiSlice & WorldSlice & ObserverSlice & ThemeSlice & ClawHubSlice & SoulAmendmentSlice & LinkStationSlice & LibrarySlice
+export type AppStore = ViewSlice & ConnectionSlice & SessionsSlice & ChannelsSlice & AgentSlice & DevicesSlice & AiSlice & WorldSlice & ObserverSlice & ThemeSlice & ClawHubSlice & SoulAmendmentSlice & LinkStationSlice & LibrarySlice & WikiSlice
 
 // ============================================
 // 创建 Store
@@ -52,6 +53,7 @@ export const useStore = create<AppStore>()(
     ...createSoulAmendmentSlice(...args),
     ...createLinkStationSlice(...args),
     ...createLibrarySlice(...args),
+    ...createWikiSlice(...args),
   }))
 )
 
@@ -132,6 +134,10 @@ export const selectCanvasPalette = (state: AppStore) => state.canvasPalette
 export const selectLinkStation = (state: AppStore) => state.linkStation
 export const selectProviders = (state: AppStore) => state.linkStation.providers
 export const selectChannelBindings = (state: AppStore) => state.linkStation.channelBindings
+
+// Wiki 选择器
+export const selectWikiEntitiesByDun = (state: AppStore) => state.wikiEntitiesByDun
+export const selectWikiLoadingByDun = (state: AppStore) => state.wikiLoadingByDun
 
 // ============================================
 // 开发调试：暴露 store 到 window

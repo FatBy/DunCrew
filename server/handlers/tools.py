@@ -291,6 +291,7 @@ class ToolsMixin:
                     'browser_evaluate': self._tool_browser_evaluate,
                     'screenCapture': self._tool_screen_capture,
                     'ocrExtract': self._tool_ocr_extract,
+                    'searchWiki': self._tool_search_wiki,
                 }
                 handler = builtin_handlers.get(tool_name)
                 if handler:

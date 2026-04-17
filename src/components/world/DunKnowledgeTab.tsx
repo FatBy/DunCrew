@@ -1,11 +1,12 @@
 /**
  * DunKnowledgeTab - Dun 知识库 Tab (V3: WSJ Editorial Style)
  *
- * 从 wiki API 加载 Entity 列表，点击打开详情弹窗。
+ * 从 wikiSlice (Zustand Store) 获取 Entity 列表，点击打开详情弹窗。
+ * knowledgeIngestService 写入成功后通过 notifyWikiIngest 触发自动刷新。
  * 设计语言：衬线标题 + 暖色中性调 + 编辑式排版
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   BookOpen, Loader2, Search, FileText,
@@ -14,25 +15,9 @@ import {
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { getServerUrl } from '@/utils/env'
+import { useStore } from '@/store'
+import type { WikiEntitySummary } from '@/store/slices/wikiSlice'
 import { KnowledgeDetailModal } from './KnowledgeDetailModal'
-
-// ============================================
-// Types
-// ============================================
-
-interface WikiEntity {
-  id: string
-  dunId: string | null
-  slug: string
-  title: string
-  type: string
-  tldr: string | null
-  tags: string[]
-  status: string
-  claimCount: number
-  createdAt: number
-  updatedAt: number
-}
 
 // ============================================
 // WSJ palette (shared with Modal)
@@ -78,7 +63,7 @@ function EntityCard({
   entity,
   onViewDetail,
 }: {
-  entity: WikiEntity
+  entity: WikiEntitySummary
   onViewDetail: () => void
 }) {
   const meta = getMeta(entity.type)
@@ -212,53 +197,60 @@ interface DunKnowledgeTabProps {
 }
 
 export function DunKnowledgeTab({ dunId }: DunKnowledgeTabProps) {
-  const [entities, setEntities] = useState<WikiEntity[]>([])
+  // Wiki 实体数据来自 Zustand Store（响应式：ingest 成功后自动刷新）
+  const entities = useStore(state => state.wikiEntitiesByDun[dunId] || [])
+  const storeLoading = useStore(state => state.wikiLoadingByDun[dunId] || false)
+  const fetchWikiEntities = useStore(state => state.fetchWikiEntities)
+
+  // Legacy files 仍用本地状态（低频、不走 wiki 管道）
   const [legacyFiles, setLegacyFiles] = useState<LegacyFile[]>([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
+  const [initialLoading, setInitialLoading] = useState(true)
 
   const serverUrl = localStorage.getItem('duncrew_server_url') || getServerUrl()
 
-  const loadEntities = useCallback(async () => {
-    try {
-      const resp = await fetch(`${serverUrl}/api/wiki/entities?dun_id=${encodeURIComponent(dunId)}`)
-      if (!resp.ok) return []
-      return await resp.json() as WikiEntity[]
-    } catch { return [] }
-  }, [dunId, serverUrl])
+  // 挂载时加载 wiki 实体 + legacy 文件
+  useEffect(() => {
+    let cancelled = false
 
-  const loadLegacyFiles = useCallback(async () => {
-    try {
-      const resp = await fetch(`${serverUrl}/duns/${dunId}/knowledge`)
-      if (!resp.ok) return []
-      const data = await resp.json()
-      const LEGACY_NAMES = new Set([
-        'environment.md', 'preferences.md', 'domain.md', 'tools.md', 'strategies.md',
-      ])
-      return ((data.files || []) as Array<{ filename: string }>)
-        .filter(f => LEGACY_NAMES.has(f.filename))
-        .map(f => ({ filename: f.filename, summary: '', lastHit: '' }))
-    } catch { return [] }
-  }, [dunId, serverUrl])
+    const loadAll = async () => {
+      setError(null)
+      try {
+        // 并行加载 wiki 实体（via store）和 legacy 文件
+        const legacyPromise = (async () => {
+          try {
+            const resp = await fetch(`${serverUrl}/duns/${dunId}/knowledge`)
+            if (!resp.ok) return []
+            const data = await resp.json()
+            const LEGACY_NAMES = new Set([
+              'environment.md', 'preferences.md', 'domain.md', 'tools.md', 'strategies.md',
+            ])
+            return ((data.files || []) as Array<{ filename: string }>)
+              .filter(f => LEGACY_NAMES.has(f.filename))
+              .map(f => ({ filename: f.filename, summary: '', lastHit: '' }))
+          } catch { return [] }
+        })()
 
-  const loadAll = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const [ents, legacy] = await Promise.all([loadEntities(), loadLegacyFiles()])
-      setEntities(ents)
-      setLegacyFiles(legacy)
-    } catch {
-      setError('加载知识库失败')
-    } finally {
-      setLoading(false)
+        const [, legacy] = await Promise.all([
+          fetchWikiEntities(dunId),
+          legacyPromise,
+        ])
+
+        if (!cancelled) {
+          setLegacyFiles(legacy)
+        }
+      } catch {
+        if (!cancelled) setError('加载知识库失败')
+      } finally {
+        if (!cancelled) setInitialLoading(false)
+      }
     }
-  }, [loadEntities, loadLegacyFiles])
 
-  useEffect(() => { loadAll() }, [loadAll])
+    loadAll()
+    return () => { cancelled = true }
+  }, [dunId, serverUrl, fetchWikiEntities])
 
   const filteredEntities = useMemo(() => {
     if (!searchQuery) return entities
@@ -269,6 +261,8 @@ export function DunKnowledgeTab({ dunId }: DunKnowledgeTabProps) {
       e.tags.some(t => t.toLowerCase().includes(q))
     )
   }, [entities, searchQuery])
+
+  const loading = initialLoading || (storeLoading && entities.length === 0)
 
   // ── Render ──
 

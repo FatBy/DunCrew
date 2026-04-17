@@ -560,6 +560,93 @@ class ConfidenceTrackerService {
     await this.stopDecayLoop()
     localStorage.removeItem(TRACKER_STORAGE_KEY)
   }
+
+  // ═══ Consolidator 接口 ═══
+
+  /**
+   * 获取可晋升到 L0 的候选条目（纯数据查询，无 LLM）
+   * 供 postExecutionConsolidator 在 Phase 1 收集 payload 时调用
+   */
+  async getPromotableCandidates(dunId: string): Promise<L1MemoryEntry[]> {
+    return this.evaluatePromotionsSafe(dunId)
+  }
+
+  /**
+   * 应用 Consolidator 的晋升判定结果（无 LLM 调用）
+   *
+   * @param entries 所有候选条目
+   * @param promotedIds Consolidator 判定值得晋升的条目 ID 列表
+   * @returns 实际写入 L0 的条目数
+   */
+  async applyPromotionResults(entries: L1MemoryEntry[], promotedIds: string[]): Promise<number> {
+    await this.readyPromise
+    if (entries.length === 0) return 0
+
+    const promotedSet = new Set(promotedIds)
+
+    // 按 dunId 分组
+    const byDun = new Map<string, { promoted: L1MemoryEntry[]; skipped: L1MemoryEntry[] }>()
+    for (const entry of entries) {
+      if (entry.promotedToL0) continue
+      const group = byDun.get(entry.dunId) || { promoted: [], skipped: [] }
+      if (promotedSet.has(entry.id)) {
+        group.promoted.push(entry)
+      } else {
+        group.skipped.push(entry)
+      }
+      byDun.set(entry.dunId, group)
+    }
+
+    let totalPromoted = 0
+
+    for (const [dunId, { promoted, skipped }] of byDun) {
+      // 标记不值得晋升的条目（避免下次重复评估）
+      for (const entry of skipped) {
+        entry.promotedToL0 = true
+        entry.updatedAt = Date.now()
+      }
+
+      if (promoted.length === 0) continue
+
+      // 对值得晋升的条目，构建摘要并写入 L0
+      const rawContents = promoted.map(e => e.content).join('\n')
+      const avgConfidence = promoted.reduce((sum, e) => sum + e.confidence, 0) / promoted.length
+
+      // 使用 fallback 提炼（Consolidator 已通过 LLM 做了判定，这里只做格式化）
+      const summarizedContent = this.fallbackSummarize(promoted) || rawContents.slice(0, 500)
+
+      const writeSuccess = await memoryStore.writeWithDedup({
+        source: 'memory',
+        content: summarizedContent,
+        dunId,
+        tags: ['l0_promoted', `from_dun:${dunId}`],
+        metadata: {
+          sourceDunId: dunId,
+          sourceEntryIds: promoted.map(e => e.id),
+          confidence: avgConfidence,
+          signalCount: promoted.reduce((sum, e) => sum + e.signals.length, 0),
+          promotedAt: Date.now(),
+          entryCount: promoted.length,
+          category: classifyMemoryContent(summarizedContent).category,
+        },
+      })
+
+      if (writeSuccess) {
+        for (const entry of promoted) {
+          entry.promotedToL0 = true
+          entry.updatedAt = Date.now()
+        }
+        totalPromoted += promoted.length
+        console.log(`[ConfidenceTracker/Consolidator] Promoted ${promoted.length} L1 → L0 for Dun ${dunId}`)
+      }
+    }
+
+    if (totalPromoted > 0 || entries.length > 0) {
+      this.saveToStorage()
+    }
+
+    return totalPromoted
+  }
 }
 
 // 导出单例

@@ -225,6 +225,12 @@ class ClawdDataHandler(
             self.handle_wiki_entities_list(query)
         elif path == '/api/wiki/entity-index':
             self.handle_wiki_entity_index(query)
+        elif path == '/api/wiki/search':
+            self.handle_wiki_search(query)
+        elif path == '/api/wiki/search-render':
+            self.handle_wiki_search_render(query)
+        elif path == '/api/wiki/stats':
+            self.handle_wiki_stats(query)
         elif path == '/api/wiki/render-text':
             self.handle_wiki_render_all_text(query)
         elif path.startswith('/api/wiki/entity/') and path.endswith('/claims'):
@@ -313,6 +319,14 @@ class ClawdDataHandler(
             self.handle_wiki_ingest(data)
         elif path == '/api/wiki/claim/conflict':
             self.handle_wiki_claim_conflict(data)
+        elif path == '/api/wiki/reindex':
+            self.handle_wiki_reindex(data)
+        elif path == '/api/wiki/batch':
+            self.handle_wiki_batch(data)
+        elif path == '/api/wiki/librarian':
+            self.handle_wiki_librarian(data)
+        elif path == '/api/wiki/librarian/execute':
+            self.handle_wiki_librarian_execute(data)
         elif path == '/api/genes/save':
             self.handle_gene_save(data)
         elif path == '/api/capsules/save':
@@ -660,6 +674,8 @@ curl -X POST http://localhost:3001/api/tools/execute \\
         try:
             content = filepath.read_text(encoding='utf-8')
             self.send_text(content)
+        except Exception as e:
+            self.send_error_json(f'Read error: {str(e)}', 500)
         except Exception as e:
             self.send_error_json(f'Read error: {str(e)}', 500)
     

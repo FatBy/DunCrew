@@ -440,6 +440,13 @@ class ToolRegistry:
                     'preprocess': {'type': 'boolean', 'description': '是否进行图像预处理（灰度化+二值化，提升识别率），默认 true', 'required': False},
                 },
             },
+            'searchWiki': {
+                'description': '搜索知识库（图书馆），查找与查询语义相关的知识实体和断言。用于获取领域知识、事实数据、行业洞察等结构化知识',
+                'inputs': {
+                    'query': {'type': 'string', 'description': '搜索查询（自然语言描述你需要的知识）', 'required': True},
+                    'limit': {'type': 'number', 'description': '返回结果数量，默认 5', 'required': False},
+                },
+            },
         }
         tools = []
         for name in self.builtin_tools:

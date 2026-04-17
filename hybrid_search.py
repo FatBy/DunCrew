@@ -712,3 +712,177 @@ class HybridSearchEngine:
 
         results.sort(key=lambda x: x['final_score'], reverse=True)
         return results
+
+
+# ============================================
+# Wiki 向量索引与语义搜索
+# ============================================
+
+def index_wiki_entity_vector(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    text: str,
+    embedding_engine: EmbeddingEngine,
+    db_lock: threading.Lock,
+) -> int:
+    """
+    为一个 wiki entity 生成向量索引 (不分块, Entity 级粒度)
+    text 应为 'title + tldr + 前 N 条 claim.content' 拼接
+    返回写入的向量数 (0 或 1)
+    """
+    if not embedding_engine.available or not text.strip():
+        return 0
+
+    vectors = embedding_engine.encode([text])
+    if len(vectors) == 0:
+        return 0
+
+    now = int(time.time() * 1000)
+    with db_lock:
+        conn.execute("DELETE FROM wiki_vectors WHERE entity_id = ?", (entity_id,))
+        blob = vectors[0].astype(np.float32).tobytes()
+        conn.execute(
+            "INSERT INTO wiki_vectors (entity_id, chunk_seq, embedding, chunk_content, created_at) VALUES (?,?,?,?,?)",
+            (entity_id, 0, blob, text[:500], now),
+        )
+        conn.commit()
+    return 1
+
+
+def search_wiki_vectors(
+    conn: sqlite3.Connection,
+    query: str,
+    embedding_engine: EmbeddingEngine,
+    dun_id: str | None = None,
+    limit: int = 5,
+) -> list[dict]:
+    """
+    Wiki 语义搜索: query → BGE embedding → cosine similarity → top-K entities
+    返回 [{entityId, title, type, tldr, score, ...}]
+    """
+    if not embedding_engine.available:
+        return []
+
+    query_vec = embedding_engine.encode_query(query)
+    if query_vec.size == 0:
+        return []
+
+    # 读取 wiki_vectors + wiki_entity join
+    if dun_id:
+        sql = """
+            SELECT wv.entity_id, wv.embedding, wv.chunk_content,
+                   e.title, e.type, e.tldr, e.dun_id, e.tags, e.updated_at
+            FROM wiki_vectors wv
+            JOIN wiki_entity e ON e.id = wv.entity_id
+            WHERE e.dun_id = ? AND e.status = 'active'
+        """
+        params: list = [dun_id]
+    else:
+        sql = """
+            SELECT wv.entity_id, wv.embedding, wv.chunk_content,
+                   e.title, e.type, e.tldr, e.dun_id, e.tags, e.updated_at
+            FROM wiki_vectors wv
+            JOIN wiki_entity e ON e.id = wv.entity_id
+            WHERE e.dun_id IS NULL AND e.status = 'active'
+        """
+        params = []
+
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except Exception:
+        return []
+
+    if not rows:
+        return []
+
+    dim = embedding_engine.dimension
+    scored: list[tuple[float, dict]] = []
+
+    for r in rows:
+        blob = r['embedding']
+        vec = np.frombuffer(blob, dtype=np.float32)
+        if vec.shape[0] != dim:
+            continue
+        sim = float(np.dot(query_vec, vec))  # 已归一化, dot = cosine
+        scored.append((sim, {
+            'entityId': r['entity_id'],
+            'title': r['title'],
+            'type': r['type'],
+            'tldr': r['tldr'],
+            'dunId': r['dun_id'],
+            'tags': r['tags'] or '[]',
+            'updatedAt': r['updated_at'],
+            'score': round(sim, 4),
+        }))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item for _, item in scored[:limit]]
+
+
+def reindex_all_wiki_vectors(
+    conn: sqlite3.Connection,
+    embedding_engine: EmbeddingEngine,
+    db_lock: threading.Lock,
+) -> int:
+    """
+    全量重建 wiki 向量索引
+    为每个 active entity 生成 embedding (title + tldr + 前 5 条 claim)
+    返回索引的 entity 数量
+    """
+    if not embedding_engine.available:
+        return 0
+
+    # 获取所有 active entity
+    with db_lock:
+        entities = conn.execute(
+            "SELECT id, title, type, tldr FROM wiki_entity WHERE status = 'active'"
+        ).fetchall()
+
+    if not entities:
+        return 0
+
+    indexed = 0
+    batch_texts: list[str] = []
+    batch_ids: list[str] = []
+
+    for ent in entities:
+        eid = ent['id']
+        # 获取前 5 条 claim
+        with db_lock:
+            claims = conn.execute(
+                "SELECT content FROM wiki_claim WHERE entity_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 5",
+                (eid,)
+            ).fetchall()
+
+        parts = [ent['title']]
+        if ent['tldr']:
+            parts.append(ent['tldr'])
+        for c in claims:
+            parts.append(c['content'])
+        text = ' | '.join(parts)
+
+        batch_texts.append(text)
+        batch_ids.append(eid)
+
+    # 批量编码
+    if not batch_texts:
+        return 0
+
+    vectors = embedding_engine.encode(batch_texts, batch_size=32)
+    if len(vectors) == 0:
+        return 0
+
+    now = int(time.time() * 1000)
+    with db_lock:
+        # 清空旧索引
+        conn.execute("DELETE FROM wiki_vectors")
+        for i, (eid, vec) in enumerate(zip(batch_ids, vectors)):
+            blob = vec.astype(np.float32).tobytes()
+            conn.execute(
+                "INSERT INTO wiki_vectors (entity_id, chunk_seq, embedding, chunk_content, created_at) VALUES (?,?,?,?,?)",
+                (eid, 0, blob, batch_texts[i][:500], now),
+            )
+        conn.commit()
+        indexed = len(batch_ids)
+
+    return indexed

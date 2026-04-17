@@ -124,6 +124,7 @@ You maintain state across conversations through the memory system. Use memories 
         'dunBindSkill', 'dunUnbindSkill', 'openInExplorer', 'parseFile',
         'generateSkill',
         'screenCapture', 'ocrExtract',
+        'searchWiki',
     ]
     for name in builtin_names:
         registry.register_builtin(name, name)  # handler resolved at dispatch time
@@ -186,6 +187,35 @@ You maintain state across conversations through the memory system. Use memories 
     
     # 后台预热 Embedding 模型，避免首次请求时冷启动
     _embedding_manager.preheat()
+
+    # 后台自动建 wiki 向量索引（embedding 就绪后执行）
+    def _auto_reindex_wiki():
+        import time
+        try:
+            # 等待 embedding 模型加载完成
+            if not _embedding_manager.wait_until_ready(timeout=120):
+                return
+            time.sleep(2)  # 额外等待确保 DB 初始化完成
+            db = _state._db_conn
+            if not db:
+                return
+            # 检查 wiki_vectors 是否为空（首次需要全量索引）
+            from server.state import _db_lock
+            with _db_lock:
+                count = db.execute("SELECT COUNT(*) FROM wiki_vectors").fetchone()[0]
+                entity_count = db.execute("SELECT COUNT(*) FROM wiki_entity WHERE status = 'active'").fetchone()[0]
+            if count == 0 and entity_count > 0:
+                print(f"[Wiki] Auto-reindexing {entity_count} entities (first run)...", file=sys.stderr)
+                from hybrid_search import reindex_all_wiki_vectors, EmbeddingEngine
+                from server.db import get_hybrid_engine
+                engine = get_hybrid_engine()
+                if engine and _state._embedding_engine:
+                    indexed = reindex_all_wiki_vectors(db, _state._embedding_engine, _db_lock)
+                    print(f"[Wiki] Auto-reindex complete: {indexed} entities indexed", file=sys.stderr)
+        except Exception as e:
+            print(f"[Wiki] Auto-reindex failed: {e}", file=sys.stderr)
+
+    threading.Thread(target=_auto_reindex_wiki, name='wiki-reindex', daemon=True).start()
     
     # 后台同步 JSONL exec_traces → SQLite memory 表
     threading.Thread(
