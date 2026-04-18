@@ -492,6 +492,19 @@ class ToolsMixin:
             if not file_path.exists():
                 duplicate_id = self._check_dun_duplication(content)
                 if duplicate_id:
+                    # SOP 改写场景：自动重定向到已有 Dun 的 DUN.md，而非创建新目录
+                    existing_md = self.clawd_path / 'duns' / duplicate_id / 'DUN.md'
+                    if existing_md.exists():
+                        existing_md.write_text(content, encoding='utf-8')
+                        print(f'[Dun] SOP rewrite auto-redirected: {path} → duns/{duplicate_id}/DUN.md')
+                        return json.dumps({
+                            'action': 'file_updated',
+                            'message': f'已自动重定向写入到已有节点 duns/{duplicate_id}/DUN.md (避免重复创建)',
+                            'path': str(existing_md),
+                            'redirected_from': path,
+                            'duplicate_id': duplicate_id,
+                        })
+                    # 如果已有 Dun 目录不存在 DUN.md（异常情况），仍拦截
                     return (f"【系统拦截】创建失败！\n"
                             f"检测到高度相似的 Dun 节点已存在 (节点 ID: {duplicate_id})。\n"
                             f"为避免知识图谱碎片化，请不要创建新目录，请直接使用 'readFile' 和 'writeFile' "
@@ -618,18 +631,38 @@ class ToolsMixin:
         
         new_text = f"{new_name} {new_desc}"
         
-        # 2. 遍历现有 Dun 进行对比
-        nexuses_dir = self.clawd_path / 'nexuses'
-        if not nexuses_dir.exists():
-            return None
-        
+        # 2. 遍历现有 Dun 进行对比（扫描 duns/ 和旧版 nexuses/ 两个目录）
         best_match = None
         highest_score = 0.0
         
-        for dun_md in nexuses_dir.rglob('NEXUS.md'):
+        # 收集所有待扫描的 DUN.md / NEXUS.md 文件
+        dun_md_files = []
+        duns_dir = self.clawd_path / 'duns'
+        if duns_dir.exists():
+            dun_md_files.extend(duns_dir.glob('*/DUN.md'))
+            dun_md_files.extend(duns_dir.glob('*/NEXUS.md'))
+        nexuses_dir = self.clawd_path / 'nexuses'
+        if nexuses_dir.exists():
+            dun_md_files.extend(nexuses_dir.glob('*/NEXUS.md'))
+            dun_md_files.extend(nexuses_dir.glob('*/DUN.md'))
+        
+        if not dun_md_files:
+            return None
+        
+        seen_dirs = set()
+        for dun_md in dun_md_files:
+            dir_key = str(dun_md.parent.resolve())
+            if dir_key in seen_dirs:
+                continue
+            seen_dirs.add(dir_key)
+            
             existing_meta = parse_dun_frontmatter(dun_md)
             ext_name = str(existing_meta.get('name', ''))
             ext_desc = str(existing_meta.get('description', ''))
+            
+            # 精确名称匹配：名称完全相同直接判定为重复
+            if new_name and ext_name and new_name == ext_name:
+                return dun_md.parent.name
             
             ext_text = f"{ext_name} {ext_desc}"
             score = calculate_text_similarity(new_text, ext_text)

@@ -137,6 +137,69 @@ jobs:
           # 上传 latest-mac.yml
           ossutil64 cp -rf release/latest-mac.yml oss://${{ env.OSS_BUCKET }}/
 
+  # ═══════════════ macOS (ARM64 / Apple Silicon) ═══════════════
+  release-macos-arm64:
+    runs-on: macos-latest    # macos-latest 现在是 ARM64 (M 系列芯片)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Python deps
+        run: |
+          pip install pyinstaller pyyaml
+          pip install pdfplumber python-docx python-pptx pytesseract Pillow
+          pip install openpyxl beautifulsoup4 ebooklib striprtf trafilatura
+          pip install httpx onnxruntime tokenizers numpy
+          pip install mss pyobjc-framework-Quartz
+          pip install huggingface_hub optimum[onnxruntime]
+
+      - name: Download & quantize embedding model
+        run: python scripts/setup/download_model.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run electron:compile
+
+      - name: Build Python backend (PyInstaller)
+        run: python -m PyInstaller duncrew-server.spec --clean --noconfirm
+
+      - name: Build Electron app (macOS ARM64)
+        run: npx electron-builder --mac --arm64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # 上传到阿里云 OSS（使用 amd64 版 ossutil，通过 Rosetta 2 运行）
+      - name: Install ossutil
+        run: |
+          curl -o ossutil.zip https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-mac-amd64.zip
+          unzip ossutil.zip
+          chmod +x ossutil-v1.7.19-mac-amd64/ossutil64
+          sudo mv ossutil-v1.7.19-mac-amd64/ossutil64 /usr/local/bin/
+
+      - name: Upload to OSS
+        run: |
+          ossutil64 config -e ${{ env.OSS_ENDPOINT }} -i ${{ secrets.OSS_ACCESS_KEY_ID }} -k ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          # 上传 ARM64 DMG 和 zip
+          ossutil64 cp -rf release/*.dmg oss://${{ env.OSS_BUCKET }}/
+          ossutil64 cp -rf release/*.zip oss://${{ env.OSS_BUCKET }}/
+          # 上传 latest-mac.yml（ARM64 版会覆盖 x64 的，考虑后续拆分）
+          ossutil64 cp -rf release/latest-mac.yml oss://${{ env.OSS_BUCKET }}/
+
   # ═══════════════ Linux ═══════════════
   release-linux:
     runs-on: ubuntu-latest

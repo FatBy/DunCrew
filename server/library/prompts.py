@@ -65,8 +65,8 @@ OUTPUT_FORMAT = """
 更新已有 Entity:
 {{
   "op": "update",
-  "entity": {{"id": "已有Entity的id", "title": "...", "type": "concept|topic|pattern", "tldr": "一句话摘要", "tags": ["标签1", "标签2"], "slug": "kebab-case-slug"}},
-  "claims": [{{"content": "断言内容", "type": "metric|insight|pattern|fact", "value": "数值(可选)", "trend": "up|down|stable(可选)", "confidence": 0.8, "evidence": {{"source_name": "文档标题"}}}}],
+  "entity": {{"id": "已有Entity的id", "title": "...", "type": "concept|topic|pattern", "tldr": "一句话摘要", "tags": ["标签1", "标签2"], "slug": "kebab-case-slug", "category": "分类(可选,如:经济/技术/政策/社会)", "temporal_scope": "时间范围(可选,如:2024Q1/2023-2025/2024年)"}},
+  "claims": [{{"content": "断言内容", "type": "metric|insight|pattern|fact", "value": "数值(可选)", "trend": "up|down|stable(可选)", "confidence": 0.8, "observed_at": "事实观察时间(可选,如:2024-03)", "source_summary": "一句话来源摘要(如:来自XX报告第三章)", "evidence": {{"source_name": "文档标题"}}}}],
   "relations": [{{"target_title": "关联Entity标题", "type": "related_to|contradicts|subtopic_of", "description": "关系说明"}}]
 }}
 
@@ -79,6 +79,9 @@ OUTPUT_FORMAT = """
 - confidence: 原文明确=0.9, 推导=0.7, 不确定=0.5
 - evidence.source_name 务必包含文档标题
 - slug 格式: 全小写英文, 用连字符分隔, 如 "platform-economy"
+- temporal_scope: 从文档内容推断该 Entity 涉及的时间段, 无法推断则不填
+- observed_at: 该 Claim 对应事实的观察/发生时间, 无法推断则不填
+- source_summary: 用一句话概括该 Claim 的具体来源位置
 """
 
 

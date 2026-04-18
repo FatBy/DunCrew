@@ -132,10 +132,65 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Upload DMG
+      - name: Upload DMG (x64)
         uses: actions/upload-artifact@v4
         with:
-          name: DunCrew-macOS-DMG
+          name: DunCrew-macOS-x64-DMG
+          path: release/*.dmg
+          if-no-files-found: error
+
+  # ═══════════════ macOS (ARM64 / Apple Silicon) ═══════════════
+  build-macos-arm64:
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'macos' }}
+    runs-on: macos-latest    # macos-latest 现在是 ARM64 (M 系列芯片)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Python deps
+        run: |
+          pip install pyinstaller pyyaml
+          pip install pdfplumber python-docx python-pptx pytesseract Pillow
+          pip install openpyxl beautifulsoup4 ebooklib striprtf trafilatura
+          pip install httpx onnxruntime tokenizers numpy
+          pip install mss pyobjc-framework-Quartz
+          pip install huggingface_hub optimum[onnxruntime]
+
+      - name: Download & quantize embedding model
+        run: |
+          python scripts/setup/download_model.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run electron:compile
+
+      - name: Build Python backend (PyInstaller)
+        run: python -m PyInstaller duncrew-server.spec --clean --noconfirm
+
+      - name: Build Electron app (macOS ARM64)
+        run: npx electron-builder --mac --arm64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload DMG (ARM64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: DunCrew-macOS-ARM64-DMG
           path: release/*.dmg
           if-no-files-found: error
 

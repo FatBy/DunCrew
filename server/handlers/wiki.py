@@ -1076,8 +1076,8 @@ class WikiMixin:
             "value": "tag_name" | "category_name"  (tag/untag/set_category 时必需)
         }
         """
-        entity_ids = data.get('entity_ids', [])
-        action = data.get('action', '')
+        entity_ids = data.get('entity_ids') or data.get('ids', [])
+        action = data.get('action') or data.get('op', '')
         value = data.get('value', '')
 
         if not entity_ids:

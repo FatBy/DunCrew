@@ -100,12 +100,16 @@ export interface LibraryExportEntity {
   tldr: string
   tags: string[]
   slug: string
+  category?: string | null
+  temporal_scope?: string | null
   claims: Array<{
     content: string
     type: string
     value?: string | null
     trend?: string | null
     confidence: number
+    observed_at?: string | null
+    source_summary?: string | null
     evidence: { source_name: string; chunk_text?: string | null }
   }>
   relations: Array<{

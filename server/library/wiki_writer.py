@@ -84,12 +84,15 @@ class WikiWriter:
             if op == "update" and entity_id:
                 conn.execute(
                     """UPDATE wiki_entity
-                       SET title = ?, tldr = ?, tags = ?, updated_at = ?
+                       SET title = ?, tldr = ?, tags = ?, category = ?,
+                           temporal_scope = ?, updated_at = ?
                        WHERE id = ?""",
                     (
                         entity_data.get("title"),
                         entity_data.get("tldr"),
                         json.dumps(entity_data.get("tags", []), ensure_ascii=False),
+                        entity_data.get("category"),
+                        entity_data.get("temporal_scope"),
                         now,
                         entity_id,
                     ),
@@ -102,8 +105,9 @@ class WikiWriter:
                 )
                 conn.execute(
                     """INSERT INTO wiki_entity
-                       (id, dun_id, slug, title, type, tldr, tags, status, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+                       (id, dun_id, slug, title, type, tldr, tags, category,
+                        temporal_scope, status, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
                     (
                         entity_id,
                         dun_id,
@@ -112,6 +116,8 @@ class WikiWriter:
                         entity_data.get("type", "concept"),
                         entity_data.get("tldr"),
                         json.dumps(entity_data.get("tags", []), ensure_ascii=False),
+                        entity_data.get("category"),
+                        entity_data.get("temporal_scope"),
                         now,
                         now,
                     ),
@@ -125,8 +131,9 @@ class WikiWriter:
                 conn.execute(
                     """INSERT INTO wiki_claim
                        (id, entity_id, content, type, value, trend, confidence,
+                        observed_at, source_summary,
                         status, source_ingest_id, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)""",
                     (
                         claim_id,
                         entity_id,
@@ -135,6 +142,8 @@ class WikiWriter:
                         claim_data.get("value"),
                         claim_data.get("trend"),
                         claim_data.get("confidence", 0.8),
+                        claim_data.get("observed_at"),
+                        claim_data.get("source_summary"),
                         ingest_id,
                         now,
                         now,

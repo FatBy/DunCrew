@@ -1571,6 +1571,14 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
     const contextParts: string[] = []
     const queryLower = userQuery.toLowerCase()
 
+    /** 带超时的 fetch — 防止后端慢响应导致 buildDynamicContext 无限挂起 */
+    const fetchWithTimeout = (input: RequestInfo, init?: RequestInit, timeoutMs = 8000): Promise<Response> => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeoutMs)
+      const mergedInit: RequestInit = { ...init, signal: controller.signal }
+      return fetch(input, mergedInit).finally(() => clearTimeout(timer))
+    }
+
     // 弹性分区预算：各分区独立上限，总预算兜底
     const budgetCaps = CONFIG.BUDGET_CAPS as Record<string, number>
     const partitionUsed: Record<string, number> = {
@@ -1634,7 +1642,7 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
         let sopContent = dun?.sopContent
         if (!sopContent) {
           try {
-            const res = await fetch(`${this.serverUrl}/duns/${encodeURIComponent(activeDunId)}`)
+            const res = await fetchWithTimeout(`${this.serverUrl}/duns/${encodeURIComponent(activeDunId)}`)
             if (res.ok) {
               const detail = await res.json()
               sopContent = detail.sopContent
@@ -1646,7 +1654,14 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
         }
       }
 
-      const sopHints = await sopEvolutionService.getContextHints(activeDunId)
+      // 总超时保护：getContextHints 内部有多个串行 readFile，整体限时 10s
+      const sopHints = await Promise.race([
+        sopEvolutionService.getContextHints(activeDunId),
+        new Promise<null>(resolve => setTimeout(() => {
+          console.warn('[LocalClaw/DynCtx] sopEvolutionService.getContextHints timed out (10s)')
+          resolve(null)
+        }, 10000)),
+      ])
       if (sopHints) {
         pushContext(sopHints, 'identity')
       }
@@ -1677,7 +1692,7 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
     if (!isContinuation) {
       try {
         const searchQ = encodeURIComponent(userQuery.slice(0, 200))
-        const res = await fetch(`${this.serverUrl}/api/wiki/search-render?q=${searchQ}&limit=5`)
+        const res = await fetchWithTimeout(`${this.serverUrl}/api/wiki/search-render?q=${searchQ}&limit=5`)
         if (res.ok) {
           const globalWikiText = await res.text()
           if (globalWikiText.trim()) {
@@ -1694,7 +1709,7 @@ ${sop ? `\n行为准则:\n${sop.slice(0, 800)}` : ''}
       try {
         const searchQ = encodeURIComponent(userQuery.slice(0, 200))
         const dunParam = encodeURIComponent(effectiveDunId)
-        const res = await fetch(
+        const res = await fetchWithTimeout(
           `${this.serverUrl}/api/wiki/search-render?q=${searchQ}&dun_id=${dunParam}&limit=5`
         )
         if (res.ok) {

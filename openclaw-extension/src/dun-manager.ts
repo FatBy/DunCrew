@@ -1124,8 +1124,15 @@ export class DunManager {
       const fmMatch = raw.match(/^---\n[\s\S]*?\n---\n/);
       const frontmatter = fmMatch ? fmMatch[0] : "";
 
+      // Strip frontmatter from new SOP content if LLM included it (prevent double frontmatter)
+      let cleanedSOP = newSOPContent.trim();
+      const sopFmMatch = cleanedSOP.match(/^---\n[\s\S]*?\n---\n?/);
+      if (sopFmMatch) {
+        cleanedSOP = cleanedSOP.slice(sopFmMatch[0].length).trim();
+      }
+
       // Build new content: frontmatter + new SOP
-      const newContent = frontmatter + newSOPContent.trim() + "\n";
+      const newContent = frontmatter + cleanedSOP + "\n";
       writeFileSync(mdPath, newContent, "utf-8");
 
       // Reload the meta to update cached sopContent

@@ -154,11 +154,15 @@ class SOPEvolutionService {
 
   private async readFile(path: string): Promise<string | null> {
     try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 5000)
       const res = await fetch(`${this.serverUrl}/api/tools/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'readFile', args: { path } }),
+        signal: controller.signal,
       })
+      clearTimeout(timer)
       if (!res.ok) return null
       const data = await res.json()
       return data.status === 'error' ? null : (data.result ?? null)
@@ -169,11 +173,15 @@ class SOPEvolutionService {
 
   private async writeFile(path: string, content: string): Promise<boolean> {
     try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 5000)
       const res = await fetch(`${this.serverUrl}/api/tools/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'writeFile', args: { path, content } }),
+        signal: controller.signal,
       })
+      clearTimeout(timer)
       if (!res.ok) return false
       const data = await res.json()
       return data.status !== 'error'
@@ -604,7 +612,15 @@ class SOPEvolutionService {
     // 保留 frontmatter
     const fmMatch = raw.match(/^---\n[\s\S]*?\n---\n/)
     const frontmatter = fmMatch ? fmMatch[0] : ''
-    const fullNewContent = frontmatter + newSOP.trim() + '\n'
+
+    // 剥离 LLM 输出中可能夹带的 frontmatter（防止双重 frontmatter）
+    let cleanedSOP = newSOP.trim()
+    const sopFmMatch = cleanedSOP.match(/^---\n[\s\S]*?\n---\n?/)
+    if (sopFmMatch) {
+      cleanedSOP = cleanedSOP.slice(sopFmMatch[0].length).trim()
+    }
+
+    const fullNewContent = frontmatter + cleanedSOP + '\n'
     const written = await this.writeFile(mdPath, fullNewContent)
 
     if (written) {

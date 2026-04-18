@@ -167,7 +167,7 @@ class WikiBridge:
                 progress.skipped += 1
                 return
 
-            # e. 对每个 payload: 校验 → 写入 → 更新缓存
+            # e. 对每个 payload: 校验 → 回填 chunk_text → 写入 → 更新缓存
             progress.current_stage = "wiki_write"
             for payload in payloads:
                 if payload.get("op") == "noop":
@@ -175,6 +175,9 @@ class WikiBridge:
 
                 # 二次校验
                 payload = self.entity_index.validate_no_duplicate(payload)
+
+                # 自动回填 evidence.chunk_text (从源文本模糊匹配)
+                self._backfill_chunk_text(payload.get("claims", []), unit.content)
 
                 # Wiki 写入
                 write_result = await self.wiki.write(payload, dun_id)
@@ -236,3 +239,50 @@ class WikiBridge:
             return [parsed]
         else:
             return []
+
+    @staticmethod
+    def _backfill_chunk_text(claims: list[dict], source_text: str) -> None:
+        """从源文本中模糊匹配, 自动回填 evidence.chunk_text"""
+        if not source_text:
+            return
+        for claim in claims:
+            evidence = claim.get("evidence")
+            if not isinstance(evidence, dict):
+                continue
+            if evidence.get("chunk_text"):
+                continue
+            claim_content = claim.get("content", "")
+            if not claim_content or len(claim_content) < 4:
+                continue
+            # 提取关键短语在源文本中查找
+            phrases = re.findall(r"[\u4e00-\u9fff]{4,}", claim_content)
+            phrases += re.findall(r"[A-Za-z0-9]{4,}", claim_content)
+            phrases += re.findall(r"[\d.]+[%％亿万千百元美][\u4e00-\u9fff]*", claim_content)
+            if not phrases:
+                continue
+            phrases.sort(key=len, reverse=True)
+            for phrase in phrases[:5]:
+                idx = source_text.find(phrase)
+                if idx != -1:
+                    start = max(0, idx - 150)
+                    end = min(len(source_text), idx + len(phrase) + 150)
+                    # 对齐到句子边界
+                    if start > 0:
+                        boundary = max(
+                            source_text.rfind("。", start - 50, idx),
+                            source_text.rfind("\n", start - 50, idx),
+                        )
+                        if boundary > start - 50:
+                            start = boundary + 1
+                    if end < len(source_text):
+                        candidates = [
+                            source_text.find(sep, idx + len(phrase), end + 50)
+                            for sep in ("。", "\n")
+                        ]
+                        valid = [c for c in candidates if c != -1]
+                        if valid:
+                            end = min(valid) + 1
+                    chunk = source_text[start:end].strip()
+                    if len(chunk) > 20:
+                        evidence["chunk_text"] = chunk[:500]
+                        break
