@@ -765,6 +765,25 @@ class AnalysisMixin:
         except Exception:
             return default_disabled
 
+    def handle_governor_rule_prefs_get(self):
+        """GET /api/governor/rule-prefs - 返回 legacy 规则启用状态（供前端 Governor 实时加载）"""
+        DEFAULT_DISABLED = {
+            'step_length_fuse',
+            'consecutive_x_brake',
+            'diversity_collapse',
+            'missing_verification',
+            'explore_dominance',
+            'late_planning_warning',
+        }
+        disabled = self._load_governor_rule_prefs(DEFAULT_DISABLED)
+        ALL_LEGACY = [
+            'consecutive_x_brake', 'step_length_fuse', 'switch_rate_warning',
+            'diversity_collapse', 'late_planning_warning', 'missing_verification',
+            'explore_dominance',
+        ]
+        prefs = {name: (name not in disabled) for name in ALL_LEGACY}
+        self.send_json(prefs)
+
     def handle_governor_rule_toggle(self, data: dict):
         """POST /api/governor/rule-toggle - 切换守护规则启用/禁用"""
         rule_name = data.get('rule')

@@ -612,7 +612,9 @@ export async function chat(
     return result.content
   }
 
-  return data.choices?.[0]?.message?.content || ''
+  // 优先取 content；reasoning 模型（如 deepseek-reasoner）可能只返回 reasoning_content
+  const msg = data.choices?.[0]?.message
+  return msg?.content || msg?.reasoning_content || ''
 }
 
 /**
@@ -815,7 +817,9 @@ export async function visionChat(
     return texts.join('\n') || ''
   }
 
-  return data.choices?.[0]?.message?.content || ''
+  // 优先取 content；reasoning 模型可能只返回 reasoning_content
+  const msgSC = data.choices?.[0]?.message
+  return msgSC?.content || msgSC?.reasoning_content || ''
 }
 
 /**

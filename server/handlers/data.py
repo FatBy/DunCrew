@@ -205,4 +205,31 @@ class DataMixin:
         except Exception as e:
             self.send_error_json(f'Failed to save governor stats: {str(e)}', 500)
 
+    def handle_transcriptase_governor_stats_get(self):
+        """读取 TranscriptaseGovernor 统计数据"""
+        stats_file = self.clawd_path / 'data' / 'transcriptase_governor_stats.json'
+        if not stats_file.exists():
+            self.send_json({})
+            return
+        try:
+            content = stats_file.read_text(encoding='utf-8')
+            self.send_json(json.loads(content))
+        except Exception as e:
+            self.send_error_json(f'Failed to read transcriptase governor stats: {str(e)}', 500)
+
+    def handle_transcriptase_governor_stats_save(self, data: dict):
+        """保存 TranscriptaseGovernor 统计数据 (带文件锁)"""
+        data_dir = self.clawd_path / 'data'
+        data_dir.mkdir(exist_ok=True)
+        stats_file = data_dir / 'transcriptase_governor_stats.json'
+        try:
+            with self._get_data_lock('transcriptase_governor_stats'):
+                stats_file.write_text(
+                    json.dumps(data, ensure_ascii=False, indent=2),
+                    encoding='utf-8'
+                )
+            self.send_json({'saved': True})
+        except Exception as e:
+            self.send_error_json(f'Failed to save transcriptase governor stats: {str(e)}', 500)
+
 

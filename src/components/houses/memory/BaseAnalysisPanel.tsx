@@ -9,6 +9,7 @@ import { cn } from '@/utils/cn'
 import { getServerUrl } from '@/utils/env'
 import { useStore } from '@/store'
 import { chat, isLLMConfigured } from '@/services/llmService'
+import { baseSequenceGovernor } from '@/services/baseSequenceGovernor'
 import {
   CandidateRules,
   suggestionToRule,
@@ -1223,6 +1224,8 @@ ${ruleList}
       if (data) {
         setData({ ...data, discoveredRules: json.rules })
       }
+      // 通知 Governor 实时重载规则配置
+      baseSequenceGovernor.reload()
     } catch (err) {
       addToast({ type: 'error', title: '切换失败', message: err instanceof Error ? err.message : String(err) })
     }
@@ -1245,6 +1248,8 @@ ${ruleList}
         )
         setData({ ...data, activeRules: updatedRules })
       }
+      // 通知 Governor 实时重载规则配置
+      baseSequenceGovernor.reload()
     } catch (err) {
       addToast({ type: 'error', title: '切换失败', message: err instanceof Error ? err.message : String(err) })
     }

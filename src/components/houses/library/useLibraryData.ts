@@ -293,6 +293,19 @@ export function useLibraryData() {
     }
   }, [baseUrl, loadStats, loadEntities, view])
 
+  const deleteEntity = useCallback(async (entityId: string): Promise<boolean> => {
+    const currentView = view
+    try {
+      await batchAction({ op: 'delete', ids: [entityId] })
+      if (currentView.type === 'detail' && currentView.entityId === entityId) {
+        goHome()
+      }
+      return true
+    } catch {
+      return false
+    }
+  }, [batchAction, view, goHome])
+
   // ── P4: Librarian ──
   const startLibrarian = useCallback(async (scope?: string, category?: string) => {
     setLibrarianLoading(true)
@@ -369,6 +382,7 @@ export function useLibraryData() {
     selectAll,
     clearSelection,
     batchAction,
+    deleteEntity,
     // P4: Librarian
     librarianContext,
     librarianLoading,

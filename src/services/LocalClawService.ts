@@ -2671,6 +2671,11 @@ ${failedStepsSummary ? `之前失败的步骤:\n${failedStepsSummary}\n请避免
     // Phase 3: Transcriptase spawn 决策记录（供 Governor 统计用）
     const transcriptaseSpawnRecords: import('@/types').TranscriptaseSpawnRecord[] = []
     let hadTranscriptaseSpawn = false
+    // V9: Transcriptase 决策落盘记录（所有非 continue 决策）
+    const transcriptaseDecisionRecords: Array<{
+      action: string; patternId: string; confidence: number
+      childTask?: string; baseIndex: number
+    }> = []
 
     // 🧬 Gene Pool: 懒加载基因库
     await genePoolService.ensureLoaded()
@@ -3624,6 +3629,15 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${d
               if (tDecision.type !== 'continue') {
                 console.log(`[Transcriptase] Decision: ${tDecision.type} (confidence: ${tDecision.confidence}, pattern: ${tDecision.triggeredPatternId || 'N/A'})`)
 
+                // V9: 收集决策记录（用于 trace 落盘）
+                transcriptaseDecisionRecords.push({
+                  action: tDecision.type,
+                  patternId: tDecision.triggeredPatternId || 'unknown',
+                  confidence: tDecision.confidence,
+                  childTask: tDecision.childTask,
+                  baseIndex: baseSequenceEntries.length - 1,
+                })
+
                 // Phase 3: 记录 spawn 决策（供 TranscriptaseGovernor 统计）
                 if (tDecision.type === 'spawn_child') {
                   hadTranscriptaseSpawn = true
@@ -4078,6 +4092,10 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${d
           const ledger = baseLedgerService.getLedger(runId)
           return ledger?.facts
         })(),
+        // V9: Transcriptase spawn 决策记录
+        transcriptaseDecisions: transcriptaseDecisionRecords.length > 0
+          ? transcriptaseDecisionRecords
+          : undefined,
       }
 
       // 先保存 trace，成功后再更新 stats，保证两者一致
@@ -4188,7 +4206,8 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${d
             activeSopContent
               ? sopEvolutionService.buildGoldenPathContext(activeDunId, activeSopContent).catch(() => null)
               : Promise.resolve(null),
-          ]).then(([promotableCandidates, sopFitnessContext]) => {
+            knowledgeIngestService.getEntityTitles(activeDunId).catch((): string[] => []),
+          ]).then(([promotableCandidates, sopFitnessContext, entityTitles]) => {
             const payload: ConsolidationPayload = {
               dunId: activeDunId,
               trace,
@@ -4209,6 +4228,7 @@ ${fcAcceptanceCriteria ? '3. 逐条检查验收标准是否已满足\n' : ''}${d
               sopFitnessContext: sopFitnessContext ?? undefined,
               bgSignal,
               serverUrl: this.serverUrl,
+              entityTitles,
             }
 
             consolidatePostExecution(payload, {

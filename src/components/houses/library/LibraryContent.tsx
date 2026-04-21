@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   BookOpen, TrendingUp, TrendingDown, Minus,
-  AlertTriangle, ArrowRight, ChevronDown, Clock, Loader2,
+  AlertTriangle, ArrowRight, ChevronDown, Clock, Loader2, Trash2,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import {
@@ -21,9 +21,12 @@ interface LibraryContentProps {
   entity: WikiEntityDetail | null
   loading: boolean
   onSelectEntity: (id: string) => void
+  onDeleteEntity?: (id: string) => Promise<boolean>
 }
 
-export function LibraryContent({ entity, loading, onSelectEntity }: LibraryContentProps) {
+export function LibraryContent({ entity, loading, onSelectEntity, onDeleteEntity }: LibraryContentProps) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ background: BG }}>
@@ -82,13 +85,34 @@ export function LibraryContent({ entity, loading, onSelectEntity }: LibraryConte
             </p>
           )}
 
-          <div className="flex items-center gap-3 text-[11px]" style={{ color: INK_MUTED }}>
-            <Clock className="w-3 h-3" />
-            <span>自动合成</span>
-            <span>&middot;</span>
-            <span>{totalSources} 来源</span>
-            <span>&middot;</span>
-            <span>{formatRelativeTime(entity.updatedAt)}</span>
+          <div className="flex items-center justify-between text-[11px]" style={{ color: INK_MUTED }}>
+            <div className="flex items-center gap-3">
+              <Clock className="w-3 h-3" />
+              <span>自动合成</span>
+              <span>&middot;</span>
+              <span>{totalSources} 来源</span>
+              <span>&middot;</span>
+              <span>{formatRelativeTime(entity.updatedAt)}</span>
+            </div>
+            {onDeleteEntity && (
+              confirmingDelete ? (
+                <button
+                  onClick={() => { onDeleteEntity(entity.id); setConfirmingDelete(false) }}
+                  className="text-[10px] px-2 py-0.5 rounded font-bold"
+                  style={{ background: ACCENT, color: '#fff' }}
+                >
+                  确认删除
+                </button>
+              ) : (
+                <button
+                  onClick={() => setConfirmingDelete(true)}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors hover:bg-red-50"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>删除</span>
+                </button>
+              )
+            )}
           </div>
         </div>
 

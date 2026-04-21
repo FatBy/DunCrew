@@ -1251,7 +1251,7 @@ class WikiMixin:
         self.send_json({
             'status': 'ok',
             'entityCount': len(entities),
-            'context': input_text,
+            'entityOverview': input_text,
             'prompt': LIBRARIAN_PROMPT,
         })
 

@@ -896,6 +896,14 @@ export interface ExecTrace {
   ledgerMilestones?: LedgerMilestone[]
   /** V8: Ledger 累积事实（任务结束时的 facts 快照） */
   ledgerFacts?: LedgerFacts
+  /** V9: Transcriptase spawn 决策记录（供 TranscriptaseGovernor 回溯分析） */
+  transcriptaseDecisions?: Array<{
+    action: string
+    patternId: string
+    confidence: number
+    childTask?: string
+    baseIndex: number
+  }>
 }
 
 /** V6: 多维结果信号 — 保留原始信号，不压缩为单一置信度 */

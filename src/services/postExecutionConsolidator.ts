@@ -53,11 +53,20 @@ export interface ConsolidationPayload {
   bgSignal?: AbortSignal
   /** 服务器地址 */
   serverUrl: string
+  /** 知识库实体标题索引（供 LLM 建立 relations） */
+  entityTitles?: string[]
 }
 
 export interface ConsolidationResult {
   memories: Array<{ content: string; category: string; confidence: number }> | null
-  knowledge: Array<{ op: string; entity_name: string; claims: string[] }> | null
+  knowledge: Array<{
+    op: string
+    entity_name: string
+    type?: string
+    category?: string
+    claims: Array<{ c: string; t?: string; conf?: number } | string>
+    relations?: Array<{ target: string; rel?: string }>
+  }> | null
   l0Promotions: string[] | null
   sopFeedback: { action: string; suggestion?: string; goldenPathSummary?: unknown } | null
   observerHints: { repeated_pattern?: boolean; potential_skill?: string | null; confidence?: number } | null
@@ -119,8 +128,10 @@ const CONSOLIDATION_SYSTEM_PROMPT = [
   '',
   '每条知识应自包含（脱离原文后仍可理解），保留关键数据和限定语。',
   '',
-  '输出 JSON 数组:',
-  '[{"op":"create|update","entity_name":"实体名称","claims":["断言1","断言2"]}]',
+  '输出 JSON 数组(短键名节省空间):',
+  '[{"op":"create|update","entity_name":"实体名称","type":"concept|topic|pattern","category":"分类(如:经济/技术/产品,可省略)","claims":[{"c":"断言内容","t":"metric|insight|pattern|fact","conf":0.8}],"relations":[{"target":"已有Entity标题","rel":"related_to|contradicts|subtopic_of"}]}]',
+  '',
+  '关联规则: 参考下方"知识库索引"中的实体标题建立 relations。无相关则省略 relations。',
   '无值得提取的知识时输出: <KNOWLEDGE>[]</KNOWLEDGE>',
   '',
   '== 任务 3: L1 记忆晋升判定 → <L0_PROMOTIONS> ==',
@@ -238,6 +249,15 @@ function buildConsolidationPrompt(payload: ConsolidationPayload): SimpleChatMess
     sections.push(
       '## SOP 执行历史',
       payload.sopFitnessContext,
+      '',
+    )
+  }
+
+  // 6. 知识库 Entity 索引（供 relations 引用）
+  if (payload.entityTitles && payload.entityTitles.length > 0) {
+    sections.push(
+      '## 知识库索引 (可建立 relations 关联)',
+      payload.entityTitles.slice(0, 15).join(', '),
       '',
     )
   }
@@ -382,7 +402,9 @@ async function applyResult(
   if (result.knowledge && result.knowledge.length > 0) {
     const validEntities = result.knowledge.filter(k => k.op !== 'noop' && k.entity_name)
     if (validEntities.length > 0) {
-      knowledgeIngestService.bufferEntities(dunId, validEntities)
+      knowledgeIngestService.bufferEntities(dunId, validEntities, {
+        userPrompt: payload.userPrompt,
+      })
     }
   }
 

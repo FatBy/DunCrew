@@ -70,6 +70,10 @@ vibe_images/
 .aone_copilot/
 .qoder/
 
+# Runtime data (user-specific)
+duncrew.db
+documents/
+
 # Temp docs/generated files not for repo
 QUEST_SOUL_GENERATION.md
 github-profile-README.md

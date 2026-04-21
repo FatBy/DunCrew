@@ -50,11 +50,17 @@ export function LibrarianPanel({ context, loading, onStart, onExecute, onClose }
       ]
       const resp = await chatBackground(messages, { priority: 8 })
       if (!resp) throw new Error('LLM 无响应')
-      // 提取 JSON 数组
+      // 提取 JSON 数组（兼容 reasoning 模型可能输出的 markdown code fence 等包装）
       const text = typeof resp === 'string' ? resp : (resp as { content?: string }).content || ''
-      const jsonMatch = text.match(/\[[\s\S]*\]/)
+      const cleaned = text
+        .replace(/```(?:json)?\s*/gi, '')   // 去掉 markdown code fence
+        .replace(/```\s*/g, '')
+        .trim()
+      const jsonMatch = cleaned.match(/\[[\s\S]*\]/)
       if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as LibrarianAction[]
+        // 尝试提取最外层合法 JSON 数组：找到匹配的 [] 对
+        const extracted = extractBalancedArray(jsonMatch[0])
+        const parsed = JSON.parse(extracted) as LibrarianAction[]
         setActions(Array.isArray(parsed) ? parsed : [])
       } else {
         setActions([])
@@ -204,6 +210,27 @@ export function LibrarianPanel({ context, loading, onStart, onExecute, onClose }
       )}
     </div>
   )
+}
+
+/** 从贪婪匹配的文本中提取第一个平衡的 JSON 数组（避免尾部多余文本导致 parse 失败） */
+function extractBalancedArray(raw: string): string {
+  let depth = 0
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]
+    if (ch === '[') depth++
+    else if (ch === ']') {
+      depth--
+      if (depth === 0) return raw.slice(0, i + 1)
+    } else if (ch === '"') {
+      // 跳过字符串内容（含转义引号）
+      i++
+      while (i < raw.length && raw[i] !== '"') {
+        if (raw[i] === '\\') i++
+        i++
+      }
+    }
+  }
+  return raw // fallback: 返回原文
 }
 
 function getOpLabel(op: string): string {

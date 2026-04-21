@@ -208,6 +208,10 @@ class ClawdDataHandler(
         # Governor 统计数据 API
         elif path == '/api/governor/stats':
             self.handle_governor_stats_get()
+        elif path == '/api/transcriptase-governor/stats':
+            self.handle_transcriptase_governor_stats_get()
+        elif path == '/api/governor/rule-prefs':
+            self.handle_governor_rule_prefs_get()
         # V4: 碱基分析引擎 API
         elif path == '/api/base-analysis':
             self.handle_base_analysis(query)
@@ -300,6 +304,8 @@ class ClawdDataHandler(
             self.handle_confidence_migrate(data)
         elif path == '/api/governor/stats':
             self.handle_governor_stats_save(data)
+        elif path == '/api/transcriptase-governor/stats':
+            self.handle_transcriptase_governor_stats_save(data)
         elif path == '/api/governor/rule-toggle':
             self.handle_governor_rule_toggle(data)
         # V4: 碱基分析规则保存

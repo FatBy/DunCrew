@@ -5,7 +5,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Upload, RefreshCw, BookOpen, Loader2, Home, ChevronLeft } from 'lucide-react'
+import { Search, Upload, RefreshCw, BookOpen, Loader2, Home, ChevronLeft, Trash2 } from 'lucide-react'
 import {
   INK, INK_DIM, INK_MUTED,
   BG_WARM, BORDER, BORDER_LIGHT, FONT_SERIF, FONT_MONO,
@@ -35,6 +35,7 @@ interface LibrarySidebarProps {
   onSelectAll: () => void
   onClearSelection: () => void
   onBatchAction: (action: BatchAction) => Promise<unknown>
+  onDeleteEntity: (id: string) => Promise<boolean>
   categories: string[]
 }
 
@@ -42,11 +43,12 @@ export function LibrarySidebar({
   view, entities, totalCount, onSelectEntity,
   searchQuery, onSearchChange, onImport, importing, importProgress,
   onRefresh, loading, onGoHome, onGoCategory,
-  selectedIds, onToggleSelect, onSelectAll, onClearSelection, onBatchAction, categories,
+  selectedIds, onToggleSelect, onSelectAll, onClearSelection, onBatchAction, onDeleteEntity, categories,
 }: LibrarySidebarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
   const [importResult, setImportResult] = useState<string | null>(null)
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
 
   const handleFile = useCallback(async (file: File) => {
     if (!file.name.endsWith('.json')) {
@@ -205,7 +207,7 @@ export function LibrarySidebar({
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: idx * 0.03 }}
-                    className="w-full text-left px-3 py-2.5 transition-colors"
+                    className="w-full text-left px-3 py-2.5 transition-colors group"
                     style={{
                       borderBottom: `1px solid ${BORDER_LIGHT}`,
                       borderLeft: isSelected ? `3px solid ${ACCENT}` : isActive ? `3px solid ${meta.accent}` : '3px solid transparent',
@@ -214,20 +216,43 @@ export function LibrarySidebar({
                     onClick={() => hasSelection ? onToggleSelect(entity.id) : onSelectEntity(entity.id)}
                     onContextMenu={e => { e.preventDefault(); onToggleSelect(entity.id) }}
                     onMouseEnter={e => { if (!isActive && !isSelected) (e.currentTarget as HTMLElement).style.background = '#fafaf8' }}
-                    onMouseLeave={e => { if (!isActive && !isSelected) (e.currentTarget as HTMLElement).style.background = isSelected ? '#fef7f6' : 'transparent' }}
+                    onMouseLeave={e => {
+                      if (!isActive && !isSelected) (e.currentTarget as HTMLElement).style.background = isSelected ? '#fef7f6' : 'transparent'
+                      setConfirmingDeleteId(prev => prev === entity.id ? null : prev)
+                    }}
                   >
                     <div className="flex items-center gap-1.5 mb-0.5">
-                      <Icon className="w-3 h-3 shrink-0" style={{ color: meta.accent }} />
-                      <span className="text-[10px] font-bold tracking-[0.5px] uppercase"
-                            style={{ color: meta.accent }}>
-                        {meta.label}
-                      </span>
-                      {entity.tags.slice(0, 2).map(tag => (
-                        <span key={tag} className="text-[9px] px-1 py-0.5 rounded"
-                              style={{ background: BG_WARM, color: INK_MUTED }}>
-                          {tag}
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Icon className="w-3 h-3 shrink-0" style={{ color: meta.accent }} />
+                        <span className="text-[10px] font-bold tracking-[0.5px] uppercase"
+                              style={{ color: meta.accent }}>
+                          {meta.label}
                         </span>
-                      ))}
+                        {entity.tags.slice(0, 2).map(tag => (
+                          <span key={tag} className="text-[9px] px-1 py-0.5 rounded"
+                                style={{ background: BG_WARM, color: INK_MUTED }}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                      {!hasSelection && (
+                        confirmingDeleteId === entity.id ? (
+                          <button
+                            onClick={e => { e.stopPropagation(); onDeleteEntity(entity.id); setConfirmingDeleteId(null) }}
+                            className="text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0 ml-auto"
+                            style={{ background: ACCENT, color: '#fff' }}
+                          >
+                            确认
+                          </button>
+                        ) : (
+                          <button
+                            onClick={e => { e.stopPropagation(); setConfirmingDeleteId(entity.id) }}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-50 shrink-0 ml-auto"
+                          >
+                            <Trash2 className="w-3 h-3" style={{ color: INK_MUTED }} />
+                          </button>
+                        )
+                      )}
                     </div>
                     <div className="text-[13px] font-medium truncate"
                          style={{ color: INK }}>

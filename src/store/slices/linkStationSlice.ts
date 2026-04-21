@@ -212,8 +212,8 @@ export const PROVIDER_GUIDES: Record<string, ProviderGuide> = {
       '进入「API Keys」页面，点击「创建 API Key」',
       '复制生成的 Key，粘贴到下方',
     ],
-    tip: '新用户注册即送免费额度，deepseek-reasoner 推理能力极强',
-    recommendedModel: 'deepseek-reasoner',
+    tip: '新用户注册即送免费额度，deepseek-chat 性价比极高',
+    recommendedModel: 'deepseek-chat',
   },
   kimi: {
     label: 'Kimi',

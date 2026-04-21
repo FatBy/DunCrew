@@ -43,16 +43,16 @@ export const INGEST_PROMPT = [
   '{"op":"noop"}',
   '',
   '更新已有 Entity 时：',
-  '{"op":"update","entity":{"id":"已有entity的id","title":"标题","type":"concept","tldr":"一句话摘要","tags":["tag1"],"slug":"kebab-case"},"claims":[{"content":"断言内容","type":"insight","evidence":{"source_name":"来源"}}],"relations":[]}',
+  '{"op":"update","entity":{"id":"已有entity的id","title":"标题","type":"concept|topic|pattern","tldr":"一句话摘要","tags":["tag1"],"slug":"kebab-case","category":"分类(可选)","temporal_scope":"时间范围(可选)"},"claims":[{"content":"断言内容","type":"insight","confidence":0.8,"observed_at":"事实时间(可选)","source_summary":"来源摘要(可选)","evidence":{"source_name":"来源"}}],"relations":[{"target_title":"关联Entity标题","type":"related_to|contradicts|subtopic_of","description":"关系描述"}]}',
   '',
   '创建新 Entity 时：',
-  '{"op":"create","entity":{"title":"新标题","type":"concept","tldr":"一句话摘要","tags":["tag1"],"slug":"kebab-case"},"claims":[...],"relations":[]}',
+  '{"op":"create","entity":{"title":"新标题","type":"concept|topic|pattern","tldr":"一句话摘要","tags":["tag1"],"slug":"kebab-case","category":"分类(可选)","temporal_scope":"时间范围(可选)"},"claims":[...],"relations":[...]}',
   '',
   '## Entity 粒度',
   '- "可独立引用"为标准：主题/领域、概念 → Entity；数据点 → Claim；来源报告 → Evidence',
   '',
   '## Claim 结构',
-  '{"content":"断言内容","type":"metric|insight|pattern|fact","value":"数值(仅metric)","trend":"up|down|stable(仅metric)","confidence":0.8,"evidence":{"source_name":"来源","chunk_text":"原始片段(可选)"}}',
+  '{"content":"断言内容","type":"metric|insight|pattern|fact","value":"数值(仅metric)","trend":"up|down|stable(仅metric)","confidence":0.8,"observed_at":"事实观察时间(可选,如:2024-03)","source_summary":"一句话来源摘要(可选)","evidence":{"source_name":"来源","chunk_text":"原始片段(可选)"}}',
   '',
   '## Relation 结构',
   '{"target_title":"关联Entity标题","type":"related_to|contradicts|subtopic_of","description":"关系描述"}',
@@ -63,6 +63,11 @@ export const INGEST_PROMPT = [
   '- 知识粒度：可复用的模式或关键认知，不是一次性事件',
   '- 如果新认知与现有 Claim 的数值/结论矛盾，在 relations 中用 contradicts 标注',
   '- 纯工具操作日志、没有可复用价值的内容，输出 {"op":"noop"}',
+  '- category: 从内容推断的主题分类(经济/技术/政策/社会/产品)，不确定则不填',
+  '- temporal_scope: 该 Entity 涉及的时间段，不确定则不填',
+  '- observed_at: 该 Claim 对应事实的观察时间，不确定则不填',
+  '- source_summary: 一句话概括该 Claim 的来源上下文',
+  '- confidence: 原文明确=0.9, 推导=0.7, 不确定=0.5',
 ].join('\n')
 
 // ============================================
@@ -77,6 +82,8 @@ interface IngestEntity {
   tldr?: string
   tags?: string[]
   slug?: string
+  category?: string
+  temporal_scope?: string
 }
 
 /** LLM 输出的 Claim 结构 */
@@ -86,6 +93,8 @@ interface IngestClaim {
   value?: string
   trend?: string
   confidence?: number
+  observed_at?: string
+  source_summary?: string
   evidence?: {
     source_name: string
     chunk_text?: string
@@ -172,11 +181,19 @@ class KnowledgeIngestService {
 
   /**
    * 缓冲 Consolidator 预提取的知识实体，直接写入 Wiki API（无 LLM 调用）
-   * Consolidator 已完成实体识别，这里仅负责格式转换 + API 写入
+   * Consolidator 已完成实体识别，这里负责格式转换 + API 写入
    */
   bufferEntities(
     dunId: string,
-    entities: Array<{ op: string; entity_name: string; claims: string[] }>,
+    entities: Array<{
+      op: string
+      entity_name: string
+      type?: string
+      category?: string
+      claims: Array<{ c: string; t?: string; conf?: number } | string>
+      relations?: Array<{ target: string; rel?: string }>
+    }>,
+    context?: { userPrompt?: string },
   ): void {
     if (entities.length === 0) return
 
@@ -205,24 +222,43 @@ class KnowledgeIngestService {
           entityId = match?.id
         }
 
+        // Claims: 兼容旧格式（纯字符串）和新格式（{c,t,conf} 对象）
+        const claims: IngestClaim[] = ent.claims.map(c => {
+          if (typeof c === 'string') {
+            return { content: c, type: 'insight' as const, confidence: 0.7 }
+          }
+          return {
+            content: c.c,
+            type: (c.t ?? 'insight') as string,
+            confidence: c.conf ?? 0.7,
+            source_summary: context?.userPrompt
+              ? `任务执行: ${context.userPrompt.slice(0, 60)}`
+              : undefined,
+            evidence: { source_name: 'DunCrew 任务执行' },
+          }
+        })
+
+        // 取第一条 claim 内容作为 tldr
+        const firstClaimText = claims[0]?.content ?? ent.entity_name
         const action: WikiIngestAction = {
           op: (ent.op === 'update' && entityId) ? 'update' : 'create',
           entity: {
             ...(entityId ? { id: entityId } : {}),
             title: ent.entity_name,
-            type: 'concept',
-            tldr: ent.claims[0]?.slice(0, 100) || ent.entity_name,
+            type: ent.type ?? 'concept',
+            tldr: firstClaimText.slice(0, 100),
             slug: ent.entity_name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').slice(0, 50),
+            category: ent.category,
           },
-          claims: ent.claims.map(c => ({
-            content: c,
-            type: 'insight' as const,
-            confidence: 0.7,
+          claims,
+          relations: (ent.relations ?? []).map(r => ({
+            target_title: r.target,
+            type: r.rel ?? 'related_to',
           })),
-          relations: [],
         }
 
-        const inputText = `[Consolidator] ${ent.entity_name}: ${ent.claims.join('; ')}`
+        const claimTexts = claims.map(c => c.content).join('; ')
+        const inputText = `[Consolidator] ${ent.entity_name}: ${claimTexts}`
         const success = await this.postIngest(dunId, action, inputText, '[from-consolidator]')
         if (success) writtenCount++
       }
@@ -419,6 +455,12 @@ class KnowledgeIngestService {
       if (res.ok) return await res.json()
     } catch { /* 静默 */ }
     return []
+  }
+
+  /** 获取指定 Dun 的知识库实体标题列表（供 Consolidator 注入 prompt） */
+  async getEntityTitles(dunId: string): Promise<string[]> {
+    const index = await this.fetchEntityIndex(dunId)
+    return index.map(e => e.title)
   }
 
   private async fetchEntityClaims(

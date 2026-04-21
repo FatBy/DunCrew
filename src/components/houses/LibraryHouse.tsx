@@ -38,6 +38,7 @@ export function LibraryHouse() {
         onSelectAll={data.selectAll}
         onClearSelection={data.clearSelection}
         onBatchAction={data.batchAction}
+        onDeleteEntity={data.deleteEntity}
         categories={categories}
       />
       {isHome ? (
@@ -60,6 +61,7 @@ export function LibraryHouse() {
           entity={data.entityDetail}
           loading={data.detailLoading}
           onSelectEntity={data.goEntity}
+          onDeleteEntity={data.deleteEntity}
         />
       )}
     </div>

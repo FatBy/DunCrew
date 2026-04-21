@@ -271,24 +271,35 @@ export function extractFeatures(entries: BaseEntry[]): FeatureSnapshot {
 export function evaluateSequence(
   entries: BaseEntry[],
   thresholds: RuleThresholds = DEFAULT_THRESHOLDS,
+  disabledRules?: Set<string>,
 ): GovernorSignal {
   const features = extractFeatures(entries)
   const triggeredRules: string[] = []
   const injections: string[] = []
 
-  // 规则 1: 连续 X 刹车 — V6: 已禁用
-  // V6 数据验证结论：effectPP = +7.5（命中时成功率反而更高 84.9% vs 77.4%）
-  // 连续 X 是复杂任务的正常探索行为，干预打断了有效执行流程。
-  // if (features.consecutiveX >= thresholds.consecutiveXBrake) { ... }
+  // 规则 1: 连续 X 刹车（默认禁用，可通过 UI 启用）
+  if (!disabledRules?.has('consecutive_x_brake')
+    && features.consecutiveX >= thresholds.consecutiveXBrake) {
+    triggeredRules.push('consecutive_x_brake')
+    injections.push(
+      `[连续探索刹车] 已连续 ${features.consecutiveX} 次探索(X)未获实质进展。` +
+      `请停止当前方向，换一个完全不同的策略。`
+    )
+  }
 
-  // 规则 2: 序列长度熔断 — V4: 已禁用
-  // 数据验证结论：>15 步成功率 97.4%，序列长度与成功率正相关，
-  // 此规则假设"长序列=差"完全反了，触发后反而打断正常执行流程。
-  // 保留代码但不触发，等后续数据驱动规则系统重新评估。
-  // if (features.stepCount >= thresholds.stepLengthFuse) { ... }
+  // 规则 2: 序列长度熔断（默认禁用，可通过 UI 启用）
+  if (!disabledRules?.has('step_length_fuse')
+    && features.stepCount >= thresholds.stepLengthFuse) {
+    triggeredRules.push('step_length_fuse')
+    injections.push(
+      `[序列长度熔断] 任务已执行 ${features.stepCount} 步，接近上限。` +
+      `请尽快收敛到最终结果，避免继续发散。`
+    )
+  }
 
   // 规则 3: 切换频率警告（仅在步数 >= 5 时才有统计意义）
-  if (features.stepCount >= 5 && features.switchRate > thresholds.switchRateWarning) {
+  if (!disabledRules?.has('switch_rate_warning')
+    && features.stepCount >= 5 && features.switchRate > thresholds.switchRateWarning) {
     triggeredRules.push('switch_rate_warning')
     injections.push(
       `[策略一致性提示] 你的操作在不同方向之间频繁切换（切换率 ${(features.switchRate * 100).toFixed(0)}%）。` +
@@ -298,13 +309,23 @@ export function evaluateSequence(
 
   // --- v2 新增规则 ---
 
-  // 规则 4: 碱基多样性崩溃 — V6: 已禁用
-  // V6 数据验证结论：effectPP = +7.9（命中 16 次，87.5% vs 79.6%）
-  // "从多样到单一"恰好是收敛执行的正常标志，非死循环信号。
-  // if (features.stepCount >= thresholds.diversityCollapseWindow * 2) { ... }
+  // 规则 4: 碱基多样性崩溃（默认禁用，可通过 UI 启用）
+  if (!disabledRules?.has('diversity_collapse')
+    && features.stepCount >= thresholds.diversityCollapseWindow * 2) {
+    const window = entries.slice(-thresholds.diversityCollapseWindow)
+    const uniqueBases = new Set(window.map(e => e.base))
+    if (uniqueBases.size === 1) {
+      triggeredRules.push('diversity_collapse')
+      injections.push(
+        `[多样性崩溃] 最近 ${thresholds.diversityCollapseWindow} 步全部是相同碱基类型(${window[0].base})。` +
+        `这可能意味着陷入了重复循环，请尝试不同的操作类型。`
+      )
+    }
+  }
 
-  // 规则 5: 后期规划警告
-  if (features.stepCount > thresholds.stepLengthFuse * thresholds.latePlanningRatio
+  // 规则 5: 后期规划警告（默认禁用，可通过 UI 启用）
+  if (!disabledRules?.has('late_planning_warning')
+    && features.stepCount > thresholds.stepLengthFuse * thresholds.latePlanningRatio
     && entries.length > 0 && entries[entries.length - 1].base === 'P') {
     triggeredRules.push('late_planning_warning')
     injections.push(
@@ -313,15 +334,30 @@ export function evaluateSequence(
     )
   }
 
-  // 规则 6: 验证缺失 — V6: 已禁用
-  // V6 数据验证结论：effectPP = -0.5（命中 78 次，79.5% vs 80.0%）
-  // P→V "黄金路径"假设在数据上不成立，无区分力。
-  // if (entries.length >= 2) { ... }
+  // 规则 6: 验证缺失（默认禁用，可通过 UI 启用）
+  if (!disabledRules?.has('missing_verification')
+    && entries.length >= thresholds.missingVerificationSteps) {
+    const recent = entries.slice(-thresholds.missingVerificationSteps)
+    const hasV = recent.some(e => e.base === 'V')
+    if (!hasV && recent.some(e => e.base === 'E')) {
+      triggeredRules.push('missing_verification')
+      injections.push(
+        `[验证缺失提醒] 最近 ${thresholds.missingVerificationSteps} 步执行中没有验证(V)步骤。` +
+        `建议在执行操作后添加验证确认结果正确。`
+      )
+    }
+  }
 
-  // 规则 7: 探索过度 — V6: 已禁用
-  // V6 数据验证结论：effectPP = -1.3（命中 90 次，78.9% vs 80.2%）
-  // xeRatio 阈值抓不到真正的失败模式，无区分力。
-  // if (features.xeRatio > thresholds.exploreDominanceRatio ...) { ... }
+  // 规则 7: 探索过度（默认禁用，可通过 UI 启用）
+  if (!disabledRules?.has('explore_dominance')
+    && features.stepCount >= thresholds.exploreDominanceMinSteps
+    && features.xeRatio > thresholds.exploreDominanceRatio) {
+    triggeredRules.push('explore_dominance')
+    injections.push(
+      `[探索过度] 探索与执行比 X/(X+E) = ${(features.xeRatio * 100).toFixed(0)}%，超过阈值 ${(thresholds.exploreDominanceRatio * 100).toFixed(0)}%。` +
+      `探索过多可能导致效率低下，建议减少探索、增加直接执行。`
+    )
+  }
 
   const promptInjection = injections.length > 0
     ? injections.join('\n')
@@ -844,23 +880,97 @@ class BaseSequenceGovernor {
   private stats: GovernorStats = createEmptyStats()
   private serverUrl = ''
   private loaded = false
+  /** 用户禁用的 legacy 规则名集合（从后端 /api/governor/rule-prefs 加载） */
+  private disabledLegacyRules: Set<string> = new Set()
+  /** 数据发现的规则（从后端 /api/discovered-rules 加载） */
+  private discoveredRules: DiscoveredRule[] = []
 
   /**
-   * 初始化：设置后端 URL 并加载持久化统计数据。
+   * 初始化：设置后端 URL，加载统计数据 + 规则配置。
    */
   async initialize(serverUrl: string): Promise<void> {
     this.serverUrl = serverUrl
     await this.loadStats()
+    await this.loadRuleConfig()
+  }
+
+  /**
+   * 加载用户规则偏好 + 数据发现规则。
+   * 初始化时调用一次，UI 切换规则后可通过 reload() 重新加载。
+   */
+  private async loadRuleConfig(): Promise<void> {
+    if (!this.serverUrl) return
+
+    // 1. 加载 legacy 规则偏好
+    try {
+      const res = await fetch(`${this.serverUrl}/api/governor/rule-prefs`)
+      if (res.ok) {
+        const prefs = await res.json() as Record<string, boolean>
+        this.disabledLegacyRules = new Set(
+          Object.entries(prefs).filter(([, enabled]) => !enabled).map(([name]) => name)
+        )
+      }
+    } catch {
+      // 首次运行或后端未就绪，使用空集（全部启用 fallback）
+    }
+
+    // 2. 加载 discovered rules
+    try {
+      const res = await fetch(`${this.serverUrl}/api/discovered-rules`)
+      if (res.ok) {
+        const data = await res.json() as { rules: DiscoveredRule[] }
+        this.discoveredRules = data.rules || []
+      }
+    } catch {
+      // 容错
+    }
+
+    const legacyActive = 7 - this.disabledLegacyRules.size
+    const discoveredActive = this.discoveredRules.filter(r => r.lifecycle !== 'retired').length
+    console.log(`[Governor] Rules loaded: ${legacyActive} legacy active, ${discoveredActive} discovered active`)
+  }
+
+  /**
+   * UI 切换规则后调用，重新从后端加载规则配置。
+   */
+  async reload(): Promise<void> {
+    await this.loadRuleConfig()
   }
 
   /**
    * Layer 1: 评估当前碱基序列，返回干预信号。
    * 在 ReAct 循环每轮工具执行完成后调用。
-   * v2: 附加预估成功率 + 模式库历史经验
+   *
+   * 双路径合并：
+   * - 路径 1: Legacy 硬编码规则（受用户偏好 disabledLegacyRules 控制）
+   * - 路径 2: 数据发现规则（受 lifecycle 字段控制）
+   *
    * V8: 可选接受 BaseLedger，利用 LedgerFacts 避免重复干预
    */
   evaluate(entries: BaseEntry[], ledger?: { facts?: { failedApproaches?: string[] } }): GovernorSignal {
-    const signal = evaluateSequence(entries, this.stats.thresholds)
+    // 路径 1: Legacy 规则（受用户 UI 开关控制）
+    const legacySignal = evaluateSequence(entries, this.stats.thresholds, this.disabledLegacyRules)
+
+    // 路径 2: 数据发现规则（受 lifecycle 控制，evaluateWithRules 内部过滤 retired）
+    let discoveredSignal: GovernorSignal | null = null
+    if (this.discoveredRules.length > 0) {
+      discoveredSignal = evaluateWithRules(entries, this.discoveredRules)
+    }
+
+    // 合并信号
+    const signal: GovernorSignal = {
+      triggered: legacySignal.triggered || (discoveredSignal?.triggered ?? false),
+      promptInjection: [
+        legacySignal.promptInjection,
+        discoveredSignal?.promptInjection || '',
+      ].filter(Boolean).join('\n'),
+      triggeredRules: [
+        ...legacySignal.triggeredRules,
+        ...(discoveredSignal?.triggeredRules || []),
+      ],
+      estimatedSuccessRate: -1,
+      _features: legacySignal._features,
+    }
 
     // 如果有足够的历史数据，附加预估成功率
     if (this.loaded && this.stats.totalTraceCount >= 10) {
@@ -903,7 +1013,11 @@ class BaseSequenceGovernor {
     success: boolean,
     interventions: InterventionRecord[],
   ): Promise<void> {
-    const shouldAdapt = updateStats(this.stats, baseSequence, success, interventions)
+    const shouldAdapt = updateStats(
+      this.stats, baseSequence, success, interventions,
+      // 将 discovered rules 的活跃 ID 传入，确保 A/B 统计覆盖动态规则
+      this.discoveredRules.filter(r => r.lifecycle !== 'retired').map(r => r.id),
+    )
 
     if (shouldAdapt) {
       const adjustments = adaptThresholds(this.stats)
